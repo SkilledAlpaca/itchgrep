@@ -13,6 +13,8 @@ func newTestCrawler(total int64, cfg crawlConfig) *crawler {
 		itemsPerPage: 36,
 		totalAssets:  total,
 		seen:         make(map[string]struct{}),
+		tagSets:      make(map[string]map[string]struct{}),
+		doneSlices:   make(map[string]struct{}),
 	}
 }
 
@@ -24,8 +26,8 @@ func TestRecordCountsOnlyUnseenAssets(t *testing.T) {
 	// duplicate the asset into the index.
 	c := newTestCrawler(100, crawlConfig{})
 
-	assert.Equal(t, 3, c.record([]models.Asset{asset("a"), asset("b"), asset("c")}))
-	assert.Equal(t, 1, c.record([]models.Asset{asset("b"), asset("c"), asset("d")}),
+	assert.Equal(t, 3, c.record([]models.Asset{asset("a"), asset("b"), asset("c")}, nil))
+	assert.Equal(t, 1, c.record([]models.Asset{asset("b"), asset("c"), asset("d")}, nil),
 		"only the previously unseen asset counts")
 	assert.Len(t, c.assets, 4, "duplicates must not be stored twice")
 }
@@ -33,7 +35,7 @@ func TestRecordCountsOnlyUnseenAssets(t *testing.T) {
 func TestRecordSkipsAssetsWithoutAnId(t *testing.T) {
 	c := newTestCrawler(100, crawlConfig{})
 
-	assert.Equal(t, 1, c.record([]models.Asset{asset(""), asset("a"), asset("")}))
+	assert.Equal(t, 1, c.record([]models.Asset{asset(""), asset("a"), asset("")}, nil))
 	assert.Len(t, c.assets, 1)
 }
 
@@ -41,12 +43,12 @@ func TestCoverageAndDone(t *testing.T) {
 	c := newTestCrawler(100, crawlConfig{coverageTarget: 0.5})
 
 	for i := 0; i < 49; i++ {
-		c.record([]models.Asset{asset(string(rune('a' + i)))})
+		c.record([]models.Asset{asset(string(rune('a' + i)))}, nil)
 	}
 	assert.InDelta(t, 0.49, c.coverage(), 0.001)
 	assert.False(t, c.done())
 
-	c.record([]models.Asset{asset("extra")})
+	c.record([]models.Asset{asset("extra")}, nil)
 	assert.True(t, c.done(), "the crawl stops once the coverage target is met")
 }
 
@@ -62,7 +64,7 @@ func TestDoneRespectsThePageBudget(t *testing.T) {
 
 func TestCoverageIsZeroWhenTotalIsUnknown(t *testing.T) {
 	c := newTestCrawler(0, crawlConfig{coverageTarget: 0.95})
-	c.record([]models.Asset{asset("a")})
+	c.record([]models.Asset{asset("a")}, nil)
 
 	assert.Equal(t, 0.0, c.coverage(), "must not divide by zero")
 	assert.False(t, c.done())
@@ -134,4 +136,45 @@ func TestInvalidConfigFallsBackToDefaults(t *testing.T) {
 
 	assert.Equal(t, 0.95, cfg.coverageTarget)
 	assert.EqualValues(t, 168*60*60, int64(cfg.tagCacheMaxAge.Seconds()))
+}
+
+func TestRecordAccumulatesTagsAcrossSlices(t *testing.T) {
+	// The whole point of item 1: an asset already collected under one tag must
+	// still pick up the tags of every later slice it turns up in. The dedup
+	// discards the asset, not the knowledge that it carries another tag.
+	c := newTestCrawler(100, crawlConfig{})
+
+	c.record([]models.Asset{asset("a"), asset("b")}, []string{"pixel-art"})
+	c.record([]models.Asset{asset("a")}, []string{"sprites"})
+	c.record([]models.Asset{asset("a")}, []string{"pixel-art"}) // repeat, must not duplicate
+
+	c.attachTags()
+
+	var got models.Asset
+	for _, a := range c.assets {
+		if a.GameId == "a" {
+			got = a
+		}
+	}
+	assert.Equal(t, []string{"pixel-art", "sprites"}, got.Tags,
+		"tags accumulate, deduplicate, and come out sorted")
+}
+
+func TestAttachTagsLeavesUntaggedAssetsAlone(t *testing.T) {
+	c := newTestCrawler(100, crawlConfig{})
+	c.record([]models.Asset{asset("a")}, nil)
+	c.attachTags()
+
+	assert.Empty(t, c.assets[0].Tags, "the root view carries no tag to attribute")
+}
+
+func TestRecordCountsOnlyFirstSightingWhileStillTakingTags(t *testing.T) {
+	c := newTestCrawler(100, crawlConfig{})
+
+	assert.Equal(t, 1, c.record([]models.Asset{asset("a")}, []string{"x"}))
+	assert.Equal(t, 0, c.record([]models.Asset{asset("a")}, []string{"y"}),
+		"a repeat sighting yields nothing new, or a spent slice would look productive")
+
+	c.attachTags()
+	assert.Equal(t, []string{"x", "y"}, c.assets[0].Tags)
 }

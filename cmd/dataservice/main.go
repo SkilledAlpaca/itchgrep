@@ -8,6 +8,7 @@ import (
 	"itchgrep/pkg/models"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -98,8 +99,12 @@ func fetchAndStoreAssets() {
 		itemsPerPage: itemsPerPage,
 		totalAssets:  totalAssets,
 		seen:         make(map[string]struct{}, totalAssets),
+		tagSets:      make(map[string]map[string]struct{}, totalAssets),
+		doneSlices:   make(map[string]struct{}, len(slices)),
 	}
+	c.resume(cfg.checkpointMaxAge)
 	c.run(slices)
+	c.attachTags()
 
 	assets := c.assets
 	coverage := c.coverage()
@@ -133,6 +138,7 @@ func fetchAndStoreAssets() {
 			Title:         asset.Title,
 			Author:        asset.Author,
 			Description:   asset.Description,
+			Tags:          asset.Tags,
 			InvPopularity: asset.InvPopularity,
 		}
 	}
@@ -184,26 +190,33 @@ func fetchAndStoreAssets() {
 	}
 	logging.Info("Successfully stored assets")
 
+	// The crawl completed and published, so the checkpoint is now stale. Left
+	// behind, the next run would resume a finished crawl and skip every slice.
+	if err := storage.DeleteCheckpoint(); err != nil {
+		logging.Warning("Failed to delete crawl checkpoint: %v", err)
+	}
 }
 
 // crawlConfig is the tuning for one crawl. Every field has a working default,
 // so the dataservice runs with no configuration at all.
 type crawlConfig struct {
-	coverageTarget float64       // stop once this fraction of the catalogue is collected
-	coverageFloor  float64       // below this, refuse to publish
-	minYield       float64       // abandon a slice yielding fewer new assets than this, as a fraction of a page
-	tagCacheMaxAge time.Duration // rediscover the tag universe when the cache is older than this
-	maxPages       int64         // total page budget across all slices; 0 means unlimited
-	maxTags        int           // how many tags discovery may visit; 0 means the package default
+	coverageTarget   float64       // stop once this fraction of the catalogue is collected
+	coverageFloor    float64       // below this, refuse to publish
+	minYield         float64       // abandon a slice yielding fewer new assets than this, as a fraction of a page
+	tagCacheMaxAge   time.Duration // rediscover the tag universe when the cache is older than this
+	checkpointMaxAge time.Duration // ignore a crawl checkpoint older than this
+	maxPages         int64         // total page budget across all slices; 0 means unlimited
+	maxTags          int           // how many tags discovery may visit; 0 means the package default
 }
 
 func loadCrawlConfig() crawlConfig {
 	cfg := crawlConfig{
-		coverageTarget: envFloat("COVERAGE_TARGET", 0.95),
-		coverageFloor:  envFloat("COVERAGE_FLOOR", 0.90),
-		minYield:       envFloat("SLICE_MIN_YIELD", 0.05),
-		tagCacheMaxAge: envDuration("TAG_CACHE_MAX_AGE", 168*time.Hour),
-		maxTags:        int(envInt("MAX_TAGS", fetcher.DefaultMaxTags)),
+		coverageTarget:   envFloat("COVERAGE_TARGET", 0.95),
+		coverageFloor:    envFloat("COVERAGE_FLOOR", 0.90),
+		minYield:         envFloat("SLICE_MIN_YIELD", 0.05),
+		tagCacheMaxAge:   envDuration("TAG_CACHE_MAX_AGE", 168*time.Hour),
+		checkpointMaxAge: envDuration("CHECKPOINT_MAX_AGE", 24*time.Hour),
+		maxTags:          int(envInt("MAX_TAGS", fetcher.DefaultMaxTags)),
 	}
 
 	// SCRAPE_MAX_PAGES caps how many pages are fetched in total, across every
@@ -316,13 +329,128 @@ type crawler struct {
 	seen   map[string]struct{}
 	assets []models.Asset
 
+	// tagSets accumulates, per GameId, the tags of every slice an asset was
+	// seen in. Repeat sightings are what make this worth keeping: the dedup
+	// below discards the asset itself on a second sighting, but the fact that
+	// it also appeared under another tag is exactly the information itch.io's
+	// listing JSON does not give us, and it costs nothing to retain.
+	tagSets map[string]map[string]struct{}
+
 	// maxRootRank is how deep the root view was crawled. Root page numbers are
 	// a true global popularity rank; page numbers within any other slice are
 	// not comparable to them, so slice-only assets are ranked after this.
 	maxRootRank int64
 
+	// doneSlices are slice labels already finished, whether in this run or in
+	// the checkpointed run being resumed.
+	doneSlices map[string]struct{}
+
+	lastCheckpoint time.Time
+
 	pagesFetched atomic.Int64
 	slicesDone   atomic.Int64
+}
+
+// checkpointInterval is the minimum wall-clock gap between checkpoint writes.
+// A checkpoint serialises every asset collected so far (~26 MB at full
+// coverage), so writing one per slice would spend more time uploading than
+// crawling; writing one per hour would make the feature pointless.
+const checkpointInterval = 3 * time.Minute
+
+// resume restores a partially-complete crawl. It is best-effort: any problem
+// means starting fresh, which costs time but is never wrong.
+func (c *crawler) resume(maxAge time.Duration) {
+	cp, updated, err := storage.GetCheckpoint()
+	if err != nil {
+		logging.Info("No crawl checkpoint to resume (%v), starting fresh", err)
+		return
+	}
+	if age := time.Since(updated); age > maxAge {
+		logging.Info("Ignoring crawl checkpoint: %s old, older than %s", age.Round(time.Minute), maxAge)
+		return
+	}
+	if cp.TotalAssets != c.totalAssets {
+		// The catalogue moved underneath the checkpoint. Coverage arithmetic
+		// and the slice plan were both computed against the old size, so
+		// resuming would silently mix two different crawls.
+		logging.Info("Ignoring crawl checkpoint: catalogue was %d assets, now %d", cp.TotalAssets, c.totalAssets)
+		return
+	}
+
+	for _, a := range cp.Assets {
+		if a.GameId == "" {
+			continue
+		}
+		if _, ok := c.seen[a.GameId]; ok {
+			continue
+		}
+		c.seen[a.GameId] = struct{}{}
+		c.assets = append(c.assets, a)
+		if len(a.Tags) > 0 {
+			set := make(map[string]struct{}, len(a.Tags))
+			for _, t := range a.Tags {
+				set[t] = struct{}{}
+			}
+			c.tagSets[a.GameId] = set
+		}
+	}
+	for _, label := range cp.DoneSlices {
+		c.doneSlices[label] = struct{}{}
+	}
+	c.maxRootRank = cp.MaxRootRank
+
+	logging.Info("Resuming crawl from checkpoint %s old: %d assets, %d slices already done",
+		time.Since(updated).Round(time.Minute), len(c.assets), len(c.doneSlices))
+}
+
+// checkpoint persists progress so far, at most once per checkpointInterval.
+// Failure is logged and ignored: losing a checkpoint costs a restart, whereas
+// aborting the crawl over one loses the crawl.
+func (c *crawler) checkpoint(force bool) {
+	c.mu.Lock()
+	if !force && time.Since(c.lastCheckpoint) < checkpointInterval {
+		c.mu.Unlock()
+		return
+	}
+	c.lastCheckpoint = time.Now()
+
+	// Copy under the lock; the upload below must not hold it, since the crawl
+	// keeps recording assets throughout.
+	//
+	// Tags are materialised into the copy rather than left to attachTags at the
+	// end of the crawl: a checkpoint has to be self-contained, or resuming from
+	// one would silently drop every tag learned before the interruption.
+	assets := make([]models.Asset, len(c.assets))
+	copy(assets, c.assets)
+	for i := range assets {
+		set := c.tagSets[assets[i].GameId]
+		if len(set) == 0 {
+			continue
+		}
+		tags := make([]string, 0, len(set))
+		for t := range set {
+			tags = append(tags, t)
+		}
+		sort.Strings(tags)
+		assets[i].Tags = tags
+	}
+
+	cp := storage.Checkpoint{
+		Assets:      assets,
+		DoneSlices:  make([]string, 0, len(c.doneSlices)),
+		MaxRootRank: c.maxRootRank,
+		TotalAssets: c.totalAssets,
+	}
+	for label := range c.doneSlices {
+		cp.DoneSlices = append(cp.DoneSlices, label)
+	}
+	c.mu.Unlock()
+
+	if err := storage.PutCheckpoint(cp); err != nil {
+		logging.Warning("Failed to write crawl checkpoint: %v", err)
+		return
+	}
+	logging.Debug("Checkpointed %d assets, %d slices done", len(cp.Assets), len(cp.DoneSlices))
 }
 
 // maxConcurrentRequests bounds how many fetches are in flight. Request pacing
@@ -348,8 +476,9 @@ func (c *crawler) done() bool {
 }
 
 // record adds a page's assets, returning how many were new. Assets already
-// seen in an earlier slice keep the rank they were first given.
-func (c *crawler) record(assets []models.Asset) int {
+// seen in an earlier slice keep the rank they were first given, but still
+// contribute this slice's tags.
+func (c *crawler) record(assets []models.Asset, sliceTags []string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -358,14 +487,49 @@ func (c *crawler) record(assets []models.Asset) int {
 		if a.GameId == "" {
 			continue
 		}
-		if _, ok := c.seen[a.GameId]; ok {
-			continue
+		if _, ok := c.seen[a.GameId]; !ok {
+			c.seen[a.GameId] = struct{}{}
+			c.assets = append(c.assets, a)
+			added++
 		}
-		c.seen[a.GameId] = struct{}{}
-		c.assets = append(c.assets, a)
-		added++
+
+		// Deliberately outside the new-asset branch: an asset already collected
+		// from tag-pixel-art still teaches us something when it turns up again
+		// under tag-sprites.
+		for _, t := range sliceTags {
+			set := c.tagSets[a.GameId]
+			if set == nil {
+				set = make(map[string]struct{}, len(sliceTags))
+				c.tagSets[a.GameId] = set
+			}
+			set[t] = struct{}{}
+		}
 	}
 	return added
+}
+
+// attachTags materialises the accumulated tag sets onto the collected assets.
+// Called once after the crawl: doing it per sighting would mean rewriting a
+// slice header on every duplicate, which is most of what the crawl sees.
+func (c *crawler) attachTags() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	tagged := 0
+	for i := range c.assets {
+		set := c.tagSets[c.assets[i].GameId]
+		if len(set) == 0 {
+			continue
+		}
+		tags := make([]string, 0, len(set))
+		for t := range set {
+			tags = append(tags, t)
+		}
+		sort.Strings(tags) // stable output, so reruns diff cleanly
+		c.assets[i].Tags = tags
+		tagged++
+	}
+	logging.Info("Attached tags to %d/%d assets", tagged, len(c.assets))
 }
 
 func (c *crawler) run(slices []fetcher.Slice) {
@@ -384,8 +548,24 @@ func (c *crawler) run(slices []fetcher.Slice) {
 			logging.Error("Skipping invalid slice %q: violates the browse URL grammar", s.Label())
 			continue
 		}
+
+		label := s.Label()
+		c.mu.Lock()
+		_, alreadyDone := c.doneSlices[label]
+		c.mu.Unlock()
+		if alreadyDone {
+			c.slicesDone.Add(1)
+			continue
+		}
+
 		c.runSlice(s)
+
+		c.mu.Lock()
+		c.doneSlices[label] = struct{}{}
+		c.mu.Unlock()
 		c.slicesDone.Add(1)
+
+		c.checkpoint(false)
 	}
 }
 
@@ -487,7 +667,7 @@ func (c *crawler) fetchPages(s fetcher.Slice, start, end int64, isRoot bool) ([]
 				logging.Error("Failed to parse %s page %d: %v", s.Label(), pageNum, err)
 				return
 			}
-			perPage[i] = c.record(assets)
+			perPage[i] = c.record(assets, s.Tags)
 		}(i)
 	}
 	wg.Wait()

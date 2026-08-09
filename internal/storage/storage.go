@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	BucketName       = "itchgrep-data"
-	DataFileName     = "assets.json"
-	TagsFileName     = "tags.json"
-	IndexDirName     = "index.bleve"
-	IndexArchiveName = "index.bleve.gz.tar"
+	BucketName         = "itchgrep-data"
+	DataFileName       = "assets.json"
+	TagsFileName       = "tags.json"
+	CheckpointFileName = "checkpoint.json"
+	IndexDirName       = "index.bleve"
+	IndexArchiveName   = "index.bleve.gz.tar"
 )
 
 var ArchiveFormat = archiver.CompressedArchive{
@@ -163,6 +164,86 @@ func PutTags(tags []models.Tag) error {
 		return fmt.Errorf("Writer.Close: %v", err)
 	}
 	return nil
+}
+
+// Checkpoint is a partially-complete crawl, written periodically so that a run
+// killed part way through is resumable instead of worthless. A full crawl is
+// ~75 minutes and lives entirely in memory until it publishes.
+type Checkpoint struct {
+	Assets      []models.Asset
+	DoneSlices  []string // Slice.Label() values already finished
+	MaxRootRank int64    // so slice-only assets keep ranking behind root-ranked ones
+	TotalAssets int64    // catalogue size when the checkpoint was taken
+}
+
+// PutCheckpoint overwrites the crawl checkpoint.
+func PutCheckpoint(cp Checkpoint) error {
+	ctx := context.Background()
+
+	client, err := createClient(ctx)
+	if err != nil {
+		return fmt.Errorf("storage.NewClient: %v", err)
+	}
+
+	cpJSON, err := json.Marshal(cp)
+	if err != nil {
+		return fmt.Errorf("json.Marshal: %v", err)
+	}
+
+	w := client.Bucket(BucketName).Object(CheckpointFileName).NewWriter(ctx)
+	if _, err := w.Write(cpJSON); err != nil {
+		return fmt.Errorf("Writer.Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("Writer.Close: %v", err)
+	}
+	return nil
+}
+
+// GetCheckpoint returns the stored checkpoint and when it was written. A
+// missing checkpoint is the normal case - it just means the last crawl
+// finished cleanly - so callers treat the error as "start fresh".
+func GetCheckpoint() (Checkpoint, time.Time, error) {
+	ctx := context.Background()
+	client, err := createClient(ctx)
+	if err != nil {
+		return Checkpoint{}, time.Time{}, fmt.Errorf("storage.NewClient: %v", err)
+	}
+
+	obj := client.Bucket(BucketName).Object(CheckpointFileName)
+	attrs, err := obj.Attrs(ctx)
+	if err != nil {
+		return Checkpoint{}, time.Time{}, fmt.Errorf("Object.Attrs: %v", err)
+	}
+
+	r, err := obj.NewReader(ctx)
+	if err != nil {
+		return Checkpoint{}, time.Time{}, fmt.Errorf("Object.NewReader: %v", err)
+	}
+	defer r.Close()
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return Checkpoint{}, time.Time{}, fmt.Errorf("io.ReadAll: %v", err)
+	}
+
+	var cp Checkpoint
+	if err := json.Unmarshal(data, &cp); err != nil {
+		return Checkpoint{}, time.Time{}, fmt.Errorf("json.Unmarshal: %v", err)
+	}
+	return cp, attrs.Updated, nil
+}
+
+// DeleteCheckpoint removes the checkpoint after a crawl publishes. A stale
+// checkpoint left behind would make the next run resume a crawl that already
+// completed, so failing to delete it is worth logging but not fatal.
+func DeleteCheckpoint() error {
+	ctx := context.Background()
+	client, err := createClient(ctx)
+	if err != nil {
+		return fmt.Errorf("storage.NewClient: %v", err)
+	}
+	return client.Bucket(BucketName).Object(CheckpointFileName).Delete(ctx)
 }
 
 // GetTags returns the cached tag universe and when it was written. A missing

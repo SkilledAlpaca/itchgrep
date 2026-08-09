@@ -6,12 +6,19 @@ import "fmt"
 // Assets are serialised to JSON and stored as a single object in the
 // Google Cloud Storage bucket named by storage.BucketName.
 type Asset struct {
-	GameId        string
-	Title         string
-	Author        string
-	Description   string
-	Link          string
-	ThumbUrl      string
+	GameId      string
+	Title       string
+	Author      string
+	Description string
+	Link        string
+	ThumbUrl    string
+	// Tags an asset was found under, sorted. itch.io's listing JSON does not
+	// carry tags, so these are inferred from which tag-filtered views the asset
+	// appeared in during the crawl: free information, since the crawl already
+	// visits many such views and would otherwise discard everything but the
+	// first sighting. Necessarily a subset of the asset's real tags - only tags
+	// the crawl actually visited can appear.
+	Tags          []string
 	InvPopularity int64 // inverse popularity, derived from page number of the asset
 }
 
@@ -33,9 +40,10 @@ type IndexedAsset struct {
 	Title         string
 	Author        string
 	Description   string
+	Tags          []string
 	InvPopularity int64
 }
 
 func (a IndexedAsset) String() string {
-	return fmt.Sprintf("GameId: %s, Title: %s, Author: %s, Description: %s, InvPopularity: %d", a.GameId, a.Title, a.Author, a.Description, a.InvPopularity)
+	return fmt.Sprintf("GameId: %s, Title: %s, Author: %s, Description: %s, Tags: %v, InvPopularity: %d", a.GameId, a.Title, a.Author, a.Description, a.Tags, a.InvPopularity)
 }

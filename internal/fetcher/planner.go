@@ -27,6 +27,48 @@ const (
 // page through under one ordering yields different assets under another.
 var allSorts = []string{SortDefault, SortNewest, SortNewAndPopular, SortTopRated}
 
+// Filter segments. These occupy the same slot as a sort but are not orderings:
+// they narrow the result set, so each one is a genuinely different set of
+// assets rather than a different window onto the same set.
+const (
+	FilterNone = ""
+
+	// FilterFree and FilterPaid partition the catalogue. Measured 2026-08-09:
+	// free 53,021 + store 55,907 = 108,928 against a catalogue of 108,585, so
+	// every asset is in exactly one. This is the only true partition itch.io
+	// exposes - tag facets are a set cover, with no "NOT tag-X" to split on -
+	// which makes it the most valuable filter by a wide margin: it gives every
+	// oversized tag two disjoint windows instead of one.
+	//
+	// /game-assets/paid 301s to /game-assets/store, so store is the canonical
+	// spelling of "not free".
+	FilterFree = "free"
+	FilterPaid = "store"
+
+	// FilterRecent surfaces newly published assets that popularity-ordered
+	// views bury. It shifts daily, so unlike the others it is not stable
+	// between runs.
+	FilterRecent = "last-30-days"
+)
+
+// allFilters is every filter applied to oversized tags.
+//
+// Deliberately excluded as volatile: on-sale, top-sellers, 5-dollars-or-less
+// and 15-dollars-or-less all track pricing that changes underneath us, so
+// slices built on them would not be reproducible between runs.
+//
+// There is no price ordering to add here. itch.io ignores ?sort= entirely -
+// ?sort=price and ?sort=newest both return byte-identical results to the
+// default - and the path-segment sorts are newest, top-rated and
+// new-and-popular only.
+var allFilters = []string{
+	FilterFree,
+	FilterPaid,
+	FilterRecent,
+	"genre-platformer",
+	"genre-rpg",
+}
+
 // Slice is one browsable view of the catalogue: a URL that can be paged
 // through up to MaxPagesPerView times.
 //
@@ -37,14 +79,19 @@ var allSorts = []string{SortDefault, SortNewest, SortNewAndPopular, SortTopRated
 //	/game-assets/tag-A              one tag
 //	/game-assets/<sort>/tag-A       sort plus one tag
 //	/game-assets/tag-A/tag-B        two tags, default sort only, A < B
+//	/game-assets/<filter>/tag-A     filter plus one tag
 //
-// Three tags is a 403. A sort together with two tags is a 403. Tags out of
-// lexicographic order is a 301. There is no deeper subdivision available,
-// which is why PlanSlices cannot simply recurse until every view fits.
+// Three tags is a 403. A sort together with two tags is a 403. A sort together
+// with a filter is a 403. A filter with two tags is a 403. The filter segment
+// must precede the tag - /game-assets/tag-pixel-art/free is a 301 - and tags
+// out of lexicographic order is a 301 too. There is no deeper subdivision
+// available, which is why PlanSlices cannot simply recurse until every view
+// fits.
 type Slice struct {
-	Sort  string   // SortDefault, or one of the named orderings
-	Tags  []string // canonical (lexicographic) order; empty means the root view
-	Count int64    // reported result count, for ordering the crawl
+	Sort   string   // SortDefault, or one of the named orderings
+	Filter string   // FilterNone, or one of allFilters; never set alongside Sort
+	Tags   []string // canonical (lexicographic) order; empty means the root view
+	Count  int64    // reported result count, for ordering the crawl
 }
 
 // Valid reports whether this slice satisfies the URL grammar above. A slice
@@ -60,6 +107,23 @@ func (s Slice) Valid() bool {
 	if len(s.Tags) == 2 && s.Tags[0] >= s.Tags[1] {
 		return false
 	}
+	if s.Filter != FilterNone {
+		// A filter occupies the same segment slot as a sort, and cannot share
+		// the view with a second tag.
+		if s.Sort != SortDefault || len(s.Tags) > 1 {
+			return false
+		}
+		known := false
+		for _, f := range allFilters {
+			if f == s.Filter {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return false
+		}
+	}
 	switch s.Sort {
 	case SortDefault, SortNewest, SortNewAndPopular, SortTopRated:
 		return true
@@ -73,6 +137,10 @@ func (s Slice) Path() string {
 	parts := []string{"/game-assets"}
 	if s.Sort != SortDefault {
 		parts = append(parts, s.Sort)
+	}
+	// The filter precedes the tag; the reverse ordering is a 301.
+	if s.Filter != FilterNone {
+		parts = append(parts, s.Filter)
 	}
 	for _, t := range s.Tags {
 		parts = append(parts, "tag-"+t)
@@ -156,6 +224,18 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 		for _, srt := range allSorts {
 			out = append(out, Slice{Sort: srt, Tags: []string{t.Slug}, Count: t.Count})
 		}
+		// Filters go further than orderings: they narrow the result set rather
+		// than reshuffling it, so free/tag-X and store/tag-X are disjoint and
+		// between them contain every asset carrying the tag. A big tag that no
+		// ordering can exhaust is often fully covered by that pair alone.
+		//
+		// Count is the tag's total, which is only an upper bound on any filtered
+		// subset. That is deliberate: it costs one 404 to discover the real end
+		// of a shorter view, which FetchExhausted then handles, and it avoids a
+		// request per filter per tag just to size them up front.
+		for _, f := range allFilters {
+			out = append(out, Slice{Filter: f, Tags: []string{t.Slug}, Count: t.Count})
+		}
 	}
 
 	// The residual: assets every one of whose tags is big. Pairing two big
@@ -187,5 +267,11 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 	// The root view leads, unconditionally: it is the only view whose page
 	// numbers are a global popularity rank (see InvPopularity handling in the
 	// dataservice), so it has to be crawled before anything else assigns one.
-	return append([]Slice{{Count: 0}}, out...)
+	//
+	// Its Count is the ceiling rather than 0. The root view spans the whole
+	// catalogue, so it is worth paging to the cap - and a Count of 0 makes
+	// PagesToFetch round down to a single page, which silently reduces the
+	// global popularity ranking to one page's worth and leaves every other
+	// asset ranked only within whichever slice happened to find it first.
+	return append([]Slice{{Count: ceiling}}, out...)
 }

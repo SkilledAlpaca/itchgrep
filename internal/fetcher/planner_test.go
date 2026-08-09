@@ -122,8 +122,8 @@ func TestPlanSlicesTerminatesWhenEveryTagIsBig(t *testing.T) {
 
 	got := PlanSlices(tags, testItemsPerPage)
 
-	// 5 tags x 4 sorts + C(5,2) pairs + root
-	assert.Len(t, got, 5*4+10+1)
+	// 5 tags x (4 sorts + every filter) + C(5,2) pairs + root
+	assert.Len(t, got, 5*(4+len(allFilters))+10+1)
 }
 
 func TestPlanSlicesIgnoresEmptySlugs(t *testing.T) {
@@ -182,4 +182,82 @@ func TestPagesToFetchCapsAtTheViewLimit(t *testing.T) {
 	assert.EqualValues(t, 28, Slice{Count: 1000}.PagesToFetch(testItemsPerPage))
 	assert.EqualValues(t, 1, Slice{Count: 0}.PagesToFetch(testItemsPerPage))
 	assert.EqualValues(t, 0, Slice{Count: 1000}.PagesToFetch(0), "guard against divide-by-zero")
+}
+
+func TestFilterSlicePathPutsFilterBeforeTag(t *testing.T) {
+	// /game-assets/tag-pixel-art/free is a 301; the filter must lead.
+	s := Slice{Filter: FilterFree, Tags: []string{"pixel-art"}}
+	assert.Equal(t, "/game-assets/free/tag-pixel-art", s.Path())
+	assert.True(t, s.Valid())
+}
+
+func TestFilterIsInvalidAlongsideASortOrASecondTag(t *testing.T) {
+	// Both of these are 403s from itch.io, so emitting one is a planner bug.
+	assert.False(t, Slice{Sort: SortNewest, Filter: FilterFree, Tags: []string{"a"}}.Valid(),
+		"sort plus filter is a 403")
+	assert.False(t, Slice{Filter: FilterFree, Tags: []string{"a", "b"}}.Valid(),
+		"filter plus two tags is a 403")
+	assert.False(t, Slice{Filter: "on-sale", Tags: []string{"a"}}.Valid(),
+		"filters outside allFilters are deliberately not crawlable")
+}
+
+func TestPlanSlicesGivesBigTagsBothHalvesOfThePricePartition(t *testing.T) {
+	// free and store partition the catalogue, so together they contain every
+	// asset carrying an oversized tag - the one place the 200-page cap is
+	// genuinely escapable.
+	tags := []models.Tag{{Slug: "pixel-art", Count: 36324}}
+	out := PlanSlices(tags, 36)
+
+	var free, paid bool
+	for _, s := range out {
+		if len(s.Tags) == 1 && s.Tags[0] == "pixel-art" {
+			switch s.Filter {
+			case FilterFree:
+				free = true
+			case FilterPaid:
+				paid = true
+			}
+		}
+	}
+	assert.True(t, free, "big tags must be crawled under the free filter")
+	assert.True(t, paid, "big tags must be crawled under the paid filter")
+}
+
+func TestPlanSlicesDoesNotFilterSmallTags(t *testing.T) {
+	// A small tag is already fully pageable, so filtering it only re-fetches
+	// assets already collected.
+	out := PlanSlices([]models.Tag{{Slug: "isometric", Count: 1549}}, 36)
+	for _, s := range out {
+		assert.Equal(t, FilterNone, s.Filter,
+			"slice %q filters a tag that needs no filtering", s.Label())
+	}
+}
+
+func TestEveryPlannedSliceIsValid(t *testing.T) {
+	// Asserted over the whole output, not a sample: an invalid slice is a 403
+	// at crawl time, and the filter dimension multiplies the ways to get it
+	// wrong.
+	tags := []models.Tag{
+		{Slug: "pixel-art", Count: 36324},
+		{Slug: "sprites", Count: 15486},
+		{Slug: "2d", Count: 40389},
+		{Slug: "isometric", Count: 1549},
+		{Slug: "fonts", Count: 405},
+	}
+	for _, s := range PlanSlices(tags, 36) {
+		assert.True(t, s.Valid(), "planner emitted an invalid slice: %q", s.Label())
+	}
+}
+
+func TestRootSliceIsPagedToTheCap(t *testing.T) {
+	// The root view is the only source of a global popularity rank. A Count of
+	// 0 here rounds PagesToFetch down to a single page, which leaves
+	// InvPopularity meaning "page within whichever slice found it first" for
+	// the entire catalogue - a silent failure with no error anywhere.
+	got := PlanSlices([]models.Tag{smallTag("fonts")}, testItemsPerPage)
+
+	root := got[0]
+	assert.Empty(t, root.Tags, "the root view must lead the plan")
+	assert.Equal(t, int64(MaxPagesPerView), root.PagesToFetch(testItemsPerPage),
+		"the root view must page to the cap, not to one page")
 }

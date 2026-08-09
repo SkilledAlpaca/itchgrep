@@ -239,9 +239,18 @@ func buildFuzzyQuery(queryString string, fuzzyness int, prefixLen int) *query.Di
 	authorQuery.SetBoost(1)
 	authorQuery.SetPrefix(prefixLen)
 	authorQuery.SetFuzziness(fuzzyness)
+	// Tags are curated classification rather than prose, so a hit here is a
+	// stronger signal than one in a description that merely mentions the word.
+	// Slugs are hyphenated ("pixel-art"), which bleve's standard analyser
+	// splits into terms, so a "pixel art" query matches without special casing.
+	tagQuery := bleve.NewMatchQuery(queryString)
+	tagQuery.SetField("Tags")
+	tagQuery.SetBoost(4)
+	tagQuery.SetPrefix(prefixLen)
+	tagQuery.SetFuzziness(fuzzyness)
 
 	// Combine queries with a disjunction (OR) query
-	query := bleve.NewDisjunctionQuery(titleQuery, descriptionQuery, authorQuery)
+	query := bleve.NewDisjunctionQuery(titleQuery, descriptionQuery, authorQuery, tagQuery)
 	return query
 }
 
@@ -255,9 +264,12 @@ func buildExactQuery(queryString string) *query.DisjunctionQuery {
 	authorQuery := bleve.NewMatchQuery(queryString)
 	authorQuery.SetField("Author")
 	authorQuery.SetBoost(1)
+	tagQuery := bleve.NewMatchQuery(queryString)
+	tagQuery.SetField("Tags")
+	tagQuery.SetBoost(4)
 
 	// Combine queries with a disjunction (OR) query
-	query := bleve.NewDisjunctionQuery(titleQuery, descriptionQuery, authorQuery)
+	query := bleve.NewDisjunctionQuery(titleQuery, descriptionQuery, authorQuery, tagQuery)
 	return query
 }
 
