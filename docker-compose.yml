@@ -10,7 +10,8 @@
 #   2. dataservice      - scrapes itch.io, builds the bleve index, uploads both
 #   3. indexer          - one-shot job: creates the bucket, triggers the scrape,
 #                         waits until the data is actually in the bucket
-#   4. webserver        - http://localhost:8080 (only starts once data exists)
+#   4. webserver        - http://localhost:8080 (starts immediately; serves 503
+#                         until an index exists, then picks it up within ~60s)
 #
 # The first run crawls the whole itch.io asset catalogue (~108,000 assets) at a
 # deliberately polite 2 requests/second, so expect an hour or more. It cannot be
@@ -164,11 +165,20 @@ services:
       PORT: "8080"
     ports:
       - "8080:8080"
+    # Deliberately NOT gated on the indexer completing. The webserver tolerates
+    # having no data - it serves 503 and retries the load in the background -
+    # and it re-checks storage per request (throttled to once a minute), so it
+    # picks up a newly published index on its own within ~60s.
+    #
+    # So on any run after the first it serves the PREVIOUS index immediately
+    # while a re-scrape runs, then swaps atomically when the new one lands.
+    # Gating on the indexer bought nothing and cost an hour of downtime per
+    # scrape - and made `docker compose up -d` block for the whole crawl,
+    # because Compose cannot return until a service_completed_successfully
+    # dependency finishes.
     depends_on:
       fake-gcs-server:
         condition: service_started
-      indexer:
-        condition: service_completed_successfully
 
 volumes:
   gcs-data:

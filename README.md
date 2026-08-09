@@ -57,8 +57,9 @@ docker compose up --build
 > reuses the previously built image and will silently run stale code.
 
 This starts a local GCS emulator, builds and runs the `dataservice`, triggers a
-full scrape + index of itch.io, and only then starts the `webserver` on
-[localhost:8080](http://localhost:8080).
+full scrape + index of itch.io, and brings up the `webserver` on
+[localhost:8080](http://localhost:8080) straight away — it does not wait for the
+scrape.
 
 > The first run crawls the whole asset catalogue (~108,000 assets) at a
 > deliberately polite 2 requests/second, so expect an hour or more. Progress is
@@ -167,9 +168,12 @@ SCRAPE_MAX_PAGES=20 docker compose up --build
 $env:SCRAPE_MAX_PAGES=20; docker compose up --build
 ```
 
-> Note that the webserver deliberately does not start until the scrape has
-> finished and data exists in the bucket, so port 8080 will refuse connections
-> for the duration of the scrape. Port 4443 is the GCS emulator, not the app.
+> The webserver starts immediately and stays up during a scrape. On the very
+> first run there is nothing to serve yet, so it answers `503 Cache not ready
+> yet` until the crawl publishes, then picks the index up on its own within
+> about a minute. On later runs it serves the *previous* index throughout the
+> re-scrape and swaps to the new one atomically when it lands, so there is no
+> downtime. Port 4443 is the GCS emulator, not the app.
 
 ### Tooling Dependencies
 - [Golang](https://go.dev/)
