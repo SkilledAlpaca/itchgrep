@@ -119,16 +119,29 @@ func fetchAndStoreAssets() {
 	}
 
 	// CREATING INDEX
+	//
+	// Built at the staging path, which sits beside the published index so that
+	// publishing is a rename rather than a copy. A previous run killed between
+	// creating this and publishing it would leave the directory behind, and
+	// bleve.New refuses to open a path that already exists.
 	logging.Info("Creating index...")
+	staging := storage.StagingIndexPath()
+	if err := os.RemoveAll(staging); err != nil {
+		logging.Error("Failed to clear stale staging index at %s: %v", staging, err)
+		return
+	}
 	newIndexMapping := bleve.NewIndexMapping() // TODO: customize as needed
-	newIndex, err := bleve.New(storage.IndexDirName, newIndexMapping)
-	defer os.RemoveAll(storage.IndexDirName) // After we are done, no matter if clean or with error, we remove the index, since it is uploaded to storage.
+	newIndex, err := bleve.New(staging, newIndexMapping)
+	// On any failure below, the half-built index must not be left where the
+	// next run would trip over it. PublishIndex renames it away on success, so
+	// this is a no-op then.
+	defer os.RemoveAll(staging)
 	if err != nil {
 		logging.Error("Failed to create index: %v", err)
 		return
 	}
 
-	logging.Info("Created new empty index at %s", storage.IndexDirName)
+	logging.Info("Created new empty index at %s", staging)
 
 	// first, convert the assets to IndexedAssets, which are smaller and used for indexing
 	var smolAssets []models.IndexedAsset = make([]models.IndexedAsset, len(assets))
@@ -164,28 +177,21 @@ func fetchAndStoreAssets() {
 	newIndex.Close()  // close the index
 	logging.Info("Successfully indexed %d assets", assetsIndexed)
 
-	// STORING INDEX
-	logging.Info("Storing index in cloud storage file")
-	dir, err := os.ReadDir(storage.IndexDirName)
-	if err != nil {
-		logging.Error("Failed to read dir: %v", err)
-	}
-	for _, entry := range dir {
-		logging.Info("DEBUG: entry: %s", entry.Name())
-	}
-
-	err = storage.PutFS(storage.IndexDirName, storage.IndexArchiveName)
-	if err != nil {
-		logging.Error("Failed to put index: %v", err)
+	// PUBLISHING
+	//
+	// Index first, assets.json second. The webserver watches assets.json's
+	// timestamp to decide a new dataset is ready, so this ordering guarantees
+	// the index it then opens is the one matching those assets.
+	logging.Info("Publishing index to %s", storage.IndexPath())
+	if err := storage.PublishIndex(); err != nil {
+		logging.Error("Failed to publish index: %v", err)
 		return
 	}
-	logging.Info("Successfully stored index")
+	logging.Info("Successfully published index")
 
-	// STORING ASSETS
-	logging.Info("Storing assets in cloud storage file")
-	err = storage.PutAssets(assets)
-	if err != nil {
-		logging.Error("Failed to put assets, stopping here and not putting index: %v", err)
+	logging.Info("Storing assets")
+	if err := storage.PutAssets(assets); err != nil {
+		logging.Error("Failed to put assets: %v", err)
 		return
 	}
 	logging.Info("Successfully stored assets")
@@ -572,7 +578,7 @@ func (c *crawler) run(slices []fetcher.Slice) {
 // runSlice pages through one view, stopping when the view is exhausted, when
 // it stops yielding anything new, or when the crawl as a whole is done.
 func (c *crawler) runSlice(s fetcher.Slice) {
-	isRoot := s.Sort == fetcher.SortDefault && len(s.Tags) == 0
+	isRoot := s.IsRoot()
 	maxPages := s.PagesToFetch(c.itemsPerPage)
 
 	// Trailing window of per-page yields. A single page is too noisy to judge

@@ -105,7 +105,7 @@ func TestPlanSlicesOrdersRemainderLargestFirst(t *testing.T) {
 	}
 
 	got := PlanSlices(tags, testItemsPerPage)
-	require.Len(t, got, 4) // root + three small tags
+	require.Len(t, got, 1+len(allFilters)+3) // root + filter-only views + three small tags
 
 	rest := got[1:]
 	for i := 1; i < len(rest); i++ {
@@ -122,8 +122,8 @@ func TestPlanSlicesTerminatesWhenEveryTagIsBig(t *testing.T) {
 
 	got := PlanSlices(tags, testItemsPerPage)
 
-	// 5 tags x (4 sorts + every filter) + C(5,2) pairs + root
-	assert.Len(t, got, 5*(4+len(allFilters))+10+1)
+	// 5 tags x (4 sorts + every filter) + C(5,2) pairs + filter-only views + root
+	assert.Len(t, got, 5*(4+len(allFilters))+10+len(allFilters)+1)
 }
 
 func TestPlanSlicesIgnoresEmptySlugs(t *testing.T) {
@@ -228,8 +228,51 @@ func TestPlanSlicesDoesNotFilterSmallTags(t *testing.T) {
 	// assets already collected.
 	out := PlanSlices([]models.Tag{{Slug: "isometric", Count: 1549}}, 36)
 	for _, s := range out {
+		if len(s.Tags) == 0 {
+			continue // filter-only views carry no tag to over-fetch
+		}
 		assert.Equal(t, FilterNone, s.Filter,
 			"slice %q filters a tag that needs no filtering", s.Label())
+	}
+}
+
+func TestPlanSlicesIncludesUntaggedFilterViews(t *testing.T) {
+	// The one class of view that can reach an asset carrying no tag we know
+	// about. Without these the plan has exactly one untagged view - the root -
+	// and it stops at 7,200 assets.
+	got := PlanSlices([]models.Tag{smallTag("fonts")}, testItemsPerPage)
+
+	seen := map[string]bool{}
+	for _, s := range got {
+		if len(s.Tags) == 0 && s.Filter != FilterNone {
+			seen[s.Filter] = true
+			assert.True(t, s.Valid(), "filter-only slice %q is not a valid URL", s.Path())
+			assert.Equal(t, int64(MaxPagesPerView), s.PagesToFetch(testItemsPerPage),
+				"a filter-only view must page to the cap")
+		}
+	}
+	for _, f := range allFilters {
+		assert.True(t, seen[f], "filter %q has no untagged view in the plan", f)
+	}
+}
+
+func TestFilterOnlySlicesAreNotMistakenForTheRoot(t *testing.T) {
+	// Two distinct failures ride on this. Label() is the checkpoint key, so a
+	// collision makes a resumed crawl skip views it never crawled; and IsRoot
+	// drives both global popularity ranking and the exemption from early
+	// abandonment in the dataservice.
+	free := Slice{Filter: FilterFree}
+	root := Slice{}
+
+	assert.True(t, root.IsRoot())
+	assert.False(t, free.IsRoot(), "a filter-only view ranks only within its own subset")
+	assert.Equal(t, "root", root.Label())
+	assert.Equal(t, "free", free.Label())
+
+	labels := map[string]bool{}
+	for _, s := range PlanSlices([]models.Tag{bigTag("pixel-art"), smallTag("fonts")}, testItemsPerPage) {
+		assert.False(t, labels[s.Label()], "duplicate slice label %q collides in the checkpoint", s.Label())
+		labels[s.Label()] = true
 	}
 }
 

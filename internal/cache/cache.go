@@ -6,7 +6,6 @@ import (
 	"itchgrep/internal/logging"
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -23,8 +22,13 @@ var ErrNotReady = errors.New("cache: not ready")
 // expiryCheckTTL is the minimum interval between live storage.GetAssetsUpdateTime
 // checks in IsCacheExpired. The underlying data only changes when the
 // dataservice finishes a scrape (at most once a day), so checking on every
-// single HTTP request is pointless network overhead.
-const expiryCheckTTL = 60 * time.Second
+// single HTTP request is wasted work.
+//
+// It used to be 60s, when the check was a GCS round-trip. Against a local
+// directory it is an os.Stat, so the throttle exists only to keep the syscall
+// off the hot path - and a shorter one means a freshly published index is
+// picked up in seconds instead of up to a minute.
+const expiryCheckTTL = 5 * time.Second
 
 type Cache struct {
 	cacheLock sync.RWMutex
@@ -32,10 +36,6 @@ type Cache struct {
 	dataMap map[string]models.Asset
 	data    []models.Asset
 	index   bleve.Index
-
-	// indexTempDir is the os.MkdirTemp directory backing the currently open
-	// index. It is removed once a subsequent successful refresh replaces it.
-	indexTempDir string
 
 	// the time the data was last updated on the server.
 	// if we check if the current time is greater than this time, we know the
@@ -163,27 +163,18 @@ func (c *Cache) doRefresh() error {
 	fetchTime := time.Since(preFetchTime)
 	logging.Info("Fetched %d assets in %v", len(newData), fetchTime)
 
-	// fetch index data into a unique temp dir so concurrent/successive
-	// refreshes never extract on top of each other or the live index.
-	tempDir, err := os.MkdirTemp("", "itchgrep-index-*")
-	if err != nil {
-		return fmt.Errorf("os.MkdirTemp: %w", err)
-	}
-
+	// Open the published index in place. There is no copy: the dataservice
+	// publishes by renaming a new directory over the old one, so this open
+	// resolves to the new inode while the currently-live index below keeps
+	// serving from the old one, which stays valid until we close it.
 	preFetchTime = time.Now()
-	indexPath, err := storage.GetFS(storage.IndexArchiveName, tempDir)
-	if err != nil {
-		os.RemoveAll(tempDir)
-		return fmt.Errorf("storage.GetFS: %w", err)
-	}
-
+	indexPath := storage.IndexPath()
 	newIndex, err := bleve.Open(indexPath)
 	if err != nil {
-		os.RemoveAll(tempDir)
-		return fmt.Errorf("bleve.Open: %w", err)
+		return fmt.Errorf("bleve.Open %s: %w", indexPath, err)
 	}
 	fetchTime = time.Since(preFetchTime)
-	logging.Info("Fetched and opened index in %v", fetchTime)
+	logging.Info("Opened index %s in %v", indexPath, fetchTime)
 
 	// sort newData by popularity (smaller numbers first)
 	slices.SortFunc(newData, func(i, j models.Asset) int {
@@ -200,23 +191,18 @@ func (c *Cache) doRefresh() error {
 	// above failed we must keep serving it.
 	c.cacheLock.Lock()
 	oldIndex := c.index
-	oldTempDir := c.indexTempDir
 	c.index = newIndex
-	c.indexTempDir = tempDir
 	c.data = newData
 	c.dataMap = newDataMap
 	c.dataUpdatedTime = newServerUpdateTime
 	c.cacheLock.Unlock()
 
-	// only now that the new index is live do we tear down the old one.
+	// only now that the new index is live do we tear down the old one. Closing
+	// it also releases the last reference to the directory the dataservice
+	// already unlinked, which is what actually frees the disk space.
 	if oldIndex != nil {
 		if err := oldIndex.Close(); err != nil {
 			logging.Error("Failed to close previous index: %v", err)
-		}
-	}
-	if oldTempDir != "" {
-		if err := os.RemoveAll(oldTempDir); err != nil {
-			logging.Error("Failed to remove previous index temp dir %s: %v", oldTempDir, err)
 		}
 	}
 

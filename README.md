@@ -28,7 +28,6 @@ Your support fuels our passion and helps keep the servers running! If you apprec
 - **[Templ](https://github.com/a-h/templ)**
 - **[Bleve](https://github.com/blevesearch/bleve)**
 - **[HTMX](https://htmx.org/)**
-- **[Google Cloud](https://cloud.google.com/?hl=en)**
 - **[Docker](https://www.docker.com/)**
 
 These tools and technologies were chosen with care to provide a seamless and efficient experience for both developers and users of itchgrep.
@@ -56,16 +55,35 @@ docker compose up --build
 > Use `--build` after any change to the Go source. Plain `docker compose up`
 > reuses the previously built image and will silently run stale code.
 
-This starts a local GCS emulator, builds and runs the `dataservice`, triggers a
-full scrape + index of itch.io, and brings up the `webserver` on
+This builds and runs the `dataservice`, triggers a full scrape + index of
+itch.io, and brings up the `webserver` on
 [localhost:8080](http://localhost:8080) straight away — it does not wait for the
 scrape.
 
 > The first run crawls the whole asset catalogue (~108,000 assets) at a
 > deliberately polite 2 requests/second, so expect an hour or more. Progress is
-> visible in the `dataservice` logs. The result is kept in the `gcs-data`
+> visible in the `dataservice` logs. The result is kept in the `itchgrep-data`
 > docker volume, so subsequent `docker compose up` runs skip the crawl and come
 > up immediately.
+
+#### Storage is a directory
+
+Both services share one volume, mounted at `/data` (`DATA_DIR`). That directory
+*is* the storage layer: `assets.json`, `tags.json`, `checkpoint.json` and
+`index.bleve/`. There is no object store and no emulator.
+
+This used to be Google Cloud Storage, with `fake-gcs-server` standing in
+locally. The workload never needed it — one writer, no ACLs, no signed URLs, no
+listing, no lifecycle rules — and it cost a container, a network hop, and a
+tar+gzip round-trip on every publish to move a 598 MB index across a boundary
+that does not exist when both processes share a volume. Opening the index at
+webserver startup went from ~3.5s to ~30ms when that went away.
+
+The one property GCS did provide is that a reader never sees a half-written
+object. Writes preserve it by landing in a temporary file in the same directory
+and being renamed into place; the index is published the same way, by renaming a
+staged directory over the live one. A webserver holding the old index open is
+unaffected — its file handles follow the inode, not the path.
 
 #### Why the crawl is not just "fetch every page"
 
@@ -84,18 +102,28 @@ loudly rather than degrading:
 /game-assets/tag-A              any single tag
 /game-assets/<sort>/tag-A       sort plus one tag
 /game-assets/tag-A/tag-B        two tags, default sort only, A < B
+/game-assets/<filter>           free | store | last-30-days | genre-*
+/game-assets/<filter>/tag-A     filter plus one tag
 ```
 
-Three tags is a **403**. A sort together with two tags is a **403**. Tags out of
-lexicographic order is a **301**. So views cannot be subdivided arbitrarily, and
-there is no "NOT tag-X" facet to partition with — coverage is the *union* of
-views, which is why it is measured rather than assumed.
+Three tags is a **403**. A sort together with two tags is a **403**. A sort
+together with a filter is a **403**. A filter with two tags is a **403**. The
+filter must precede the tag (`/tag-pixel-art/free` is a **301**) and tags out of
+lexicographic order is a **301** too. So views cannot be subdivided arbitrarily,
+and with one exception there is no "NOT tag-X" facet to partition with —
+coverage is the *union* of views, which is why it is measured rather than
+assumed.
+
+The exception is price: `free` and `store` are a true partition (measured
+53,021 + 55,907 against a catalogue of 108,585, so every asset is in exactly
+one), which is why big tags are crawled under both.
 
 The plan rests on one observation: an asset is fully reachable if it carries at
-least one tag small enough to page through. Assets carry ~9 tags each and most
+least one tag small enough to page through. Assets carry ~5 tags each and most
 tags are small, so a view per small tag covers the large majority; big tags are
-taken under all four orderings, and the remainder is reached by pairing big tags
-with each other.
+taken under all four orderings and every filter, and the remainder is reached by
+pairing big tags with each other. Each filter also gets one untagged view of its
+own — the only shape that can reach an asset carrying no tag at all.
 
 - Re-scrape and rebuild the index: `FORCE_REINDEX=true docker compose up indexer`
   (or hit `curl http://localhost:8081/trigger-fetch` directly).
@@ -113,14 +141,21 @@ with each other.
   there to make it visible.
 - Smoke-test the whole pipeline quickly with `SCRAPE_MAX_PAGES`, which caps
   total pages across every view. It still exercises tag discovery, crawling,
-  indexing, archiving, upload and webserver startup end to end. Because such a
-  run is deliberately partial, it also disarms `COVERAGE_FLOOR` and shrinks tag
+  indexing, publishing and webserver startup end to end. Because such a run is
+  deliberately partial, it also disarms `COVERAGE_FLOOR` and shrinks tag
   discovery — otherwise the run would refuse to publish, and would spend longer
   discovering tags than fetching assets.
-- A full crawl reaches about **79%** of the catalogue (measured: 86,084 of
-  108,585, over 8,931 pages in ~75 minutes). The remainder is assets whose every
-  tag is too big to page through, plus untagged ones; there is no view shape
-  that reaches them.
+- A full crawl reaches about **79.5%** of the catalogue (measured: 86,414 of
+  108,697, over 9,878 pages in ~90 minutes). The remainder is assets no tag view
+  reaches at all, because they carry no tag in the discovered vocabulary.
+  Applying `free`/`store` — a *true* partition — to every oversized tag moved
+  coverage by 0.2 points, which is what rules out the more obvious explanation
+  that the residual is assets whose every tag is too big to page through.
+- A crawl checkpoints every 3 minutes, so a run killed part way through resumes
+  instead of restarting. `CHECKPOINT_MAX_AGE` (default `24h`) bounds how stale a
+  checkpoint may be before it is ignored; one is also discarded if the catalogue
+  size moved underneath it, since coverage arithmetic and the slice plan were
+  both computed against the old size.
 - Coverage knobs: `COVERAGE_TARGET` (default `0.95`) stops the crawl once that
   fraction is collected. It does not trigger in practice — the crawl exhausts
   every slice first — and since it is an upper bound, lowering it only makes
@@ -129,11 +164,11 @@ with each other.
   stalled run cannot replace a good index with a worse one. Keep the floor
   below ~79% or it will reject every otherwise-healthy run.
 - `SLICE_MIN_YIELD` (default `0.05`) abandons a view once it stops yielding new
-  assets. Assets appear in ~9 views each, so without it the overlap dominates
+  assets. Assets appear in ~5 views each, so without it the overlap dominates
   the crawl.
 - Tag discovery seeds from itch.io's own asset tag directory at `/tags/assets`,
   which lists ~607 tags in one document, then walks the co-tag links each facet
-  page offers. It costs one request per tag and is cached in the bucket as
+  page offers. It costs one request per tag and is cached as
   `tags.json`, refreshed when older than `TAG_CACHE_MAX_AGE` (default `168h`).
   `MAX_TAGS` (default `1000`) bounds the total.
 - The seed source matters more than it looks. Seeding instead from the browse
@@ -173,89 +208,49 @@ $env:SCRAPE_MAX_PAGES=20; docker compose up --build
 > yet` until the crawl publishes, then picks the index up on its own within
 > about a minute. On later runs it serves the *previous* index throughout the
 > re-scrape and swaps to the new one atomically when it lands, so there is no
-> downtime. Port 4443 is the GCS emulator, not the app.
+> downtime, and the swap is picked up within a few seconds.
 
 ### Tooling Dependencies
 - [Golang](https://go.dev/)
 - [Task](https://taskfile.dev/)
 - [Docker](https://www.docker.com/)
-- [gcloud](https://cloud.google.com/sdk/gcloud)
 
 ### Running
 The project is split up into two services:
 - The `dataservice`, responsible for fetching the list of assets from [itch.io](https://itch.io/)
 - The `webserver`, presenting the stored data with search tools.
 
-Use the included [Taskfile](https://taskfile.dev/) to run these services.
-> - `task local-dataservice` will launch the `dataservice` with a local instance
->     of GCS. Send a `GET` request to its trigger endpoint: 
->     `curl -X GET "localhost:8080/trigger-fetch"`.
->     This will cause the service to scrape the data from itch.io, index it and
->     store both data and index on the local GCS.
-- !! The way of running described above is currently not working properly, I am
-    looking for assistance on this. Please see [Issue #1](https://github.com/wintermute-cell/itchgrep/issues/1).
-    In the meantime use `task local-dataservice-temp-fix`. This runs the
-    `dataservice` without docker.
-- `task local-webserver` will build and run the web server in a Docker
-    container together with the local GCS in a separate container. `Templ`
-    templates are not copied during the build, but generated inside the
-    container.
+`docker compose up --build` above is the supported path and runs both. To run
+them directly instead, set `DATA_DIR` to a directory both can see:
+
+```bash
+DATA_DIR=./data go run ./cmd/dataservice   # then curl localhost:8080/trigger-fetch
+DATA_DIR=./data PAGE_SIZE=36 go run ./cmd/webserver
+```
+
 - `task templ` will generate `.go` files from any `.templ` files. This is not
     required for building/running, but to provide code completion and stop the
     language server from complaining.
 
 ## Deploying in the Cloud
-The project was created with the intention of hosting both `dataservice` and
-`webserver` on Google Cloud Run. The asset data is intended to be stored in
-Google Cloud Store.
 
-> Google Cloud Run can be replaced with any serverless platform, and Google
-> Cloud Store can be replaced with any object store, but some work will be
-> required if this is your goal, and the following instructions will assume
-> Google Cloud services.
+There is no cloud deployment path any more. `dataservice` and `webserver` used
+to run on Cloud Run against Google Cloud Storage; storage is now a shared
+directory, so both services expect a filesystem they can both see.
 
-To deploy the project on Google Cloud, follow the steps below.
-
-### Setting up `gcloud`
-A couple of preparation steps:
-- Make sure, you have set up a project in your [Google Cloud Console](https://console.cloud.google.com).
-- In your project, create an object store with the name `itchgrep-data`. (You
-    can also use another name here, but you must then change the `const` in the
-    file `internal/storage/storage.go` accordingly)
-- In your project, create a new [service account](https://console.cloud.google.com/iam-admin/serviceaccounts), and give
-    it the role of `Cloud Run Invoker`. Later, we will attach this service account
-    to a scheduler job, to regularly trigger a run of the dataservice.
-- Make sure you have installed the [gcloud CLI](https://cloud.google.com/sdk/gcloud).
-- You may use `task gcloud-setup` to configure `gcloud` for use with this
-    project. Otherwise, make sure to properly configure manually.
-- Adjust all instances of the variables `PROJECT_ID`, `REGION` and `LOCATION`
-    found in the `Taskfile` to fit your Google Cloud project configuration.
-
-### Deploying the dataservice and setting up a Scheduler Job
-- Run `task deploy-dataservice` to build and deploy the dataservice. At the end
-    you will receive a service URL for the newly deployed dataservice.
-- Now, to create a scheduler job, run the following command. Notice how we are
-    passing security critical information as environment variables:
-    ```bash
-    DATASERVICE_URL=https://dataservice-ly6n5ozylq-od.a.run.app \
-    SERVICE_ACCOUNT_EMAIL=cloud-run-invoker@itchgrep.iam.gserviceaccount.com \
-    go-task create-dataservice-scheduler-job
-    ```
-- At this point, you should manually force a run of the dataservice-job in the
-    [cloud scheduler console](https://console.cloud.google.com/cloudscheduler).
-    This will ensure that the object store is populated with data, before we
-    start the webserver for the first time. You should wait around 5 minutes
-    after doing that, before deploying the webserver, so the dataservice has
-    time to fetch and store new data.
-
-### Deploying the webserver
-Run `task deploy-webserver`. No further work should be required.
+Running it on a server is still just `docker compose up -d` — put it behind a
+reverse proxy and keep the `itchgrep-data` volume on real disk. A serverless
+split would mean reintroducing an object store, which is the thing that was
+removed.
 
 ## Testing
-Tests can be run by using the included [Taskfile](https://taskfile.dev/).
 
-- `task test`: Runs all of the test tasks below.
-- `task test-storage`: Tests the `storage` package, requires `Docker` to be running.
+```bash
+go test ./...
+```
+
+No external services are required. The `storage` tests used to need a running
+`fake-gcs-server`; they now run against `t.TempDir()`.
 
 ## Contributing
 - before posting a pull request, please use [`go fmt`](https://go.dev/blog/gofmt) to format your code.

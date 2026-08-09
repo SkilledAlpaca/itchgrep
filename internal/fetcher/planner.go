@@ -157,9 +157,22 @@ func (s Slice) PageURL(pageNum int64) string {
 	return fmt.Sprintf("%s%s?page=%d&format=json", baseURL, s.Path(), pageNum)
 }
 
-// Label is a short human-readable name for logs.
+// IsRoot reports whether this is the unfiltered, unsorted, untagged view.
+//
+// It has to test all three fields. A filter-only slice such as /game-assets/free
+// is also sortless and tagless, and treating one as the root would be wrong in
+// two separate ways: its page numbers would be taken as a global popularity
+// rank (they rank only within the filtered subset), and it would be exempted
+// from early abandonment, costing 200 pages of mostly-duplicate results.
+func (s Slice) IsRoot() bool {
+	return s.Sort == SortDefault && s.Filter == FilterNone && len(s.Tags) == 0
+}
+
+// Label is a short human-readable name for logs, and the key under which a
+// finished slice is recorded in a crawl checkpoint - so it must be unique per
+// slice, or resuming skips views that were never crawled.
 func (s Slice) Label() string {
-	if s.Sort == SortDefault && len(s.Tags) == 0 {
+	if s.IsRoot() {
 		return "root"
 	}
 	return strings.TrimPrefix(s.Path(), "/game-assets/")
@@ -212,6 +225,19 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 	sort.Slice(small, func(i, j int) bool { return small[i].Slug < small[j].Slug })
 
 	var out []Slice
+
+	// Filter-only views, carrying no tag at all. Measured across two full
+	// crawls, the tag slices below plateau at 79.5% of the catalogue, and
+	// applying free/store - a true partition - to every oversized tag moved
+	// that by 0.2 points. So the residual is not "assets whose every tag is too
+	// big to page through"; it is assets no tag view reaches at all, because
+	// they carry no tag in the discovered vocabulary.
+	//
+	// The root view is the only other untagged view, and it stops at 7,200.
+	// These are the only remaining place such an asset can surface.
+	for _, f := range allFilters {
+		out = append(out, Slice{Filter: f, Count: ceiling})
+	}
 
 	// A small tag fits in one view, so one slice covers it completely.
 	for _, t := range small {
