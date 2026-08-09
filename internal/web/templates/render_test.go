@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"itchgrep/pkg/models"
+	"itchgrep/pkg/money"
 
 	"github.com/a-h/templ"
 
@@ -97,8 +98,8 @@ func TestPriceBadgeDistinguishesFreeFromPaid(t *testing.T) {
 func TestRelevanceIsOnlyOfferedWhenThereIsAQuery(t *testing.T) {
 	// With nothing searched for, every document scores the same, so a "best
 	// match" button would sort by nothing while claiming to rank.
-	assert.NotContains(t, render(t, SortControl(Filters{})), "Best match")
-	assert.Contains(t, render(t, SortControl(Filters{Query: "x"})), "Best match")
+	assert.NotContains(t, render(t, SortControl(Filters{}, false)), "Best match")
+	assert.Contains(t, render(t, SortControl(Filters{Query: "x"}, false)), "Best match")
 }
 
 func TestTheLoadMoreTriggerOnlyAppearsWhenMoreExist(t *testing.T) {
@@ -126,4 +127,86 @@ func TestEmptyResultsExplainWhichWayToWiden(t *testing.T) {
 	narrowed := render(t, AssetPage(Filters{}.WithTag("fonts").WithTag("music"), empty))
 	assert.Contains(t, narrowed, "combined with AND")
 	assert.Contains(t, narrowed, "Clear filters")
+}
+
+func TestPayWhatYouWantIsNotJustCalledFree(t *testing.T) {
+	// An author asking for a voluntary payment is doing something different
+	// from giving the asset away, and "Free" hides the difference entirely.
+	r := sampleResults()
+	r.Assets = []models.Asset{
+		{GameId: "1", Title: "Tip Jar Tiles", PayWhatYouWant: true},
+		{GameId: "2", Title: "Minimum Pack", Price: "$4.95", PayWhatYouWant: true},
+		{GameId: "3", Title: "Plain Free", Price: ""},
+	}
+	html := render(t, AssetPage(Filters{}, r))
+
+	assert.Contains(t, html, "Name your price")
+	assert.Contains(t, html, "$4.95+", "a minimum price is a floor, not the price")
+	assert.Contains(t, html, ">Free<")
+}
+
+func TestConvertedPricesAreMarkedApproximateAndSourced(t *testing.T) {
+	// A converted figure is this site's arithmetic, not the seller's offer. It
+	// has to be visibly derived, and the original has to stay reachable.
+	r := sampleResults()
+	r.Rates = money.Fallback()
+	html := render(t, ResultsRegion(Filters{Currency: "EUR"}, r))
+
+	assert.Contains(t, html, "≈", "a conversion must never read as the quoted price")
+	assert.Contains(t, html, "Listed at $4.95", "the figure itch.io quoted stays on hover")
+	assert.Contains(t, html, money.Fallback().Date, "a rate without its date is a claim about today")
+	assert.Contains(t, html, money.ECBSource, "and one without a source is unverifiable")
+}
+
+func TestPricesAreLeftAloneWithoutACurrencyChoice(t *testing.T) {
+	r := sampleResults()
+	r.Rates = money.Fallback()
+	html := render(t, ResultsRegion(Filters{}, r))
+
+	assert.Contains(t, html, ">$4.95<")
+	assert.NotContains(t, html, "≈")
+}
+
+func TestRecencyIsOnlyOfferedWhenTheDataCarriesIt(t *testing.T) {
+	// Same rule as relevance-without-a-query: an ordering the data cannot
+	// support is worse than an ordering that is absent.
+	assert.NotContains(t, render(t, SortControl(Filters{}, false)), "Recently added")
+	assert.Contains(t, render(t, SortControl(Filters{}, true)), "Recently added")
+}
+
+func TestExclusionsRenderAsTheirOwnKindOfChip(t *testing.T) {
+	// An exclusion is the opposite of a filter, so it must not look like one -
+	// otherwise "not pixel-art" reads as "pixel-art" at a glance.
+	f := Filters{}.WithTag("2d").WithNotTag("pixel-art")
+	html := render(t, ResultsRegion(f, sampleResults()))
+
+	assert.Contains(t, html, "is-excluded")
+	assert.Contains(t, html, "not pixel-art")
+	assert.Contains(t, html, `href="/?not=pixel-art&amp;tags=2d"`, "the 2d chip removes only itself")
+}
+
+func TestEveryFacetOffersBothDirections(t *testing.T) {
+	html := render(t, ResultsRegion(Filters{}, sampleResults()))
+
+	assert.Contains(t, html, `href="/?tags=pixel-art"`, "narrow to the tag")
+	assert.Contains(t, html, `href="/?not=pixel-art"`, "or away from it")
+}
+
+func TestTheAuthorOnACardFiltersToThatAuthor(t *testing.T) {
+	html := render(t, ResultsRegion(Filters{}, sampleResults()))
+	assert.Contains(t, html, `href="/?author=ana"`)
+}
+
+func TestChangingCurrencyKeepsEveryOtherFilter(t *testing.T) {
+	// The currency picker is a form, so anything it does not carry as a hidden
+	// field is discarded the moment somebody uses it.
+	f := Filters{Query: "tiles", Price: models.PricingFree}.WithTag("2d").WithNotTag("3d")
+	f.Author = "ana"
+	html := render(t, CurrencyControl(f, money.Fallback()))
+
+	assert.Contains(t, html, `name="q" value="tiles"`)
+	assert.Contains(t, html, `name="tags" value="2d"`)
+	assert.Contains(t, html, `name="not" value="3d"`)
+	assert.Contains(t, html, `name="author" value="ana"`)
+	assert.Contains(t, html, `name="price" value="free"`)
 }

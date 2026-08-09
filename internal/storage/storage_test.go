@@ -2,6 +2,7 @@ package storage
 
 import (
 	"itchgrep/pkg/models"
+	"itchgrep/pkg/money"
 	"os"
 	"path/filepath"
 	"testing"
@@ -216,4 +217,34 @@ func TestDirDefaultsWhenUnset(t *testing.T) {
 	t.Setenv("DATA_DIR", "/var/lib/itchgrep")
 	assert.Equal(t, "/var/lib/itchgrep", Dir())
 	assert.Equal(t, filepath.Join("/var/lib/itchgrep", IndexDirName), IndexPath())
+}
+
+func TestRatesRoundTripThroughStorage(t *testing.T) {
+	// The webserver must convert with the same snapshot the index was built
+	// with, or the dollar values baked into the documents and the rates shown
+	// beside converted prices would describe different days.
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	_, err := GetRates()
+	assert.Error(t, err, "nothing stored yet is an error the caller falls back from")
+
+	want := money.Fallback()
+	require.NoError(t, PutRates(want))
+
+	got, err := GetRates()
+	require.NoError(t, err)
+	assert.Equal(t, want.Date, got.Date)
+	assert.Equal(t, want.Source, got.Source)
+	assert.Equal(t, want.PerEUR["USD"], got.PerEUR["USD"])
+}
+
+func TestAnEmptyRatesTableIsRejected(t *testing.T) {
+	// A rates file with no euro in it converts nothing. Accepting it would put
+	// every price through a zero rate rather than falling back to the built-in
+	// snapshot.
+	t.Setenv("DATA_DIR", t.TempDir())
+	require.NoError(t, PutRates(money.Rates{Date: "2026-08-09"}))
+
+	_, err := GetRates()
+	assert.Error(t, err)
 }

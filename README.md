@@ -45,30 +45,67 @@ share, bookmark or reload:
 ```
 /                                   the catalogue, most popular first
 /?q=pixel+art                       full-text search
-/?tags=2d,pixel-art                 filter by tag
-/?price=free                        free only  (or price=paid)
-/?sort=title                        A-Z  (or sort=popular, sort=relevance)
-/?q=tileset&tags=2d&price=free      all of it at once
+/?q="pixel art"                     quoted terms match as a phrase
+/?tags=2d,pixel-art                 require tags  (AND)
+/?not=3d                            exclude tags
+/?author=ana                        one creator
+/?price=free                        free  (or paid, under-5, under-20)
+/?sort=title                        A-Z  (or popular, relevance, price, recent)
+/?cur=EUR                           show prices converted to euros
+/?q=tileset&tags=2d&not=3d&price=under-5    all of it at once
 ```
 
 **Tags combine with AND.** Adding a second tag narrows the results rather than
 widening them, which is why you would add one. The sidebar shows the tags
 carried by the *current* results with their counts, so it is a map of where the
-rest of the matches are rather than a description of the 36 on screen.
+rest of the matches are rather than a description of the 36 on screen. Each row
+also offers a `−` that excludes the tag instead — "2d but not pixel-art" has no
+positive phrasing.
 
 **Free versus paid is read from the listing, not inferred.** Every browse page
 carries the price in its markup, so the crawl records it directly. The rule is
 the presence of a price element: a pay-what-you-want asset with a "-35%" badge
 and a minimum of $0 carries a price *tag* but no price *value*, and itch.io
-counts it as free — which matches `/game-assets/free` exactly.
+counts it as free — which matches `/game-assets/free` exactly. Pay-what-you-want
+is recorded separately, from the price tag's `title`, and shown as "Name your
+price" rather than folded into "Free": an author asking for a voluntary payment
+is doing something different from giving the asset away.
 
-There is deliberately no "newest" sort. itch.io's listing markup carries no
-publication date, so there is nothing to record; offering the option and
-quietly ordering by something else would be worse than not offering it.
+**Prices compare across currencies.** Sellers price in whichever currency they
+chose, so `under-5` and `sort=price` work on a dollar value converted at index
+time rather than on the raw number. `?cur=XXX` restates the displayed prices in
+one currency, marked `≈` with the source and date on hover — see *Exchange
+rates* below.
+
+**"Recently added" is not a sort by date.** itch.io's listing markup carries no
+publication date. What it does have is a newest-first browse view, and the crawl
+already fetches it as one of four orderings — so an asset's position in that
+view is recorded as a recency rank, at no extra request cost. It only reaches
+the ~7,200 assets that view exposes; everything else sorts after them, and the
+control is hidden entirely when the loaded index carries no ranks at all.
 
 Every control on the page is a plain link with the htmx attributes layered on
 top, so the whole thing — search, filters, sorting, paging — works with
-JavaScript disabled.
+JavaScript disabled. The currency picker is a plain GET form for the same
+reason.
+
+### Exchange rates
+
+At the end of every crawl the dataservice fetches the [ECB daily euro reference
+rates](https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml) and stores
+them as `rates.json` beside the index. A central bank publishing its own numbers
+beats a free FX API that may disappear or start charging, and the file needs no
+key.
+
+The snapshot is fetched *with* the index, not on its own schedule, because the
+dollar value used for `under-5` and `sort=price` is baked into each document —
+so the rates the index was built with have to be the rates the site explains
+itself with. If the fetch fails the last stored snapshot is reused, and failing
+that a table baked into the binary, which is stale but dated and says so.
+
+Converted figures are approximate by construction and presented that way: a `≈`
+on the badge, the original price and the rate date on hover, and a link to the
+source under the picker. Nothing else in the site uses these numbers.
 
 ## Running Locally
 

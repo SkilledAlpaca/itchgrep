@@ -18,6 +18,7 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"itchgrep/pkg/models"
 	"os"
@@ -25,12 +26,14 @@ import (
 	"time"
 
 	"itchgrep/internal/logging"
+	"itchgrep/pkg/money"
 )
 
 const (
 	DataFileName       = "assets.json"
 	TagsFileName       = "tags.json"
 	CheckpointFileName = "checkpoint.json"
+	RatesFileName      = "rates.json"
 
 	// IndexDirName is the published bleve index. stagingIndexDirName is where a
 	// new one is built; it lives alongside so that publishing is a rename
@@ -165,6 +168,24 @@ func GetTags() ([]models.Tag, time.Time, error) {
 	return tags, updated, nil
 }
 
+// PutRates stores the exchange-rate snapshot the crawl fetched, so the
+// webserver converts prices with the same numbers on every restart rather than
+// with whatever the baked-in fallback happens to say.
+func PutRates(r money.Rates) error { return writeJSON(RatesFileName, r) }
+
+// GetRates returns the stored snapshot. A missing file is not a failure: the
+// caller falls back to the baked-in table, which is stale but dated and says so.
+func GetRates() (money.Rates, error) {
+	var r money.Rates
+	if _, err := readJSON(RatesFileName, &r); err != nil {
+		return money.Rates{}, err
+	}
+	if !r.Valid() {
+		return money.Rates{}, errors.New("storage: stored rates carry no usable table")
+	}
+	return r, nil
+}
+
 // Checkpoint is a partially-complete crawl, written periodically so that a run
 // killed part way through is resumable instead of worthless. A full crawl is
 // ~75 minutes and lives entirely in memory until it publishes.
@@ -174,6 +195,12 @@ type Checkpoint struct {
 	DoneSlices  []string // Slice.Label() values already finished
 	MaxRootRank int64    // so slice-only assets keep ranking behind root-ranked ones
 	TotalAssets int64    // catalogue size when the checkpoint was taken
+
+	// Recency is the newest-view rank per game id, held separately because it
+	// is collected across slices and only stamped onto the assets once the
+	// crawl finishes. Kept in the checkpoint rather than recomputed, since the
+	// slice that produced it will be marked done and never revisited.
+	Recency map[string]int64
 }
 
 // CheckpointVersion is the schema of the assets a checkpoint carries. Bump it
@@ -187,7 +214,8 @@ type Checkpoint struct {
 // meant "free" - so the resulting index would be confidently wrong.
 //
 // 2: added Asset.Price.
-const CheckpointVersion = 2
+// 3: added Asset.PayWhatYouWant and Asset.InvRecency.
+const CheckpointVersion = 3
 
 func PutCheckpoint(cp Checkpoint) error {
 	// Stamped here rather than by the caller, which could forget.

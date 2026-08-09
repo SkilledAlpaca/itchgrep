@@ -6,6 +6,7 @@ import (
 	"itchgrep/internal/logging"
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
+	"itchgrep/pkg/money"
 	"slices"
 	"sync"
 	"time"
@@ -44,6 +45,17 @@ type Cache struct {
 	// load would be paying repeatedly for a constant.
 	tagCounts []models.Tag
 
+	// rates is the exchange-rate snapshot the published index was built with.
+	// Loaded from storage rather than fetched, so the dollar values baked into
+	// the documents and the rates used to display converted prices are the same
+	// numbers from the same day.
+	rates money.Rates
+
+	// hasRecency records whether the loaded dataset carries newest-view ranks
+	// at all. An index built before the crawl started collecting them has none,
+	// and a "recently added" control over that data would order by nothing.
+	hasRecency bool
+
 	// the time the data was last updated on the server.
 	// if we check if the current time is greater than this time, we know the
 	// cache is expired
@@ -77,7 +89,29 @@ func NewCache(pageSize int64) *Cache {
 		cacheLock:       sync.RWMutex{},
 		pageSize:        pageSize,
 		dataUpdatedTime: time.Time{},
+		// Seeded with the built-in table so that a cache which has not loaded
+		// yet, or one whose data directory holds no rates file, still has a
+		// dated snapshot to convert with rather than a nil map.
+		rates: money.Fallback(),
 	}
+}
+
+// Rates is the exchange-rate snapshot prices are converted with. Handlers pass
+// it to the templates, which show its date and source beside every converted
+// figure.
+func (c *Cache) Rates() money.Rates {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	return c.rates
+}
+
+// HasRecency reports whether the loaded dataset can be ordered by recency. The
+// sort control is hidden entirely when it cannot, rather than offering an
+// ordering that would silently degrade to popularity.
+func (c *Cache) HasRecency() bool {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	return c.hasRecency
 }
 
 // PageSize is how many assets one page of results holds. Handlers need it to
@@ -202,8 +236,21 @@ func (c *Cache) doRefresh() error {
 	})
 
 	newDataMap := make(map[string]models.Asset, len(newData)) // we also save it as a map, so we can easily match searches from the index
+	hasRecency := false
 	for _, asset := range newData {
 		newDataMap[asset.GameId] = asset
+		if asset.InvRecency > 0 {
+			hasRecency = true
+		}
+	}
+
+	// A missing rates file is normal on an index published before rates were
+	// collected, and is not worth failing a refresh over: the built-in snapshot
+	// is stale but dated, and says so wherever it is used.
+	newRates, err := storage.GetRates()
+	if err != nil {
+		logging.Info("No stored exchange rates (%v); using the built-in snapshot from %s", err, money.Fallback().Date)
+		newRates = money.Fallback()
 	}
 
 	// swap the new index/data in, holding the write lock only for the swap
@@ -215,6 +262,8 @@ func (c *Cache) doRefresh() error {
 	c.data = newData
 	c.dataMap = newDataMap
 	c.tagCounts = countTags(newData)
+	c.rates = newRates
+	c.hasRecency = hasRecency
 	c.dataUpdatedTime = newServerUpdateTime
 	c.cacheLock.Unlock()
 

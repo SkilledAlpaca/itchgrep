@@ -381,3 +381,15 @@ func TestGenreFiltersAreCrawlable(t *testing.T) {
 			"%s 301s on itch.io and must not be planned", f)
 	}
 }
+
+func TestOnlyTheUntaggedNewestViewRanksRecency(t *testing.T) {
+	// A page number is a catalogue-wide recency position only in the view that
+	// covers the whole catalogue. The same care IsRoot takes, for the same
+	// reason: a filtered or tagged view ranks within its own subset.
+	assert.True(t, Slice{Sort: SortNewest}.IsNewestRoot())
+
+	assert.False(t, Slice{Sort: SortNewest, Tags: []string{"fonts"}}.IsNewestRoot())
+	assert.False(t, Slice{Sort: SortNewest, Filter: FilterFree}.IsNewestRoot())
+	assert.False(t, Slice{Sort: SortDefault}.IsNewestRoot(), "the root view ranks popularity, not recency")
+	assert.False(t, Slice{Sort: SortTopRated}.IsNewestRoot())
+}

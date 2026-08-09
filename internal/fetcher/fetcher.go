@@ -26,9 +26,13 @@ type itchResponse struct {
 	Content  string `json:"content"`
 }
 
-// userAgent identifies the crawler to itch.io and links back to the repo, so
+// UserAgent identifies the crawler to itch.io and links back to the repo, so
 // operators there can see who is hitting them and why.
-const userAgent = "itchgrep/1.0 (+https://github.com/wintermute-cell/itchgrep)"
+//
+// It points at this fork rather than upstream: the whole purpose of the link is
+// to reach whoever is actually making the requests, and that is not the
+// original author.
+const UserAgent = "itchgrep/1.0 (+https://github.com/SkilledAlpaca/itchgrep)"
 
 // httpClient is shared by all fetcher requests. http.DefaultClient has no
 // timeout, so a hung connection would leak a goroutine permanently; this
@@ -219,7 +223,7 @@ func doGet(url string) (*http.Response, uint64, error) {
 	if err != nil {
 		return nil, epoch, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", UserAgent)
 	resp, err := httpClient.Do(req)
 	return resp, epoch, err
 }
@@ -248,15 +252,22 @@ func ParseAssetPage(respData itchResponse, pageNum int64) ([]models.Asset, error
 		// known to be free if the crawl happened to reach it through the free
 		// view, and the free view is capped at 7,200 of ~53,000.
 		price := strings.TrimSpace(s.Find(".price_value").First().Text())
+		// itch.io says "Pay $0 or more for this asset pack" in the price tag's
+		// title attribute, and nowhere else in the listing. Without it the two
+		// very different things it distinguishes - an asset that is simply free
+		// and one whose author accepts a tip - are the same empty price.
+		tagTitle, _ := s.Find(".price_tag").First().Attr("title")
+		payWhatYouWant := strings.Contains(tagTitle, "or more")
 		assets = append(assets, models.Asset{
-			GameId:        gameId,
-			Title:         title,
-			Author:        author,
-			Description:   description,
-			Link:          link,
-			ThumbUrl:      thumbUrl,
-			Price:         price,
-			InvPopularity: pageNum,
+			GameId:         gameId,
+			Title:          title,
+			Author:         author,
+			Description:    description,
+			Link:           link,
+			ThumbUrl:       thumbUrl,
+			Price:          price,
+			PayWhatYouWant: payWhatYouWant,
+			InvPopularity:  pageNum,
 		})
 	})
 	return assets, nil

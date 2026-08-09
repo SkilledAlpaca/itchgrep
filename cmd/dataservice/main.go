@@ -6,6 +6,7 @@ import (
 	"itchgrep/internal/logging"
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
+	"itchgrep/pkg/money"
 	"net/http"
 	"os"
 	"sort"
@@ -100,11 +101,13 @@ func fetchAndStoreAssets() {
 		totalAssets:  totalAssets,
 		seen:         make(map[string]struct{}, totalAssets),
 		tagSets:      make(map[string]map[string]struct{}, totalAssets),
+		recency:      make(map[string]int64),
 		doneSlices:   make(map[string]struct{}, len(slices)),
 	}
 	c.resume(cfg.checkpointMaxAge)
 	c.run(slices)
 	c.attachTags()
+	c.attachRecency()
 
 	assets := c.assets
 	coverage := c.coverage()
@@ -142,10 +145,37 @@ func fetchAndStoreAssets() {
 
 	logging.Info("Created new empty index at %s", staging)
 
+	// Rates are refreshed here, at the end of a crawl, because that is the only
+	// moment the index is rebuilt - and PriceUSD is baked into the documents,
+	// so the snapshot the index was built with is the snapshot it must be
+	// queried with. Fetching them on a separate schedule would leave the stored
+	// dollar values and the published rates describing different days.
+	rates := currentRates()
+
 	// first, convert the assets to IndexedAssets, which are smaller and used for indexing
+	unpriced := 0
 	var smolAssets []models.IndexedAsset = make([]models.IndexedAsset, len(assets))
 	for i, asset := range assets {
-		smolAssets[i] = models.NewIndexedAsset(asset)
+		priceUSD := 0.0
+		if !asset.Free() {
+			m, ok := money.Parse(asset.Price)
+			if ok {
+				priceUSD, ok = rates.USD(m)
+			}
+			if !ok {
+				// Not zero: an unreadable price must not look like a free asset
+				// to a ceiling filter or a cheapest-first sort.
+				priceUSD = models.UnknownPrice
+				unpriced++
+			}
+		}
+		smolAssets[i] = models.NewIndexedAsset(asset, priceUSD)
+	}
+	if unpriced > 0 {
+		// Worth logging rather than swallowing: a jump here means itch.io is
+		// showing a currency format money.Parse does not know, and those assets
+		// are silently absent from every price filter until it does.
+		logging.Warning("Could not price %d/%d assets in dollars; they will not match price filters", unpriced, len(assets))
 	}
 
 	// indexing the assets in batches
@@ -334,6 +364,17 @@ type crawler struct {
 	// listing JSON does not give us, and it costs nothing to retain.
 	tagSets map[string]map[string]struct{}
 
+	// recency is the page an asset appeared on in the root newest view, keyed
+	// by GameId. Collected exactly like tagSets and for the same reason: the
+	// crawl already fetches those pages as one of four orderings, and their
+	// sequence was previously thrown away.
+	//
+	// Only the root newest view contributes. Within a tag's newest view a page
+	// number means "newest of the 400 assets tagged fonts", which is not
+	// comparable to any other slice's - the same trap InvPopularity avoids by
+	// only trusting the root view.
+	recency map[string]int64
+
 	// maxRootRank is how deep the root view was crawled. Root page numbers are
 	// a true global popularity rank; page numbers within any other slice are
 	// not comparable to them, so slice-only assets are ranked after this.
@@ -396,6 +437,12 @@ func (c *crawler) resume(maxAge time.Duration) {
 		c.doneSlices[label] = struct{}{}
 	}
 	c.maxRootRank = cp.MaxRootRank
+	// Restored rather than recomputed: the newest root view may well be among
+	// the slices already marked done, in which case nothing will visit it again
+	// and every rank it produced would otherwise be lost.
+	for id, rank := range cp.Recency {
+		c.recency[id] = rank
+	}
 
 	logging.Info("Resuming crawl from checkpoint %s old: %d assets, %d slices already done",
 		time.Since(updated).Round(time.Minute), len(c.assets), len(c.doneSlices))
@@ -433,11 +480,20 @@ func (c *crawler) checkpoint(force bool) {
 		assets[i].Tags = tags
 	}
 
+	// Copied rather than shared: the crawl keeps writing to c.recency while the
+	// checkpoint is being serialised outside the lock, and marshalling a map
+	// under concurrent write is a panic, not a race detector's opinion.
+	recency := make(map[string]int64, len(c.recency))
+	for id, rank := range c.recency {
+		recency[id] = rank
+	}
+
 	cp := storage.Checkpoint{
 		Assets:      assets,
 		DoneSlices:  make([]string, 0, len(c.doneSlices)),
 		MaxRootRank: c.maxRootRank,
 		TotalAssets: c.totalAssets,
+		Recency:     recency,
 	}
 	for label := range c.doneSlices {
 		cp.DoneSlices = append(cp.DoneSlices, label)
@@ -476,7 +532,7 @@ func (c *crawler) done() bool {
 // record adds a page's assets, returning how many were new. Assets already
 // seen in an earlier slice keep the rank they were first given, but still
 // contribute this slice's tags.
-func (c *crawler) record(assets []models.Asset, sliceTags []string) int {
+func (c *crawler) record(assets []models.Asset, sliceTags []string, recencyPage int64) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -489,6 +545,17 @@ func (c *crawler) record(assets []models.Asset, sliceTags []string) int {
 			c.seen[a.GameId] = struct{}{}
 			c.assets = append(c.assets, a)
 			added++
+		}
+
+		// Outside the new-asset branch for the same reason tags are: an asset
+		// first collected from tag-fonts still learns its recency when the
+		// newest view reaches it. Lowest page wins, so a re-crawl that sees it
+		// earlier moves it forward rather than leaving the first sighting to
+		// stand.
+		if recencyPage > 0 {
+			if prev, ok := c.recency[a.GameId]; !ok || recencyPage < prev {
+				c.recency[a.GameId] = recencyPage
+			}
 		}
 
 		// Deliberately outside the new-asset branch: an asset already collected
@@ -528,6 +595,27 @@ func (c *crawler) attachTags() {
 		tagged++
 	}
 	logging.Info("Attached tags to %d/%d assets", tagged, len(c.assets))
+}
+
+// attachRecency stamps the newest-view ranks onto the collected assets, for the
+// same reason and at the same point as attachTags.
+//
+// The count it logs is worth watching. It cannot exceed what itch.io's 200-page
+// ceiling exposes - about 7,200 assets - so a much smaller number means the
+// newest root view was abandoned early or never scheduled, and the recency
+// ordering is correspondingly partial.
+func (c *crawler) attachRecency() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ranked := 0
+	for i := range c.assets {
+		if rank, ok := c.recency[c.assets[i].GameId]; ok {
+			c.assets[i].InvRecency = rank
+			ranked++
+		}
+	}
+	logging.Info("Attached recency ranks to %d/%d assets", ranked, len(c.assets))
 }
 
 func (c *crawler) run(slices []fetcher.Slice) {
@@ -680,7 +768,13 @@ func (c *crawler) fetchPages(s fetcher.Slice, start, end int64, isRoot bool) ([]
 				logging.Error("Failed to parse %s page %d: %v", s.Label(), pageNum, err)
 				return
 			}
-			perPage[i] = c.record(assets, s.Tags)
+			// Zero for every other slice, which record reads as "this view
+			// says nothing about recency".
+			recencyPage := int64(0)
+			if s.IsNewestRoot() {
+				recencyPage = pageNum
+			}
+			perPage[i] = c.record(assets, s.Tags, recencyPage)
 		}(i)
 	}
 	wg.Wait()

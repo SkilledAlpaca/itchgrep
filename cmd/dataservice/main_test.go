@@ -14,6 +14,7 @@ func newTestCrawler(total int64, cfg crawlConfig) *crawler {
 		totalAssets:  total,
 		seen:         make(map[string]struct{}),
 		tagSets:      make(map[string]map[string]struct{}),
+		recency:      make(map[string]int64),
 		doneSlices:   make(map[string]struct{}),
 	}
 }
@@ -26,8 +27,8 @@ func TestRecordCountsOnlyUnseenAssets(t *testing.T) {
 	// duplicate the asset into the index.
 	c := newTestCrawler(100, crawlConfig{})
 
-	assert.Equal(t, 3, c.record([]models.Asset{asset("a"), asset("b"), asset("c")}, nil))
-	assert.Equal(t, 1, c.record([]models.Asset{asset("b"), asset("c"), asset("d")}, nil),
+	assert.Equal(t, 3, c.record([]models.Asset{asset("a"), asset("b"), asset("c")}, nil, 0))
+	assert.Equal(t, 1, c.record([]models.Asset{asset("b"), asset("c"), asset("d")}, nil, 0),
 		"only the previously unseen asset counts")
 	assert.Len(t, c.assets, 4, "duplicates must not be stored twice")
 }
@@ -35,7 +36,7 @@ func TestRecordCountsOnlyUnseenAssets(t *testing.T) {
 func TestRecordSkipsAssetsWithoutAnId(t *testing.T) {
 	c := newTestCrawler(100, crawlConfig{})
 
-	assert.Equal(t, 1, c.record([]models.Asset{asset(""), asset("a"), asset("")}, nil))
+	assert.Equal(t, 1, c.record([]models.Asset{asset(""), asset("a"), asset("")}, nil, 0))
 	assert.Len(t, c.assets, 1)
 }
 
@@ -43,12 +44,12 @@ func TestCoverageAndDone(t *testing.T) {
 	c := newTestCrawler(100, crawlConfig{coverageTarget: 0.5})
 
 	for i := 0; i < 49; i++ {
-		c.record([]models.Asset{asset(string(rune('a' + i)))}, nil)
+		c.record([]models.Asset{asset(string(rune('a' + i)))}, nil, 0)
 	}
 	assert.InDelta(t, 0.49, c.coverage(), 0.001)
 	assert.False(t, c.done())
 
-	c.record([]models.Asset{asset("extra")}, nil)
+	c.record([]models.Asset{asset("extra")}, nil, 0)
 	assert.True(t, c.done(), "the crawl stops once the coverage target is met")
 }
 
@@ -64,7 +65,7 @@ func TestDoneRespectsThePageBudget(t *testing.T) {
 
 func TestCoverageIsZeroWhenTotalIsUnknown(t *testing.T) {
 	c := newTestCrawler(0, crawlConfig{coverageTarget: 0.95})
-	c.record([]models.Asset{asset("a")}, nil)
+	c.record([]models.Asset{asset("a")}, nil, 0)
 
 	assert.Equal(t, 0.0, c.coverage(), "must not divide by zero")
 	assert.False(t, c.done())
@@ -144,9 +145,9 @@ func TestRecordAccumulatesTagsAcrossSlices(t *testing.T) {
 	// discards the asset, not the knowledge that it carries another tag.
 	c := newTestCrawler(100, crawlConfig{})
 
-	c.record([]models.Asset{asset("a"), asset("b")}, []string{"pixel-art"})
-	c.record([]models.Asset{asset("a")}, []string{"sprites"})
-	c.record([]models.Asset{asset("a")}, []string{"pixel-art"}) // repeat, must not duplicate
+	c.record([]models.Asset{asset("a"), asset("b")}, []string{"pixel-art"}, 0)
+	c.record([]models.Asset{asset("a")}, []string{"sprites"}, 0)
+	c.record([]models.Asset{asset("a")}, []string{"pixel-art"}, 0) // repeat, must not duplicate
 
 	c.attachTags()
 
@@ -162,7 +163,7 @@ func TestRecordAccumulatesTagsAcrossSlices(t *testing.T) {
 
 func TestAttachTagsLeavesUntaggedAssetsAlone(t *testing.T) {
 	c := newTestCrawler(100, crawlConfig{})
-	c.record([]models.Asset{asset("a")}, nil)
+	c.record([]models.Asset{asset("a")}, nil, 0)
 	c.attachTags()
 
 	assert.Empty(t, c.assets[0].Tags, "the root view carries no tag to attribute")
@@ -171,10 +172,52 @@ func TestAttachTagsLeavesUntaggedAssetsAlone(t *testing.T) {
 func TestRecordCountsOnlyFirstSightingWhileStillTakingTags(t *testing.T) {
 	c := newTestCrawler(100, crawlConfig{})
 
-	assert.Equal(t, 1, c.record([]models.Asset{asset("a")}, []string{"x"}))
-	assert.Equal(t, 0, c.record([]models.Asset{asset("a")}, []string{"y"}),
+	assert.Equal(t, 1, c.record([]models.Asset{asset("a")}, []string{"x"}, 0))
+	assert.Equal(t, 0, c.record([]models.Asset{asset("a")}, []string{"y"}, 0),
 		"a repeat sighting yields nothing new, or a spent slice would look productive")
 
 	c.attachTags()
 	assert.Equal(t, []string{"x", "y"}, c.assets[0].Tags)
+}
+
+func TestRecencyIsRecordedOnlyFromTheNewestRootView(t *testing.T) {
+	// A page number means "how new" only in the untagged newest view. Page 3 of
+	// the newest fonts and page 3 of the newest pixel-art describe two different
+	// sets, so a rank taken from either would order assets by nothing.
+	c := newTestCrawler(100, crawlConfig{})
+
+	c.record([]models.Asset{asset("a")}, []string{"fonts"}, 0)
+	assert.Empty(t, c.recency, "a tagged or differently-sorted slice says nothing about recency")
+
+	c.record([]models.Asset{asset("a"), asset("b")}, nil, 4)
+	assert.Equal(t, map[string]int64{"a": 4, "b": 4}, c.recency)
+}
+
+func TestAnEarlierRecencySightingWins(t *testing.T) {
+	// The same asset can appear twice if the view shifts under a long crawl.
+	// The lower page is the newer position, and taking the later one would
+	// quietly demote it.
+	c := newTestCrawler(100, crawlConfig{})
+
+	c.record([]models.Asset{asset("a")}, nil, 9)
+	c.record([]models.Asset{asset("a")}, nil, 2)
+	assert.Equal(t, int64(2), c.recency["a"])
+
+	c.record([]models.Asset{asset("a")}, nil, 6)
+	assert.Equal(t, int64(2), c.recency["a"], "a later sighting must not push it back")
+}
+
+func TestRecencyIsStampedOntoAssetsAtTheEnd(t *testing.T) {
+	// Held in a side map during the crawl, exactly like tags, because most
+	// sightings are duplicates and rewriting the asset each time is wasted work.
+	c := newTestCrawler(100, crawlConfig{})
+	c.record([]models.Asset{asset("a"), asset("b")}, nil, 0)
+	c.record([]models.Asset{asset("b")}, nil, 3)
+
+	c.attachRecency()
+
+	assert.Equal(t, int64(0), c.assets[0].InvRecency)
+	assert.Equal(t, int64(3), c.assets[1].InvRecency)
+	// An asset with no rank must sort after every asset that has one.
+	assert.Greater(t, c.assets[0].RecencyRank(), c.assets[1].RecencyRank())
 }

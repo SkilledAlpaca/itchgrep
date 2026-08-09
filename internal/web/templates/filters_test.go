@@ -110,3 +110,45 @@ func TestFormatCountGroupsThousands(t *testing.T) {
 	assert.Equal(t, "17,488", formatCount(17488))
 	assert.Equal(t, "108,697", formatCount(108697))
 }
+
+func TestRequiringAndExcludingTheSameTagCannotBothStand(t *testing.T) {
+	// A URL asserting both is contradictory. Resolving it in favour of the more
+	// recent instruction is the only reading that leaves either control doing
+	// what its label says.
+	excluded := Filters{}.WithTag("2d").WithNotTag("2d")
+	assert.Empty(t, excluded.Tags)
+	assert.Equal(t, []string{"2d"}, excluded.NotTags)
+
+	required := Filters{}.WithNotTag("2d").WithTag("2d")
+	assert.Equal(t, []string{"2d"}, required.Tags)
+	assert.Empty(t, required.NotTags)
+}
+
+func TestCurrencyIsNotTreatedAsAFilter(t *testing.T) {
+	// It changes how prices read, not which assets are shown. Offering to
+	// "clear filters" because somebody chose euros would describe a display
+	// preference as a constraint - and clearing it would undo their choice.
+	f := Filters{Currency: "EUR"}
+	assert.False(t, f.Any())
+	assert.Equal(t, "EUR", f.WithTag("2d").Cleared().Currency)
+}
+
+func TestEveryFilterSurvivesTheUrlRoundTrip(t *testing.T) {
+	f := Filters{Query: "tiles", Author: "ana", Price: models.PricingUnder5,
+		Sort: models.SortPrice, Currency: "EUR"}.WithTag("2d").WithNotTag("3d")
+
+	v := f.Values()
+	assert.Equal(t, "tiles", v.Get("q"))
+	assert.Equal(t, "2d", v.Get("tags"))
+	assert.Equal(t, "3d", v.Get("not"))
+	assert.Equal(t, "ana", v.Get("author"))
+	assert.Equal(t, models.PricingUnder5, v.Get("price"))
+	assert.Equal(t, models.SortPrice, v.Get("sort"))
+	assert.Equal(t, "EUR", v.Get("cur"))
+}
+
+func TestSelectingTheSameAuthorAgainClearsIt(t *testing.T) {
+	f := Filters{}.WithAuthor("ana")
+	assert.Equal(t, "ana", f.Author)
+	assert.Empty(t, f.WithAuthor("ana").Author, "the control is a toggle, not a one-way door")
+}

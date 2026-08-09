@@ -34,6 +34,10 @@ func IndexMapping() *mapping.IndexMappingImpl {
 	doc.AddFieldMappingsAt("TagSlugs", kw)
 	doc.AddFieldMappingsAt("Pricing", kw)
 	doc.AddFieldMappingsAt("SortTitle", kw)
+	// AuthorKey is the author's name folded to a single keyword, so that
+	// filtering to one creator is an identity match rather than a search that
+	// also returns everyone whose name shares a word with theirs.
+	doc.AddFieldMappingsAt("AuthorKey", kw)
 
 	m := bleve.NewIndexMapping()
 	m.DefaultMapping = doc

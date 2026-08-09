@@ -70,8 +70,17 @@ templ SearchBar(f Filters) {
 		for _, tag := range f.Tags {
 			<input type="hidden" name="tags" value={ tag }/>
 		}
+		for _, tag := range f.NotTags {
+			<input type="hidden" name="not" value={ tag }/>
+		}
+		if f.Author != "" {
+			<input type="hidden" name="author" value={ f.Author }/>
+		}
 		if f.Price != "" {
 			<input type="hidden" name="price" value={ f.Price }/>
+		}
+		if f.Currency != "" {
+			<input type="hidden" name="cur" value={ f.Currency }/>
 		}
 		<button type="submit">Search</button>
 		<div class="spinner" aria-hidden="true"></div>

@@ -206,6 +206,17 @@ func (s Slice) IsRoot() bool {
 	return s.Sort == SortDefault && s.Filter == FilterNone && len(s.Tags) == 0
 }
 
+// IsNewestRoot reports whether this is the whole catalogue in newest-first
+// order: the one view whose page numbers are a catalogue-wide recency ranking.
+//
+// The same care IsRoot takes applies here. Page 3 of the newest view of
+// tag-fonts means "third page of the newest fonts", which is not comparable
+// with page 3 of the newest pixel-art - so a rank taken from a tagged newest
+// view would order assets by nothing in particular.
+func (s Slice) IsNewestRoot() bool {
+	return s.Sort == SortNewest && s.Filter == FilterNone && len(s.Tags) == 0
+}
+
 // Label is a short human-readable name for logs, and the key under which a
 // finished slice is recorded in a crawl checkpoint - so it must be unique per
 // slice, or resuming skips views that were never crawled.

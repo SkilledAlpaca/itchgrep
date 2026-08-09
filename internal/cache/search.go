@@ -26,10 +26,17 @@ type SearchOptions struct {
 	// would have been the cheaper implementation and the wrong behaviour -
 	// adding a second tag to a filter is how a person narrows a search, and a
 	// filter that grows the result set when you add to it reads as broken.
-	Tags  []string
-	Price string // "", models.PricingFree or models.PricingPaid
-	Sort  string // one of the Sort* constants; empty picks a sensible default
-	Page  int64
+	Tags []string
+	// ExcludeTags are the mirror image: an asset carrying any of them is out,
+	// regardless of what else it matches. Narrowing by what you do not want is
+	// often easier than naming what you do - "2d, not pixel-art" has no
+	// positive phrasing.
+	ExcludeTags []string
+	// Author restricts to one creator, matched exactly rather than searched.
+	Author string
+	Price  string // "", or one of the models.Pricing* values
+	Sort   string // one of the Sort* constants; empty picks a sensible default
+	Page   int64
 }
 
 // Results is one page of assets plus the context the UI needs around them: how
@@ -48,11 +55,13 @@ type Results struct {
 // scores identically and "best match" degenerates into index order.
 func (o SearchOptions) resolvedSort() string {
 	switch o.Sort {
-	case models.SortRelevance, models.SortPopular, models.SortTitle:
-		if o.Sort == models.SortRelevance && o.Query == "" {
+	case models.SortPopular, models.SortTitle, models.SortPrice, models.SortRecent:
+		return o.Sort
+	case models.SortRelevance:
+		if o.Query == "" {
 			return models.SortPopular
 		}
-		return o.Sort
+		return models.SortRelevance
 	default:
 		if o.Query == "" {
 			return models.SortPopular
@@ -65,7 +74,8 @@ func (o SearchOptions) resolvedSort() string {
 // unsorted, unsearched request is the front page, which has a much cheaper
 // answer than a search.
 func (o SearchOptions) filtered() bool {
-	return o.Query != "" || len(o.Tags) > 0 || o.Price != ""
+	return o.Query != "" || len(o.Tags) > 0 || len(o.ExcludeTags) > 0 ||
+		o.Price != "" || o.Author != ""
 }
 
 // Find answers a search, a filtered browse, or the plain front page.
@@ -86,6 +96,14 @@ func (c *Cache) Find(opts SearchOptions) (Results, error) {
 		if err := c.RefreshDataCache(); err != nil {
 			logging.Error("Failed to refresh cache, serving previous data if available: %v", err)
 		}
+	}
+
+	// A recency ordering is only offered when the loaded dataset actually
+	// carries ranks; asking for one anyway - from a stale bookmark, or from an
+	// index built before the crawl started collecting them - falls back rather
+	// than returning everything in the arbitrary order of "no rank at all".
+	if opts.Sort == models.SortRecent && !c.HasRecency() {
+		opts.Sort = models.SortPopular
 	}
 
 	if !opts.filtered() && opts.resolvedSort() == models.SortPopular {
@@ -163,12 +181,21 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 func buildQuery(opts SearchOptions) query.Query {
 	var conjuncts []query.Query
 
-	if opts.Query != "" {
-		veryFuzzyQuery := buildFuzzyQuery(opts.Query, 1, 2)
+	// Quoted runs are pulled out first and matched as phrases, which is the one
+	// thing the fuzzy machinery below cannot do: it scores documents containing
+	// the words, in any order, anywhere. Someone who typed quotation marks has
+	// said they want them adjacent and in that order.
+	phrases, rest := splitPhrases(opts.Query)
+	for _, phrase := range phrases {
+		conjuncts = append(conjuncts, phraseQuery(phrase))
+	}
+
+	if rest != "" {
+		veryFuzzyQuery := buildFuzzyQuery(rest, 1, 2)
 		veryFuzzyQuery.SetBoost(2)
-		fuzzyQuery := buildFuzzyQuery(opts.Query, 1, 4)
+		fuzzyQuery := buildFuzzyQuery(rest, 1, 4)
 		fuzzyQuery.SetBoost(4)
-		exactQuery := buildExactQuery(opts.Query)
+		exactQuery := buildExactQuery(rest)
 		exactQuery.SetBoost(6)
 		conjuncts = append(conjuncts, bleve.NewDisjunctionQuery(veryFuzzyQuery, fuzzyQuery, exactQuery))
 	}
@@ -182,10 +209,35 @@ func buildQuery(opts SearchOptions) query.Query {
 		tq.SetField("TagSlugs")
 		conjuncts = append(conjuncts, tq)
 	}
-	if opts.Price != "" {
-		pq := bleve.NewTermQuery(opts.Price)
-		pq.SetField("Pricing")
+	if opts.Author != "" {
+		aq := bleve.NewTermQuery(models.AuthorKey(opts.Author))
+		aq.SetField("AuthorKey")
+		conjuncts = append(conjuncts, aq)
+	}
+	if pq := priceQuery(opts.Price); pq != nil {
 		conjuncts = append(conjuncts, pq)
+	}
+
+	var exclusions []query.Query
+	for _, tag := range opts.ExcludeTags {
+		tq := bleve.NewTermQuery(tag)
+		tq.SetField("TagSlugs")
+		exclusions = append(exclusions, tq)
+	}
+
+	if len(exclusions) > 0 {
+		// A boolean query, because a conjunction has no way to say "not this".
+		// With nothing positive to match, everything is a candidate and the
+		// exclusions do the whole job - hence the explicit match-all, without
+		// which bleve would answer an all-negative query with nothing at all.
+		b := bleve.NewBooleanQuery()
+		if len(conjuncts) == 0 {
+			b.AddMust(bleve.NewMatchAllQuery())
+		} else {
+			b.AddMust(conjuncts...)
+		}
+		b.AddMustNot(exclusions...)
+		return b
 	}
 
 	if len(conjuncts) == 0 {
@@ -195,6 +247,80 @@ func buildQuery(opts SearchOptions) query.Query {
 		return conjuncts[0]
 	}
 	return bleve.NewConjunctionQuery(conjuncts...)
+}
+
+// priceQuery turns a price filter into a query, or nil for "no filter".
+//
+// Free and paid are a keyword match on what the asset is. The two ceilings are
+// numeric ranges over the converted dollar value instead, and deliberately
+// exclude zero: "under $5" sitting beside a "free" button should mean the cheap
+// paid things, not silently contain everything the free button already shows.
+func priceQuery(price string) query.Query {
+	ceiling := 0.0
+	switch price {
+	case "":
+		return nil
+	case models.PricingFree, models.PricingPaid:
+		pq := bleve.NewTermQuery(price)
+		pq.SetField("Pricing")
+		return pq
+	case models.PricingUnder5:
+		ceiling = models.CeilingUnder5
+	case models.PricingUnder20:
+		ceiling = models.CeilingUnder20
+	default:
+		return nil
+	}
+
+	min, max := 0.0, ceiling
+	inclusive := false
+	rq := bleve.NewNumericRangeInclusiveQuery(&min, &max, &inclusive, &inclusive)
+	rq.SetField("PriceUSD")
+	return rq
+}
+
+// phraseQuery matches an exact run of words across the fields worth searching,
+// with the same field weighting the loose query uses.
+func phraseQuery(phrase string) query.Query {
+	title := bleve.NewMatchPhraseQuery(phrase)
+	title.SetField("Title")
+	title.SetBoost(3)
+	description := bleve.NewMatchPhraseQuery(phrase)
+	description.SetField("Description")
+	description.SetBoost(2)
+	tags := bleve.NewMatchPhraseQuery(phrase)
+	tags.SetField("Tags")
+	tags.SetBoost(4)
+	return bleve.NewDisjunctionQuery(title, description, tags)
+}
+
+// splitPhrases separates "quoted runs" from the rest of a query.
+//
+// An unclosed quote is treated as ordinary text rather than as a phrase running
+// to the end of the input: half-typed queries arrive constantly, and turning
+// one into a strict phrase match makes the results collapse to nothing at the
+// moment the user opens a quote.
+func splitPhrases(q string) (phrases []string, rest string) {
+	var loose []string
+	for {
+		open := strings.Index(q, `"`)
+		if open < 0 {
+			break
+		}
+		close := strings.Index(q[open+1:], `"`)
+		if close < 0 {
+			break
+		}
+		close += open + 1
+
+		loose = append(loose, q[:open])
+		if phrase := strings.TrimSpace(q[open+1 : close]); phrase != "" {
+			phrases = append(phrases, phrase)
+		}
+		q = q[close+1:]
+	}
+	loose = append(loose, q)
+	return phrases, strings.TrimSpace(strings.Join(loose, " "))
 }
 
 // sortOrder maps an ordering onto the bleve sort fields that implement it.
@@ -208,6 +334,15 @@ func sortOrder(sort string) []string {
 		return []string{"SortTitle", "InvPopularity"}
 	case models.SortPopular:
 		return []string{"InvPopularity"}
+	case models.SortPrice:
+		// Free first, then cheapest upward, with the unpriced parked at
+		// UnknownPrice where they belong: last, and visibly so.
+		return []string{"PriceUSD", "InvPopularity"}
+	case models.SortRecent:
+		// Everything without a newest-view rank shares one enormous value, so
+		// the popularity tiebreak is doing real work here rather than settling
+		// the occasional draw.
+		return []string{"RecencyRank", "InvPopularity"}
 	default:
 		return []string{"-_score", "InvPopularity"}
 	}
@@ -274,6 +409,12 @@ func describe(opts SearchOptions) string {
 	}
 	if len(opts.Tags) > 0 {
 		parts = append(parts, "tags "+strings.Join(opts.Tags, "+"))
+	}
+	if len(opts.ExcludeTags) > 0 {
+		parts = append(parts, "without "+strings.Join(opts.ExcludeTags, "+"))
+	}
+	if opts.Author != "" {
+		parts = append(parts, "by "+opts.Author)
 	}
 	if opts.Price != "" {
 		parts = append(parts, opts.Price)

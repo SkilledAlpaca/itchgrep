@@ -355,8 +355,18 @@ a:hover {
   list-style: none;
 }
 
+/* Each row is the tag link plus a separate exclude control, so the row is a
+   flex container and the link inside it takes the remaining width. */
+.facet-list li {
+  display: flex;
+  align-items: stretch;
+  gap: 0.2rem;
+}
+
 .facet {
   display: flex;
+  flex: 1;
+  min-width: 0;
   justify-content: space-between;
   gap: 1rem;
   padding: 0.35rem 0.6rem;
@@ -364,6 +374,30 @@ a:hover {
   color: var(--text-dim);
   border-radius: 6px;
   text-decoration: none;
+}
+
+/* Deliberately quiet until the row is hovered: excluding a tag is the rarer
+   intent, and a column of minus signs would compete with the counts. */
+.facet-exclude {
+  display: flex;
+  align-items: center;
+  padding: 0 0.6rem;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--text-faint);
+  text-decoration: none;
+  border-radius: 6px;
+  opacity: 0;
+}
+
+.facet-list li:hover .facet-exclude,
+.facet-exclude:focus {
+  opacity: 1;
+}
+
+.facet-exclude:hover {
+  color: var(--accent-contrast);
+  background: var(--warn);
 }
 
 .facet:hover {
@@ -463,6 +497,64 @@ a:hover {
   border: 1px dashed var(--border-strong);
 }
 
+/* An exclusion reads as the opposite of a filter, so it should not look like
+   one. Outlined in the warning colour rather than filled in the accent. */
+.chip.is-excluded {
+  color: var(--warn);
+  background: transparent;
+  border: 1px solid var(--warn);
+}
+
+.chip.is-excluded:hover {
+  color: var(--accent-contrast);
+  background: var(--warn);
+}
+
+.chip.is-author {
+  font-style: italic;
+}
+
+/* The currency picker is a reading aid rather than a filter, so it sits below
+   the toolbar in the same faint register as the result count. */
+.currency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  font-size: 1.25rem;
+  color: var(--text-faint);
+}
+
+.currency-select {
+  padding: 0.25rem 0.4rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.currency-go {
+  padding: 0.25rem 0.8rem;
+  font: inherit;
+  color: var(--text-dim);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.currency-go:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.currency-note a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .chip.is-removable:hover {
   background: var(--accent-dim);
 }
@@ -554,10 +646,25 @@ a:hover {
   overflow: hidden;
 }
 
+/* The author sits outside the card's link to itch.io, because it leads
+   somewhere else: everything else by the same creator. */
 .asset-author {
-  margin-top: 0.2rem;
+  display: inline-block;
+  margin: 0.2rem 1.2rem 0;
   font-size: 1.3rem;
   color: var(--text-dim);
+  text-decoration: none;
+  border-bottom: 1px dotted transparent;
+}
+
+.asset-author:hover {
+  color: var(--accent);
+  border-bottom-color: currentColor;
+}
+
+.asset-author.is-active {
+  color: var(--accent);
+  border-bottom-color: currentColor;
 }
 
 .asset-description {

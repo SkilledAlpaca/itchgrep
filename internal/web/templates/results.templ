@@ -2,6 +2,7 @@ package templates
 
 import "fmt"
 import "itchgrep/pkg/models"
+import "itchgrep/pkg/money"
 
 // Results is one page of results plus the context rendered around them. It
 // mirrors what the query layer returns, restated here so the templates package
@@ -12,6 +13,33 @@ type Results struct {
 	Tags    []models.Tag
 	Page    int64
 	HasMore bool
+
+	// Rates converts prices for display. Carried on the results rather than
+	// looked up by the templates because it has to be the same snapshot the
+	// index was built with, and only the handler knows which that is.
+	Rates money.Rates
+
+	// HasRecency reports whether the dataset can be ordered by recency at all.
+	// When it cannot, the control is not rendered - an ordering offered over
+	// data that cannot support it is worse than one that is missing.
+	HasRecency bool
+}
+
+// priceFilterLabel is the human name of a price filter, for the control and for
+// the removable chip that reports it.
+func priceFilterLabel(price string) string {
+	switch price {
+	case models.PricingFree:
+		return "Free"
+	case models.PricingPaid:
+		return "Paid"
+	case models.PricingUnder5:
+		return "Under $5"
+	case models.PricingUnder20:
+		return "Under $20"
+	default:
+		return price
+	}
 }
 
 // sidebarTags caps the facet list. The vocabulary runs to several hundred tags
@@ -66,41 +94,102 @@ templ control(class string, next Filters, label string) {
 	</a>
 }
 
-templ SortControl(f Filters) {
+// sortOption renders one segment of the sort control, active or not.
+templ sortOption(f Filters, sort string, label string) {
+	if f.ResolvedSort() == sort {
+		<span class="segment is-active" aria-current="true">{ label }</span>
+	} else {
+		@control("segment", f.WithSort(sort), label)
+	}
+}
+
+templ SortControl(f Filters, hasRecency bool) {
 	<div class="segmented" role="group" aria-label="Sort order">
 		if f.Query != "" {
-			if f.ResolvedSort() == models.SortRelevance {
-				<span class="segment is-active" aria-current="true">Best match</span>
-			} else {
-				@control("segment", f.WithSort(models.SortRelevance), "Best match")
-			}
+			@sortOption(f, models.SortRelevance, "Best match")
 		}
-		if f.ResolvedSort() == models.SortPopular {
-			<span class="segment is-active" aria-current="true">Popular</span>
-		} else {
-			@control("segment", f.WithSort(models.SortPopular), "Popular")
+		@sortOption(f, models.SortPopular, "Popular")
+		if hasRecency {
+			// Only when the dataset carries newest-view ranks. This is not a
+			// sort by date - itch.io's listings have none - but by position in
+			// itch.io's own newest view, and over an index with no such
+			// positions it would order by nothing while claiming otherwise.
+			@sortOption(f, models.SortRecent, "Recently added")
 		}
-		if f.ResolvedSort() == models.SortTitle {
-			<span class="segment is-active" aria-current="true">A–Z</span>
-		} else {
-			@control("segment", f.WithSort(models.SortTitle), "A–Z")
-		}
+		@sortOption(f, models.SortPrice, "Cheapest")
+		@sortOption(f, models.SortTitle, "A–Z")
 	</div>
+}
+
+// priceOption renders one price filter. Selecting the active one again clears
+// it, so the control is a toggle rather than a radio group with no way back.
+templ priceOption(f Filters, price string) {
+	if f.Price == price {
+		@control("segment is-active", f.WithPrice(price), priceFilterLabel(price)+" ✕")
+	} else {
+		@control("segment", f.WithPrice(price), priceFilterLabel(price))
+	}
 }
 
 templ PriceControl(f Filters) {
 	<div class="segmented" role="group" aria-label="Price">
-		if f.Price == models.PricingFree {
-			@control("segment is-active", f.WithPrice(models.PricingFree), "Free ✕")
-		} else {
-			@control("segment", f.WithPrice(models.PricingFree), "Free")
-		}
-		if f.Price == models.PricingPaid {
-			@control("segment is-active", f.WithPrice(models.PricingPaid), "Paid ✕")
-		} else {
-			@control("segment", f.WithPrice(models.PricingPaid), "Paid")
-		}
+		@priceOption(f, models.PricingFree)
+		@priceOption(f, models.PricingUnder5)
+		@priceOption(f, models.PricingUnder20)
+		@priceOption(f, models.PricingPaid)
 	</div>
+}
+
+// CurrencyControl converts displayed prices into one currency.
+//
+// A plain GET form rather than links, because the options are a list of thirty
+// rather than a handful, and because it must work with scripting off - so the
+// rest of the filter state travels as hidden fields, exactly as the search box
+// does. It changes nothing about which assets match: this is a reading aid, and
+// the conversions are approximate by construction.
+templ CurrencyControl(f Filters, rates money.Rates) {
+	<form class="currency" method="get" action="/" hx-get="/results" hx-target="#results-region" hx-swap="innerHTML">
+		@hiddenFilters(f)
+		<label class="currency-label" for="currency-select">Show prices in</label>
+		<select id="currency-select" name="cur" class="currency-select">
+			<option value="" selected?={ f.Currency == "" }>as listed</option>
+			for _, code := range rates.Currencies() {
+				<option value={ code } selected?={ f.Currency == code }>{ code }</option>
+			}
+		</select>
+		<button type="submit" class="currency-go">Set</button>
+		if f.Currency != "" {
+			<span class="currency-note">
+				≈ converted at
+				<a href={ templ.SafeURL(rates.Source) } target="_blank" rel="noopener">ECB rates</a>
+				of { rates.Date }
+			</span>
+		}
+	</form>
+}
+
+// hiddenFilters carries the current filter state through a form submission, so
+// that changing the currency does not silently discard the tags and the query
+// the visitor already chose.
+templ hiddenFilters(f Filters) {
+	if f.Query != "" {
+		<input type="hidden" name="q" value={ f.Query }/>
+	}
+	for _, tag := range f.Tags {
+		<input type="hidden" name="tags" value={ tag }/>
+	}
+	for _, tag := range f.NotTags {
+		<input type="hidden" name="not" value={ tag }/>
+	}
+	if f.Author != "" {
+		<input type="hidden" name="author" value={ f.Author }/>
+	}
+	if f.Price != "" {
+		<input type="hidden" name="price" value={ f.Price }/>
+	}
+	if f.Sort != "" {
+		<input type="hidden" name="sort" value={ f.Sort }/>
+	}
 }
 
 // ActiveFilters shows what is currently narrowing the results, each removable.
@@ -117,10 +206,16 @@ templ ActiveFilters(f Filters) {
 			for _, tag := range f.Tags {
 				@control("chip is-removable", f.WithoutTag(tag), tag+" ✕")
 			}
-			if f.Price != "" {
-				@control("chip is-removable", f.WithPrice(f.Price), f.Price+" ✕")
+			for _, tag := range f.NotTags {
+				@control("chip is-removable is-excluded", f.WithoutNotTag(tag), "not "+tag+" ✕")
 			}
-			if len(f.Tags) > 0 || f.Price != "" {
+			if f.Author != "" {
+				@control("chip is-removable is-author", f.WithAuthor(f.Author), "by "+f.Author+" ✕")
+			}
+			if f.Price != "" {
+				@control("chip is-removable", f.WithPrice(f.Price), priceFilterLabel(f.Price)+" ✕")
+			}
+			if len(f.Tags) > 0 || len(f.NotTags) > 0 || f.Price != "" || f.Author != "" {
 				@control("clear-filters", f.Cleared(), "Clear filters")
 			}
 		</div>
@@ -158,6 +253,18 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 							<span class="facet-name">{ tag.Slug }</span>
 							<span class="facet-count">{ formatCount(tag.Count) }</span>
 						</a>
+						// A sibling of the facet link rather than a child of it:
+						// nesting one anchor inside another is invalid, and
+						// browsers resolve it by silently dropping the inner one.
+						<a
+							class="facet-exclude"
+							title={ "Hide assets tagged " + tag.Slug }
+							aria-label={ "Hide assets tagged " + tag.Slug }
+							href={ templ.SafeURL(f.WithNotTag(tag.Slug).ShareURL()) }
+							hx-get={ f.WithNotTag(tag.Slug).FragmentURL(1) }
+							hx-target="#results-region"
+							hx-swap="innerHTML"
+						>−</a>
 					</li>
 				}
 			</ul>
@@ -179,9 +286,10 @@ templ ResultsRegion(f Filters, r Results) {
 			<span class="result-count">{ resultSummary(r) }</span>
 			<div class="toolbar-controls">
 				@PriceControl(f)
-				@SortControl(f)
+				@SortControl(f, r.HasRecency)
 			</div>
 		</div>
+		@CurrencyControl(f, r.Rates)
 		@ActiveFilters(f)
 		<div id="asset-list">
 			@AssetPage(f, r)

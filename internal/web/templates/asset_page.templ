@@ -2,6 +2,7 @@ package templates
 
 import "fmt"
 import "itchgrep/pkg/models"
+import "itchgrep/pkg/money"
 
 // maxTagsShown caps the chips rendered per card. Assets carry ~5 tags on
 // average but some carry dozens, and letting those grow unbounded makes the
@@ -15,11 +16,53 @@ func shownTags(tags []string) []string {
 	return tags
 }
 
-func priceLabel(asset models.Asset) string {
+// priceLabel is what the badge on a card says.
+//
+// Three things are folded in here, in order of how much they change the
+// meaning. A pay-what-you-want asset with a zero minimum is free but not merely
+// free - "Name your price" is what itch.io calls it, and calling it "Free"
+// hides that the author is asking. A paid one with a minimum is "$4.95+",
+// because the price shown is a floor. And a converted figure is prefixed with
+// "≈", because it was computed from a snapshot rather than quoted by itch.io.
+func priceLabel(f Filters, asset models.Asset, rates money.Rates) string {
 	if asset.Free() {
+		if asset.PayWhatYouWant {
+			return "Name your price"
+		}
 		return "Free"
 	}
-	return asset.Price
+
+	shown := asset.Price
+	if f.Currency != "" {
+		if parsed, ok := money.Parse(asset.Price); ok {
+			if converted, ok := rates.Convert(parsed, f.Currency); ok {
+				shown = "≈ " + converted.Display
+			}
+		}
+	}
+	if asset.PayWhatYouWant {
+		return shown + "+"
+	}
+	return shown
+}
+
+// priceTitle keeps the figure itch.io actually quoted within reach whenever the
+// badge is showing something derived from it. A converted price is this site's
+// arithmetic, not the seller's offer, and the hover has to be able to say so.
+func priceTitle(f Filters, asset models.Asset, rates money.Rates) string {
+	if asset.Free() {
+		if asset.PayWhatYouWant {
+			return "Pay what you want, including nothing"
+		}
+		return ""
+	}
+	if f.Currency == "" {
+		return ""
+	}
+	if _, ok := money.Parse(asset.Price); !ok {
+		return ""
+	}
+	return fmt.Sprintf("Listed at %s; converted at ECB rates of %s", asset.Price, rates.Date)
 }
 
 func priceClass(asset models.Asset) string {
@@ -27,6 +70,17 @@ func priceClass(asset models.Asset) string {
 		return "asset-price is-free"
 	}
 	return "asset-price"
+}
+
+// priceAttrs assembles the badge's attributes so that the title is present only
+// when there is something to say. Rendering title="" on every card would be
+// markup that means nothing and a tooltip that flashes empty on hover.
+func priceAttrs(f Filters, asset models.Asset, rates money.Rates) templ.Attributes {
+	attrs := templ.Attributes{"class": priceClass(asset)}
+	if title := priceTitle(f, asset, rates); title != "" {
+		attrs["title"] = title
+	}
+	return attrs
 }
 
 // tagClass marks a card's tag chip as already applied, so a card does not
@@ -38,7 +92,17 @@ func tagClass(f Filters, tag string) string {
 	return "tag"
 }
 
-templ AssetCard(f Filters, asset models.Asset) {
+// authorClass marks the author link on a card as the one currently filtered to,
+// for the same reason tagClass does: a control that would change nothing should
+// not look like it leads somewhere.
+func authorClass(f Filters, author string) string {
+	if f.Author == author {
+		return "asset-author is-active"
+	}
+	return "asset-author"
+}
+
+templ AssetCard(f Filters, asset models.Asset, rates money.Rates) {
 	<article class="asset">
 		<a class="asset-link" href={ templ.SafeURL(asset.Link) } target="_blank" rel="noopener">
 			if asset.ThumbUrl != "" {
@@ -51,14 +115,26 @@ templ AssetCard(f Filters, asset models.Asset) {
 			}
 			<div class="asset-body">
 				<div class="asset-title">{ asset.Title }</div>
-				<div class="asset-author">{ asset.Author }</div>
 				if asset.Description != "" {
 					<p class="asset-description">{ asset.Description }</p>
 				}
 			</div>
 		</a>
+		if asset.Author != "" {
+			// Outside the card's main link, because it goes somewhere else:
+			// "everything else by this person" is the obvious next move after
+			// finding one good pack, and nesting it inside the anchor to
+			// itch.io would make it unclickable.
+			<a
+				class={ authorClass(f, asset.Author) }
+				href={ templ.SafeURL(f.WithAuthor(asset.Author).ShareURL()) }
+				hx-get={ f.WithAuthor(asset.Author).FragmentURL(1) }
+				hx-target="#results-region"
+				hx-swap="innerHTML"
+			>{ asset.Author }</a>
+		}
 		<div class="asset-meta">
-			<span class={ priceClass(asset) }>{ priceLabel(asset) }</span>
+			<span { priceAttrs(f, asset, rates)... }>{ priceLabel(f, asset, rates) }</span>
 			if len(asset.Tags) > 0 {
 				<div class="asset-tags">
 					for _, tag := range shownTags(asset.Tags) {
@@ -92,7 +168,7 @@ templ NoResults(f Filters) {
 		} else {
 			<h2>No assets match these filters</h2>
 		}
-		if len(f.Tags) > 0 || f.Price != "" {
+		if len(f.Tags) > 0 || len(f.NotTags) > 0 || f.Price != "" || f.Author != "" {
 			<p>Tags are combined with AND, so every filter narrows the results further. Try removing one.</p>
 			@control("clear-filters", f.Cleared(), "Clear filters")
 		} else {
@@ -112,7 +188,7 @@ templ AssetPage(f Filters, r Results) {
 		@NoResults(f)
 	}
 	for _, asset := range r.Assets {
-		@AssetCard(f, asset)
+		@AssetCard(f, asset, r.Rates)
 	}
 	if r.HasMore {
 		<div

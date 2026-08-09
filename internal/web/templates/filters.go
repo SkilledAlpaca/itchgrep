@@ -22,8 +22,18 @@ import (
 type Filters struct {
 	Query string
 	Tags  []string
-	Price string
-	Sort  string
+	// NotTags are tags an asset must not carry. Kept separate from Tags rather
+	// than encoded as "-tag" inside it, so that neither list can ever contain a
+	// value the other is also asserting.
+	NotTags []string
+	Author  string
+	Price   string
+	Sort    string
+	// Currency, when set, is the currency prices are converted into for
+	// display. It changes nothing about which assets match - only how their
+	// prices are written - but it belongs in the URL all the same, so that a
+	// converted page is shareable and cacheable like any other.
+	Currency string
 }
 
 // MaxTags bounds how many tags one request may apply. Each becomes a conjunct
@@ -46,8 +56,17 @@ func (f Filters) Values() url.Values {
 	if len(f.Tags) > 0 {
 		v.Set("tags", strings.Join(f.Tags, ","))
 	}
+	if len(f.NotTags) > 0 {
+		v.Set("not", strings.Join(f.NotTags, ","))
+	}
+	if f.Author != "" {
+		v.Set("author", f.Author)
+	}
 	if f.Price != "" {
 		v.Set("price", f.Price)
+	}
+	if f.Currency != "" {
+		v.Set("cur", f.Currency)
 	}
 	// The default ordering depends on whether anything was searched for, so it
 	// is only worth encoding when it differs from what the server would pick.
@@ -91,14 +110,28 @@ func (f Filters) FragmentURL(page int64) string {
 
 // Any reports whether anything is filtering the catalogue, which is what
 // decides whether the "clear all" control is worth rendering.
+//
+// Currency is excluded on purpose: it changes how prices read, not which assets
+// are shown, so offering to "clear filters" because someone chose to see euros
+// would be describing a display preference as a constraint.
 func (f Filters) Any() bool {
-	return f.Query != "" || len(f.Tags) > 0 || f.Price != ""
+	return f.Query != "" || len(f.Tags) > 0 || len(f.NotTags) > 0 ||
+		f.Price != "" || f.Author != ""
 }
 
 // HasTag reports whether a tag is already applied.
 func (f Filters) HasTag(tag string) bool {
-	for _, t := range f.Tags {
-		if t == tag {
+	return contains(f.Tags, tag)
+}
+
+// HasNotTag reports whether a tag is already excluded.
+func (f Filters) HasNotTag(tag string) bool {
+	return contains(f.NotTags, tag)
+}
+
+func contains(list []string, want string) bool {
+	for _, t := range list {
+		if t == want {
 			return true
 		}
 	}
@@ -109,25 +142,76 @@ func (f Filters) HasTag(tag string) bool {
 // applied or the limit is reached. Tags stay sorted so that arriving at the
 // same set by different routes produces the same URL, and therefore the same
 // cache entry.
+//
+// Requiring a tag drops any exclusion of it. The two are contradictory, and
+// resolving it in favour of the click that just happened is the only reading
+// that leaves the control doing what it says.
 func (f Filters) WithTag(tag string) Filters {
 	if f.HasTag(tag) || len(f.Tags) >= MaxTags {
 		return f
 	}
-	next := f
+	next := f.WithoutNotTag(tag)
 	next.Tags = insertSorted(f.Tags, tag)
 	return next
 }
 
-// WithoutTag returns these filters minus one tag.
+// WithoutTag returns these filters minus one required tag.
 func (f Filters) WithoutTag(tag string) Filters {
 	next := f
-	next.Tags = make([]string, 0, len(f.Tags))
-	for _, t := range f.Tags {
-		if t != tag {
-			next.Tags = append(next.Tags, t)
-		}
+	next.Tags = remove(f.Tags, tag)
+	return next
+}
+
+// WithNotTag returns these filters with one tag excluded, dropping it from the
+// required list for the same reason WithTag drops the exclusion.
+func (f Filters) WithNotTag(tag string) Filters {
+	if f.HasNotTag(tag) || len(f.NotTags) >= MaxTags {
+		return f
+	}
+	next := f.WithoutTag(tag)
+	next.NotTags = insertSorted(f.NotTags, tag)
+	return next
+}
+
+// WithoutNotTag returns these filters minus one exclusion.
+func (f Filters) WithoutNotTag(tag string) Filters {
+	next := f
+	next.NotTags = remove(f.NotTags, tag)
+	return next
+}
+
+// WithAuthor returns these filters restricted to one creator, or unrestricted
+// again if that creator was already the one selected.
+func (f Filters) WithAuthor(author string) Filters {
+	next := f
+	if f.Author == author {
+		next.Author = ""
+	} else {
+		next.Author = author
 	}
 	return next
+}
+
+// WithCurrency returns these filters displaying prices in another currency, or
+// as listed if the same one is chosen again.
+func (f Filters) WithCurrency(currency string) Filters {
+	next := f
+	if f.Currency == currency {
+		next.Currency = ""
+	} else {
+		next.Currency = currency
+	}
+	return next
+}
+
+func remove(list []string, drop string) []string {
+	out := make([]string, 0, len(list))
+	for _, t := range list {
+		if t != drop {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // ToggleTag adds a tag if absent and removes it if present, so one control can
@@ -163,7 +247,7 @@ func (f Filters) WithSort(sort string) Filters {
 // "clear everything": a person clicking "clear filters" next to their own query
 // means the tags, not the search they just typed.
 func (f Filters) Cleared() Filters {
-	return Filters{Query: f.Query, Sort: f.Sort}
+	return Filters{Query: f.Query, Sort: f.Sort, Currency: f.Currency}
 }
 
 func insertSorted(tags []string, tag string) []string {

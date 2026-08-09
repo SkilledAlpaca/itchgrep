@@ -74,3 +74,18 @@ func TestParseAssetPageStillReadsEverythingElse(t *testing.T) {
 	assert.Equal(t, "https://img.itch.zone/a.png", a.ThumbUrl)
 	assert.Equal(t, int64(7), a.InvPopularity)
 }
+
+func TestPayWhatYouWantIsReadFromThePriceTagTitle(t *testing.T) {
+	// The listing says so in one place only: the title attribute. Without it a
+	// tip-supported asset and a plain giveaway are the same empty price, and
+	// the difference is the one the author cares about.
+	assets, err := ParseAssetPage(itchResponse{Content: paidCell + pwywCell + freeCell}, 1)
+	require.NoError(t, err)
+	require.Len(t, assets, 3)
+
+	assert.True(t, assets[1].PayWhatYouWant, `"Pay $0 or more" is an ask, not a price`)
+	assert.Empty(t, assets[1].Price, "and it is still free to download")
+
+	assert.False(t, assets[0].PayWhatYouWant, "a plain price tag carries no such title")
+	assert.False(t, assets[2].PayWhatYouWant, "and an asset with no price markup carries none either")
+}

@@ -8,6 +8,7 @@ import (
 
 	"itchgrep/internal/cache"
 	"itchgrep/pkg/models"
+	"itchgrep/pkg/money"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -71,8 +72,8 @@ func TestAppliedFiltersSurviveANewSearch(t *testing.T) {
 func TestFiltersAreParsedFromEitherEncoding(t *testing.T) {
 	// Links generate ?tags=a,b; a form submission of the hidden fields above
 	// generates ?tags=a&tags=b. Both have to mean the same thing.
-	comma := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=2d,pixel-art", nil))
-	repeated := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=2d&tags=pixel-art", nil))
+	comma := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=2d,pixel-art", nil), money.Fallback())
+	repeated := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=2d&tags=pixel-art", nil), money.Fallback())
 
 	assert.Equal(t, []string{"2d", "pixel-art"}, comma.Tags)
 	assert.Equal(t, comma.Tags, repeated.Tags)
@@ -82,7 +83,7 @@ func TestJunkFilterValuesAreDropped(t *testing.T) {
 	// They can only come from a hand-edited or stale URL. Answering with a 400
 	// would put an error page behind a link with an obvious harmless reading.
 	f := parseFilters(httptest.NewRequest(http.MethodGet,
-		"/?tags=Pixel_Art!&price=cheap&sort=whatever", nil))
+		"/?tags=Pixel_Art!&price=cheap&sort=whatever", nil), money.Fallback())
 
 	assert.Empty(t, f.Tags, "a slug with characters itch.io never uses matches nothing")
 	assert.Empty(t, f.Price)
@@ -90,12 +91,12 @@ func TestJunkFilterValuesAreDropped(t *testing.T) {
 }
 
 func TestTagsAreNormalisedAndDeduped(t *testing.T) {
-	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=+2D+,2d,,pixel-art", nil))
+	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=+2D+,2d,,pixel-art", nil), money.Fallback())
 	assert.Equal(t, []string{"2d", "pixel-art"}, f.Tags)
 }
 
 func TestValidFilterValuesAreKept(t *testing.T) {
-	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?price=paid&sort=title", nil))
+	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?price=paid&sort=title", nil), money.Fallback())
 	assert.Equal(t, models.PricingPaid, f.Price)
 	assert.Equal(t, models.SortTitle, f.Sort)
 }

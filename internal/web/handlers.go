@@ -7,6 +7,7 @@ import (
 	"itchgrep/internal/logging"
 	"itchgrep/internal/web/templates"
 	"itchgrep/pkg/models"
+	"itchgrep/pkg/money"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,6 +30,11 @@ const maxQueryLen = 200
 
 // maxTagLen bounds one tag slug. itch.io's longest is well under this.
 const maxTagLen = 64
+
+// maxAuthorLen bounds an author parameter. itch.io display names are far
+// shorter; this only exists to keep a hand-written URL from becoming a long
+// term lookup.
+const maxAuthorLen = 120
 
 type handler struct {
 	cache *cache.Cache
@@ -71,7 +77,7 @@ func Handle404(w http.ResponseWriter, r *http.Request) {
 // filtered URL shareable: the recipient gets the page they were sent, not an
 // empty one that then populates.
 func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
-	filters := parseFilters(r)
+	filters := parseFilters(r, h.cache.Rates())
 
 	results, err := h.find(filters, 1)
 	if err != nil {
@@ -97,7 +103,7 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 // work. The response carries HX-Push-Url so the address bar shows the shareable
 // /?... form rather than this endpoint.
 func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
-	filters := parseFilters(r)
+	filters := parseFilters(r, h.cache.Rates())
 
 	page := int64(1)
 	if p := r.URL.Query().Get("page"); p != "" {
@@ -144,20 +150,24 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 // find runs the query and shapes the answer for the templates.
 func (h *handler) find(filters templates.Filters, page int64) (templates.Results, error) {
 	found, err := h.cache.Find(cache.SearchOptions{
-		Query: filters.Query,
-		Tags:  filters.Tags,
-		Price: filters.Price,
-		Sort:  filters.Sort,
-		Page:  page,
+		Query:       filters.Query,
+		Tags:        filters.Tags,
+		ExcludeTags: filters.NotTags,
+		Author:      filters.Author,
+		Price:       filters.Price,
+		Sort:        filters.Sort,
+		Page:        page,
 	})
 	if err != nil {
 		return templates.Results{}, err
 	}
 	return templates.Results{
-		Assets: found.Assets,
-		Total:  found.Total,
-		Tags:   found.Tags,
-		Page:   page,
+		Assets:     found.Assets,
+		Total:      found.Total,
+		Tags:       found.Tags,
+		Page:       page,
+		Rates:      h.cache.Rates(),
+		HasRecency: h.cache.HasRecency(),
 		// Computed from the totals rather than from whether this page came back
 		// full, so the last page of results does not trigger one more request
 		// that can only return nothing.
@@ -171,7 +181,7 @@ func (h *handler) find(filters templates.Filters, page int64) (templates.Results
 // rejected. They can only come from a hand-edited or stale URL, and answering
 // those with a 400 would put an error page behind a link that has an obvious,
 // harmless reading - whereas a bad ?page= is structural and does get rejected.
-func parseFilters(r *http.Request) templates.Filters {
+func parseFilters(r *http.Request, rates money.Rates) templates.Filters {
 	q := r.URL.Query()
 
 	f := templates.Filters{Query: clampQuery(q.Get("q"))}
@@ -186,12 +196,28 @@ func parseFilters(r *http.Request) templates.Filters {
 			}
 		}
 	}
+	// Applied after the inclusions, so that a URL asserting both ends up
+	// excluding: WithNotTag drops the tag from the required list, and the last
+	// instruction in the URL is the one that stands.
+	for _, raw := range q["not"] {
+		for _, tag := range strings.Split(raw, ",") {
+			if tag = normaliseTag(tag); tag != "" {
+				f = f.WithNotTag(tag)
+			}
+		}
+	}
+
+	f.Author = clampAuthor(q.Get("author"))
 
 	switch q.Get("price") {
 	case models.PricingFree:
 		f.Price = models.PricingFree
 	case models.PricingPaid:
 		f.Price = models.PricingPaid
+	case models.PricingUnder5:
+		f.Price = models.PricingUnder5
+	case models.PricingUnder20:
+		f.Price = models.PricingUnder20
 	}
 
 	switch q.Get("sort") {
@@ -201,9 +227,38 @@ func parseFilters(r *http.Request) templates.Filters {
 		f.Sort = models.SortPopular
 	case models.SortTitle:
 		f.Sort = models.SortTitle
+	case models.SortPrice:
+		f.Sort = models.SortPrice
+	case models.SortRecent:
+		f.Sort = models.SortRecent
 	}
 
+	f.Currency = normaliseCurrency(q.Get("cur"), rates)
+
 	return f
+}
+
+// normaliseCurrency accepts only a currency the loaded snapshot can actually
+// convert to. An unknown code is dropped rather than carried, so the control
+// never shows a selection that silently converts nothing.
+func normaliseCurrency(cur string, rates money.Rates) string {
+	cur = strings.ToUpper(strings.TrimSpace(cur))
+	if cur == "" || !rates.Has(cur) {
+		return ""
+	}
+	return cur
+}
+
+// clampAuthor bounds an author parameter. It is matched exactly against a
+// keyword field, so anything longer than a plausible display name can only be
+// junk - but unlike a tag it has no restricted alphabet, since itch.io names
+// contain spaces, punctuation and every script there is.
+func clampAuthor(author string) string {
+	author = strings.TrimSpace(author)
+	if len(author) > maxAuthorLen {
+		return ""
+	}
+	return author
 }
 
 // normaliseTag reduces a tag parameter to a slug, or to "" if it is not one.
