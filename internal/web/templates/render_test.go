@@ -34,6 +34,32 @@ func sampleResults() Results {
 	}
 }
 
+func TestAttributionSurvivesOnEveryPage(t *testing.T) {
+	// The masthead and the about page are the only two places a visitor is told
+	// who wrote this and where to get the code. GPL-3.0 makes the source link
+	// an obligation rather than a courtesy, and it is exactly the sort of thing
+	// a later redesign drops without noticing.
+	for name, html := range map[string]string{
+		"masthead": render(t, Masthead()),
+		"about":    render(t, About()),
+	} {
+		assert.Contains(t, html, AuthorURL, name+" must credit the original author")
+		assert.Contains(t, html, SourceURL, name+" must link the source it runs")
+		assert.NotContains(t, html, "buymeacoffee", name+" no longer solicits donations")
+	}
+}
+
+func TestAboutDoesNotSpeakAsTheOriginalAuthor(t *testing.T) {
+	// This page used to read "I built itchgrep.com" and list the original
+	// author's email and socials. On a fork run by somebody else that claims
+	// their identity and routes support at someone who cannot answer for it.
+	html := render(t, About())
+
+	assert.NotContains(t, html, "I built")
+	assert.NotContains(t, html, "mailto:", "contact details belonged to the original author")
+	assert.Contains(t, html, "not operated by the", "the split must be stated, not implied")
+}
+
 func TestSidebarRendersTagsWithCounts(t *testing.T) {
 	html := render(t, ResultsRegion(Filters{}, sampleResults()))
 

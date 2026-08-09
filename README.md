@@ -14,11 +14,13 @@
 
 <div align="left">
 
-### 💖 Support itchgrep
+### Credit
 
-Your support fuels our passion and helps keep the servers running! If you appreciate what we do and want to contribute to our journey, consider:
-
-- 🍵 [**Buying me a coffee!** Your generosity is immensely appreciated, and every cup allows me to keep working on cool stuff.](https://www.buymeacoffee.com/winterv)
+itchgrep was created by [winterveil](https://github.com/wintermute-cell); the
+original lives at
+[wintermute-cell/itchgrep](https://github.com/wintermute-cell/itchgrep). This
+repository is a fork, licensed as the original under GPL-3.0, and is not
+operated by the original author.
 
 </div>
 
@@ -278,7 +280,23 @@ listens on 8080 and is the only thing that should ever be exposed.
 
 Use a Tunnel (`cloudflared`) rather than opening a port: the connection is
 outbound, so there is no port forward, no static IP, and your origin address
-never appears in DNS. Point it at `http://localhost:8080`.
+never appears in DNS. Better still, a tunnelled origin is not reachable except
+through Cloudflare — a stronger property than a firewall rule, which is only as
+good as its ruleset.
+
+`docker-compose.yml` carries the tunnel as an opt-in `public` profile, so a
+local run never needs a Cloudflare account:
+
+1. In the Cloudflare dashboard, add the domain and let it serve DNS
+   (nameserver change at the registrar; propagation is usually under an hour).
+2. Zero Trust → Networks → Tunnels → create a tunnel, and copy its token.
+3. Put the token in `.env` as `CLOUDFLARE_TUNNEL_TOKEN=…`, and set
+   `TRUST_PROXY_HEADERS=true` in the same file.
+4. Add a public hostname on the tunnel: `itchgrep.com` → `HTTP` →
+   `webserver:8080`. The **service name**, not `localhost` — cloudflared
+   resolves it over the compose network, and `localhost` inside that container
+   is the container itself. Add `www` as a second hostname or a redirect rule.
+5. `docker compose --profile public up -d`
 
 Two settings matter on the origin:
 
@@ -292,6 +310,27 @@ tunnel every request arrives from the same address, so without it the whole
 internet is one client. Leave it **off** if the server is directly exposed —
 the header is attacker-controlled there, and honouring it would let any client
 mint a new identity per request.
+
+### Why not a Cloudflare Worker
+
+A Worker is a V8 isolate: no filesystem, ~128 MB of memory, and a bundle
+measured in single-digit megabytes. This webserver is a Go binary that memory
+maps a bleve index — **563 MB at 38% of the catalogue, so roughly 1.2 GB at full
+coverage** — and holds the asset list in RAM besides. Those are not numbers that
+shrink with tuning; they are three orders of magnitude apart, and Go compiled to
+WASM does not change any of it.
+
+The version of this that *would* work is a different program: publish to D1
+(SQLite, so FTS5 instead of bleve) or Vectorize, and rewrite the query layer and
+the templates in TypeScript. That trades the tag facets — which currently come
+free from one bleve search — for `GROUP BY` over a join table, and it costs a
+rewrite of everything in `internal/cache` and `internal/web`. Worth it only if
+the goal is having no origin at all.
+
+Cloudflare Containers can run this image as-is, but the index would have to be
+pulled from R2 on every cold start, which is the tunnel with extra steps and a
+bill. The tunnel is the right answer: the origin is a machine you already have,
+and the CDN in front of it already absorbs the repeat traffic.
 
 ### What makes this cheap to serve
 
@@ -310,9 +349,13 @@ by `Referer`, which would break every thumbnail at once.
 - The webserver holds the whole dataset in memory and both the old and new
   index are open during a swap, so peak memory is roughly double steady state.
   With a ~600 MB index, give the container real headroom.
-- You would be republishing scraped itch.io metadata. Upstream runs
-  itchgrep.com publicly, so there is precedent, but personal use and a public
-  service are different postures.
+- You would be republishing scraped itch.io metadata. itchgrep ran publicly for
+  years, so there is precedent, but personal use and a public service are
+  different postures. Nothing is mirrored — every result links back to itch.io —
+  which is the fact that makes the case defensible.
+- Thumbnails hotlink `img.itch.zone`. A public site is a lot more traffic to
+  somebody else's CDN than a personal one, and `Referer` blocking would break
+  every thumbnail at once.
 
 ## Deploying in the Cloud
 

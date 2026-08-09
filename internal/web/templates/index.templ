@@ -10,13 +10,13 @@ templ Masthead() {
 		<div class="masthead-meta">
 			<p>search itch.io/game-assets by text instead of just tags.</p>
 			<p>
-				created by
-				<a href="https://github.com/wintermute-cell" target="_blank" rel="noopener">winterveil</a>.
+				originally created by
+				<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }</a>.
 			</p>
 			<nav class="masthead-links">
 				<a href="#" hx-get="/about" hx-swap="outerHTML" hx-target="#page-content">About</a>
-				<a href="https://github.com/wintermute-cell/itchgrep" target="_blank" rel="noopener">GitHub</a>
-				<a href="https://www.buymeacoffee.com/winterveil" target="_blank" rel="noopener">Donate</a>
+				<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">Source</a>
+				<a href={ templ.SafeURL(UpstreamURL) } target="_blank" rel="noopener">Original</a>
 			</nav>
 		</div>
 	</header>

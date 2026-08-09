@@ -171,5 +171,39 @@ services:
     # because Compose cannot return until a service_completed_successfully
     # dependency finishes.
 
+  # Public entrypoint for itchgrep.com. Opt-in, so a local `docker compose up`
+  # never needs a Cloudflare account:
+  #
+  #   docker compose --profile public up -d
+  #
+  # A Tunnel dials OUT to Cloudflare and keeps the connection open, so there is
+  # no port forward, no static IP, and the origin address never appears in DNS.
+  # An open inbound port is the thing being avoided here - not just for secrecy,
+  # but because a tunnelled origin cannot be reached at all except through
+  # Cloudflare, which is a much stronger property than a firewall rule.
+  #
+  # Route the tunnel's public hostname at http://webserver:8080 - the service
+  # name, not localhost, since cloudflared resolves it on the compose network.
+  #
+  # NEVER route a hostname at the dataservice on 8080/8081. `/trigger-fetch`
+  # takes no authentication, so a public route to it hands anyone a button that
+  # starts a multi-hour crawl.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: [public]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # From the Zero Trust dashboard when the tunnel is created. It is a
+      # credential: keep it in .env, which is gitignored, never in this file.
+      #
+      # Defaulted rather than required (`:?`), because Compose interpolates
+      # every service before it filters by profile - a required variable here
+      # would break a plain local `docker compose up` for anyone who has no
+      # tunnel. Unset, cloudflared exits immediately saying so.
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    depends_on:
+      - webserver
+
 volumes:
   itchgrep-data:

@@ -1,46 +1,48 @@
 package templates
 
+// About is written in the third person on purpose.
+//
+// It used to be the original author's personal page: "I built itchgrep.com",
+// followed by their email, Twitter, Mastodon, Discord and itch.io profile. On a
+// fork run by somebody else that page is wrong twice over - it speaks as
+// someone who does not operate this site, and it points support at a person who
+// cannot answer for it. The credit below is the part worth keeping; the contact
+// details were theirs, not this deployment's.
 templ About() {
 	<div id="page-content" class="prose">
 		<h2>About</h2>
 		<p>
-			I built <a href="/">itchgrep.com</a> to solve a simple problem:
-			finding game assets on itch.io was harder than it needed to be,
-			since the search is only possible by tags.
+			itchgrep searches <a href="https://itch.io/game-assets" target="_blank" rel="noopener">itch.io/game-assets</a>
+			by text rather than by tag alone. itch.io itself only lets you browse
+			the asset catalogue by picking tags, which works badly when you know
+			what you want but not what somebody chose to label it.
 		</p>
 		<p>
-			As a solo dev, I wanted a straightforward tool to help me find what
-			I need. That's why this site is no fluff, just a utility to help
-			you and me find what we need.
+			A crawler walks the public browse pages a couple of requests per
+			second, builds a full-text index over roughly 100,000 assets, and
+			this site queries it. Nothing is mirrored: every result links
+			straight back to the asset's own itch.io page, and every purchase,
+			download and page view still happens there.
 		</p>
-		<h2>Contact</h2>
+		<h2>Credit</h2>
 		<p>
-			Want to get in contact? Email me:
-			<a href="mailto:winterveil.dev@gmail.com">winterveil.dev@gmail.com</a>.
-		</p>
-		<hr/>
-		<p>
-			I'm on Twitter:
-			<a href="https://twitter.com/winterveil_dev" target="_blank" rel="noopener">
-				&commat;winterveil_dev
-			</a>.
+			itchgrep was created by
+			<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }</a>,
+			whose original version is at
+			<a href={ templ.SafeURL(UpstreamURL) } target="_blank" rel="noopener">{ UpstreamURL }</a>.
+			This site runs a fork of that work and is not operated by the
+			original author, so nothing here should be taken as their doing.
 		</p>
 		<p>
-			And mastodon (the better platform!):
-			<a href="https://mastodon.social/@winterveil" target="_blank" rel="noopener">
-				&commat;winterveil
-			</a>
-		</p>
-		<hr/>
-		<p>
-			For discussions and community, or if you're interested in what
-			else I build, and how I build it, our Discord is here:
-			<a href="https://discord.gg/f8nyyK4ngZ" target="_blank" rel="noopener">winterveil's netsphere</a>.
-		</p>
-		<hr/>
-		<p>
-			And of course I also have an itch.io profile:
+			Their own games and assets are at
 			<a href="https://winterveil.itch.io/" target="_blank" rel="noopener">winterveil.itch.io</a>.
+		</p>
+		<h2>Source</h2>
+		<p>
+			itchgrep is free software under the
+			<a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GNU GPL v3</a>.
+			The code this site runs is at
+			<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">{ SourceURL }</a>.
 		</p>
 		<hr/>
 		<p><a href="/">← Back to search</a></p>
