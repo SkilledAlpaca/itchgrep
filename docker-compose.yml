@@ -140,6 +140,19 @@ services:
       DATA_DIR: /data
       PAGE_SIZE: "36"
       PORT: "8080"
+      # Per-client request budget. A search is not cheap - three disjunctions,
+      # two of them fuzzy, over ~86,000 documents - and nothing else in the
+      # request path pushes back. Set RATE_LIMIT_RPS to 0 to disable.
+      RATE_LIMIT_RPS: "${RATE_LIMIT_RPS:-5}"
+      RATE_LIMIT_BURST: "${RATE_LIMIT_BURST:-20}"
+      # Take the client IP from CF-Connecting-IP / X-Forwarded-For.
+      #
+      # Turn this on ONLY when something upstream (Cloudflare, nginx) sets those
+      # headers, because they are otherwise attacker-controlled and any client
+      # could mint a fresh identity per request to escape the limit. Behind a
+      # proxy the inverse is true: leave it off and every visitor shares one
+      # bucket, because every request arrives from the same address.
+      TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
     ports:
       - "8080:8080"
     volumes:

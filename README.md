@@ -232,6 +232,55 @@ DATA_DIR=./data PAGE_SIZE=36 go run ./cmd/webserver
     required for building/running, but to provide code completion and stop the
     language server from complaining.
 
+## Hosting it publicly
+
+Both services are meant to run on one box behind a reverse proxy. The webserver
+listens on 8080 and is the only thing that should ever be exposed.
+
+> **Never proxy port 8081.** That is the dataservice, and `/trigger-fetch`
+> takes no authentication. A public route to it lets anyone start a multi-hour
+> crawl.
+
+### Behind Cloudflare
+
+Use a Tunnel (`cloudflared`) rather than opening a port: the connection is
+outbound, so there is no port forward, no static IP, and your origin address
+never appears in DNS. Point it at `http://localhost:8080`.
+
+Two settings matter on the origin:
+
+```
+TRUST_PROXY_HEADERS=true      # or every visitor shares one rate-limit bucket
+RATE_LIMIT_RPS=5              # per client; 0 disables
+```
+
+`TRUST_PROXY_HEADERS` makes the rate limiter read `CF-Connecting-IP`. Behind a
+tunnel every request arrives from the same address, so without it the whole
+internet is one client. Leave it **off** if the server is directly exposed —
+the header is attacker-controlled there, and honouring it would let any client
+mint a new identity per request.
+
+### What makes this cheap to serve
+
+Search and browse are `GET`s that send `Cache-Control: public, max-age=300`, so
+a proxy can serve repeats of a popular query without touching the origin. This
+is why search is not a `POST`: no shared cache will ever store one, so every
+search — including the same query a thousand times — would run a full bleve
+pass on your machine.
+
+Thumbnails are hotlinked to `img.itch.zone`, so image bandwidth never crosses
+your connection. The flip side is that itch.io bears that cost and could block
+by `Referer`, which would break every thumbnail at once.
+
+### Before going public
+
+- The webserver holds the whole dataset in memory and both the old and new
+  index are open during a swap, so peak memory is roughly double steady state.
+  With a ~600 MB index, give the container real headroom.
+- You would be republishing scraped itch.io metadata. Upstream runs
+  itchgrep.com publicly, so there is precedent, but personal use and a public
+  service are different postures.
+
 ## Deploying in the Cloud
 
 There is no cloud deployment path any more. `dataservice` and `webserver` used

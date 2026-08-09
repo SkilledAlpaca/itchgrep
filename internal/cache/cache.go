@@ -73,6 +73,15 @@ func NewCache(pageSize int64) *Cache {
 	}
 }
 
+// DataUpdatedTime is when the currently-loaded dataset was published. Handlers
+// use it as Last-Modified so a shared cache can revalidate rather than refetch,
+// and so a newly published index invalidates what the edge is holding.
+func (c *Cache) DataUpdatedTime() time.Time {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	return c.dataUpdatedTime
+}
+
 func (c *Cache) IsCacheExpired() bool {
 	c.cacheLock.RLock()
 	dataUpdatedTime := c.dataUpdatedTime

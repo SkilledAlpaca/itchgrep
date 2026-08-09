@@ -1,6 +1,5 @@
 package templates
 
-import "encoding/json"
 import "fmt"
 import "itchgrep/pkg/models"
 
@@ -8,19 +7,6 @@ import "itchgrep/pkg/models"
 // average but some carry dozens, and letting those grow unbounded makes the
 // grid rows ragged for no gain.
 const maxTagsShown = 5
-
-// hxValsQuery builds the JSON object used for the htmx hx-vals attribute,
-// safely escaping the query string via encoding/json instead of naive
-// string interpolation (which breaks on queries containing a double quote).
-func hxValsQuery(query string) string {
-	b, err := json.Marshal(map[string]string{"query": query})
-	if err != nil {
-		// json.Marshal on a map[string]string cannot fail; fall back to an
-		// empty query object just in case.
-		return `{"query":""}`
-	}
-	return string(b)
-}
 
 func shownTags(tags []string) []string {
 	if len(tags) > maxTagsShown {
@@ -85,8 +71,7 @@ templ AssetPage(pageNum int64, assets []models.Asset, isQuery bool, query string
 		} else {
 			<div
 				id="asset-load-trigger"
-				hx-vals={ hxValsQuery(query) }
-				hx-post={ fmt.Sprintf("/query/%d", pageNum+1) }
+				hx-get={ searchURL(query, pageNum+1) }
 				hx-trigger="revealed"
 				hx-swap="outerHTML"
 			></div>

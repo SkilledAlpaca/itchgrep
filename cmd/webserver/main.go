@@ -73,12 +73,18 @@ func main() {
 
 	h := web.NewHandler(cache)
 	// The stylesheet and htmx are embedded in the binary rather than pulled
-	// from a CDN, so the page renders with no outbound network access.
+	// from a CDN, so the page renders with no outbound network access. Mounted
+	// before the rate limiter: these are static, cheap, and cached at the edge,
+	// so counting them against a visitor's budget would only punish first loads.
 	r.Handle("/static/*", web.StaticHandler())
-	r.Get("/", h.HandleIndex)
-	r.Get("/assets/{page}", h.HandleGetAssetPage)
-	r.Post("/query/{page}", h.HandleQuery)
-	r.Get("/about", h.HandleAbout)
+
+	r.Group(func(r chi.Router) {
+		r.Use(web.NewLimiter().Middleware)
+		r.Get("/", h.HandleIndex)
+		r.Get("/assets/{page}", h.HandleGetAssetPage)
+		r.Get("/search", h.HandleSearch)
+		r.Get("/about", h.HandleAbout)
+	})
 	r.NotFound(web.Handle404)
 
 	// SERVER
@@ -88,5 +94,23 @@ func main() {
 	}
 	logging.Info("Server started at port %s", port)
 
-	http.ListenAndServe(port, r)
+	// Explicit timeouts rather than http.ListenAndServe's defaults, which are
+	// none at all: a client that opens a connection and then sends its request
+	// one byte at a time holds a goroutine and a file descriptor indefinitely.
+	// A reverse proxy absorbs most of that, but the origin should not depend on
+	// one being there.
+	//
+	// WriteTimeout is generous because a result page renders 36 cards and the
+	// first request after a new index publishes also waits on the cache reload.
+	srv := &http.Server{
+		Addr:              port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
+		logging.Fatal("Server failed: %v", err)
+	}
 }

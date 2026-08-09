@@ -1,5 +1,14 @@
 package templates
 
+import "fmt"
+import "net/url"
+
+// searchURL builds the URL for one page of results. Query escaping matters
+// here: a search for "a&b" would otherwise truncate at the ampersand.
+func searchURL(query string, page int64) string {
+	return fmt.Sprintf("/search?q=%s&page=%d", url.QueryEscape(query), page)
+}
+
 templ Masthead() {
 	<header class="masthead">
 		<h1 class="wordmark-heading">
@@ -22,20 +31,26 @@ templ Masthead() {
 	</header>
 }
 
-templ Index() {
+// Index renders the whole page. A non-empty query is rendered into the search
+// box and loaded as results, so /?q=pixel+art is a shareable link rather than
+// an empty page.
+templ Index(query string) {
 	@Masthead()
 	<div id="page-content">
 		<form
 			class="searchbar"
 			role="search"
-			hx-post="/query/1"
+			action="/"
+			method="get"
+			hx-get="/search"
 			hx-target="#asset-list"
 			hx-swap="innerHTML"
 		>
 			<input
 				id="query-input"
 				type="text"
-				name="query"
+				name="q"
+				value={ query }
 				placeholder="pixel art tileset, isometric, bones..."
 				aria-label="Search assets"
 				autocomplete="off"
@@ -47,7 +62,11 @@ templ Index() {
 			<div class="spinner" aria-hidden="true"></div>
 		</form>
 		<div id="asset-list">
-			<div hx-get="/assets/1" hx-trigger="load" hx-swap="outerHTML" hx-target="this"></div>
+			if query != "" {
+				<div hx-get={ searchURL(query, 1) } hx-trigger="load" hx-swap="outerHTML" hx-target="this"></div>
+			} else {
+				<div hx-get="/assets/1" hx-trigger="load" hx-swap="outerHTML" hx-target="this"></div>
+			}
 		</div>
 	</div>
 }
