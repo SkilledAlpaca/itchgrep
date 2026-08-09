@@ -40,7 +40,7 @@ func TestAttributionSurvivesOnEveryPage(t *testing.T) {
 	// an obligation rather than a courtesy, and it is exactly the sort of thing
 	// a later redesign drops without noticing.
 	for name, html := range map[string]string{
-		"masthead": render(t, Masthead()),
+		"masthead": render(t, Masthead(Freshness{})),
 		"about":    render(t, About()),
 	} {
 		assert.Contains(t, html, AuthorURL, name+" must credit the original author")

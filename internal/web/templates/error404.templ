@@ -1,7 +1,9 @@
 package templates
 
 templ Error404() {
-	@Masthead()
+	// No age line: Handle404 is wired up without a cache to ask, and a 404 is
+	// about a URL that does not exist rather than about the data behind it.
+	@Masthead(Freshness{})
 	<div class="notice">
 		<h2>404 — nothing here</h2>
 		<p><a href="/">Back to search</a></p>

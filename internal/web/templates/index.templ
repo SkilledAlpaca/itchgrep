@@ -1,6 +1,24 @@
 package templates
 
-templ Masthead() {
+// IndexAge tells a visitor how old the answers are.
+//
+// This site is a snapshot of somebody else's catalogue, not a live view of it,
+// and nothing else on the page admits that. Without it an empty result for an
+// asset published last week reads as "itchgrep is broken" rather than "the
+// crawl has not run since".
+templ IndexAge(f Freshness) {
+	if f.Known() {
+		<p class={ "index-age", templ.KV("is-stale", f.Stale()) }>
+			index updated
+			<time datetime={ f.DateTime() } title={ f.Absolute() }>{ f.Label() }</time>
+			if f.Stale() {
+				<span class="index-age-warn">— the crawl may have stopped</span>
+			}
+		</p>
+	}
+}
+
+templ Masthead(age Freshness) {
 	<header class="masthead">
 		<h1 class="wordmark-heading">
 			<a class="wordmark" href="/" aria-label="itchgrep home">
@@ -18,6 +36,7 @@ templ Masthead() {
 				<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">Source</a>
 				<a href={ templ.SafeURL(UpstreamURL) } target="_blank" rel="noopener">Original</a>
 			</nav>
+			@IndexAge(age)
 		</div>
 	</header>
 }
@@ -62,8 +81,8 @@ templ SearchBar(f Filters) {
 // Index renders the whole page, results included, so that any filtered URL is
 // a shareable link that lands on populated results rather than on an empty box
 // that then fetches them.
-templ Index(f Filters, r Results) {
-	@Masthead()
+templ Index(f Filters, r Results, age Freshness) {
+	@Masthead(age)
 	<div id="page-content">
 		@SearchBar(f)
 		<div id="results-region" class="results-region">

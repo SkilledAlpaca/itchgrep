@@ -19,6 +19,7 @@
   --accent: #7ee787;
   --accent-dim: #2ea043;
   --accent-contrast: #08130a;
+  --warn: #d29922;
   --radius: 10px;
   --gap: 1.4rem;
 
@@ -38,6 +39,8 @@
     --accent: #1a7f37;
     --accent-dim: #1a7f37;
     --accent-contrast: #ffffff;
+    /* Darker than the dark-theme amber: #d29922 on white fails contrast. */
+    --warn: #9a6700;
 
     color-scheme: light;
   }
@@ -174,6 +177,27 @@ a:hover {
 
 .masthead-links a:hover {
   color: var(--accent);
+}
+
+/* The age of the index. Faint by default - it is a caveat, not a headline -
+   and only allowed to compete for attention once it is reporting a problem. */
+.index-age {
+  margin-top: 0.6rem;
+  font-size: 1.2rem;
+  color: var(--text-faint);
+}
+
+.index-age time {
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+}
+
+.index-age.is-stale {
+  color: var(--warn);
+}
+
+.index-age-warn {
+  font-weight: 600;
 }
 
 /* ---------------------------------------------------------------- search  */

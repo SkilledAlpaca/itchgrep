@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // fragmentMaxAge is how long a rendered result page may be reused.
@@ -48,6 +49,13 @@ func (h *handler) cacheable(w http.ResponseWriter) {
 	}
 }
 
+// freshness measures the served dataset against the wall clock, for the age
+// line in the masthead. Read per request rather than at startup, so the line
+// updates itself when a crawl publishes underneath a long-running process.
+func (h *handler) freshness() templates.Freshness {
+	return templates.NewFreshness(h.cache.DataUpdatedTime(), time.Now())
+}
+
 // Handle404 renders the site's styled 404 page with an HTTP 404 status
 // code. It is exported so cmd/webserver can wire it up as chi's NotFound
 // handler.
@@ -73,12 +81,12 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		logging.Error("Error rendering index: %s", err)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(statusFor(err))
-		templates.Layout(pageTitle(filters), templates.Index(filters, templates.Results{Page: 1})).Render(r.Context(), w)
+		templates.Layout(pageTitle(filters), templates.Index(filters, templates.Results{Page: 1}, h.freshness())).Render(r.Context(), w)
 		return
 	}
 
 	h.cacheable(w)
-	templates.Layout(pageTitle(filters), templates.Index(filters, results)).Render(r.Context(), w)
+	templates.Layout(pageTitle(filters), templates.Index(filters, results, h.freshness())).Render(r.Context(), w)
 }
 
 // HandleResults serves one page of results as a fragment.

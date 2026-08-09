@@ -47,6 +47,15 @@ func TestSearchQueryIsRenderedIntoThePage(t *testing.T) {
 	assert.Contains(t, body, "pixel art — ITCHGREP", "the title should say what was searched for")
 }
 
+func TestIndexAgeIsNotClaimedBeforeAnythingHasLoaded(t *testing.T) {
+	// The test cache has never loaded, so its update time is the zero value.
+	// Rendering that as an age would put "index updated 2025 years ago" in the
+	// masthead of a server that is merely still starting up.
+	r, _ := newTestRouter()
+
+	assert.NotContains(t, get(t, r, "/").Body.String(), "index updated")
+}
+
 func TestAppliedFiltersSurviveANewSearch(t *testing.T) {
 	// The search form posts to the same page, so anything it does not carry is
 	// silently dropped. Losing the tags a visitor just picked because they then
