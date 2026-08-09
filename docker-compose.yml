@@ -67,10 +67,20 @@ services:
       SCRAPE_MAX_PAGES: "${SCRAPE_MAX_PAGES:-}"
       # Stop crawling once this fraction of the catalogue has been collected.
       # The last few percent costs disproportionately many requests.
+      #
+      # In practice this does not trigger: a full crawl exhausts every slice at
+      # ~79%. It is an upper bound, so lowering it would end the crawl early
+      # and index less. Leave it unless you deliberately want a shorter run.
       COVERAGE_TARGET: "${COVERAGE_TARGET:-0.95}"
       # Refuse to publish below this fraction, leaving the previous index in
       # place. Stops a stalled run replacing a good index with a worse one.
-      COVERAGE_FLOOR: "${COVERAGE_FLOOR:-0.90}"
+      #
+      # Must sit BELOW what a healthy run actually reaches, or it rejects every
+      # run. A full crawl measures ~79% (86,084 of 108,585): the union of tag
+      # views cannot reach the rest, since assets whose every tag exceeds the
+      # 200-page ceiling are not fully pageable. 0.70 leaves room for the
+      # catalogue to grow while still catching a genuinely stalled run.
+      COVERAGE_FLOOR: "${COVERAGE_FLOOR:-0.70}"
       # Abandon a view once it stops yielding new assets, as a fraction of a
       # page. Assets appear in ~9 views each, so without this the overlap
       # dominates the crawl.

@@ -116,11 +116,17 @@ with each other.
   run is deliberately partial, it also disarms `COVERAGE_FLOOR` and shrinks tag
   discovery — otherwise the run would refuse to publish, and would spend longer
   discovering tags than fetching assets.
+- A full crawl reaches about **79%** of the catalogue (measured: 86,084 of
+  108,585, over 8,931 pages in ~75 minutes). The remainder is assets whose every
+  tag is too big to page through, plus untagged ones; there is no view shape
+  that reaches them.
 - Coverage knobs: `COVERAGE_TARGET` (default `0.95`) stops the crawl once that
-  fraction of the catalogue is collected, since the last few percent costs
-  disproportionately many requests. `COVERAGE_FLOOR` (default `0.90`) refuses to
-  publish below that, leaving the previous index in place so a stalled run
-  cannot replace a good index with a worse one.
+  fraction is collected. It does not trigger in practice — the crawl exhausts
+  every slice first — and since it is an upper bound, lowering it only makes
+  the run shorter and the index smaller. `COVERAGE_FLOOR` (default `0.70`)
+  refuses to publish below that, leaving the previous index in place so a
+  stalled run cannot replace a good index with a worse one. Keep the floor
+  below ~79% or it will reject every otherwise-healthy run.
 - `SLICE_MIN_YIELD` (default `0.05`) abandons a view once it stops yielding new
   assets. Assets appear in ~9 views each, so without it the overlap dominates
   the crawl.
