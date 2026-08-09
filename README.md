@@ -35,6 +35,39 @@ These tools and technologies were chosen with care to provide a seamless and eff
 ## 🗼 Architecture
 ![An architectural diagram of itchgrep.com](.github/itchgrep-architecture-diagram.png)
 
+## Searching and filtering
+
+Everything the UI can do is expressed in the URL, so any view is a link you can
+share, bookmark or reload:
+
+```
+/                                   the catalogue, most popular first
+/?q=pixel+art                       full-text search
+/?tags=2d,pixel-art                 filter by tag
+/?price=free                        free only  (or price=paid)
+/?sort=title                        A-Z  (or sort=popular, sort=relevance)
+/?q=tileset&tags=2d&price=free      all of it at once
+```
+
+**Tags combine with AND.** Adding a second tag narrows the results rather than
+widening them, which is why you would add one. The sidebar shows the tags
+carried by the *current* results with their counts, so it is a map of where the
+rest of the matches are rather than a description of the 36 on screen.
+
+**Free versus paid is read from the listing, not inferred.** Every browse page
+carries the price in its markup, so the crawl records it directly. The rule is
+the presence of a price element: a pay-what-you-want asset with a "-35%" badge
+and a minimum of $0 carries a price *tag* but no price *value*, and itch.io
+counts it as free — which matches `/game-assets/free` exactly.
+
+There is deliberately no "newest" sort. itch.io's listing markup carries no
+publication date, so there is nothing to record; offering the option and
+quietly ordering by something else would be worse than not offering it.
+
+Every control on the page is a plain link with the htmx attributes layered on
+top, so the whole thing — search, filters, sorting, paging — works with
+JavaScript disabled.
+
 ## Running Locally
 
 If you want to [contribute](#contributing), or just run the project locally for your own use,

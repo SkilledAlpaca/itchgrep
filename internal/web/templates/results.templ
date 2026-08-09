@@ -1,0 +1,190 @@
+package templates
+
+import "fmt"
+import "itchgrep/pkg/models"
+
+// Results is one page of results plus the context rendered around them. It
+// mirrors what the query layer returns, restated here so the templates package
+// depends on nothing heavier than the models.
+type Results struct {
+	Assets  []models.Asset
+	Total   int64
+	Tags    []models.Tag
+	Page    int64
+	HasMore bool
+}
+
+// sidebarTags caps the facet list. The vocabulary runs to several hundred tags
+// and the long tail is single-digit counts, so showing all of them would bury
+// the useful ones under noise the browse field is better at finding.
+const sidebarTags = 40
+
+func shownFacets(tags []models.Tag) []models.Tag {
+	if len(tags) > sidebarTags {
+		return tags[:sidebarTags]
+	}
+	return tags
+}
+
+// formatCount renders a number with thousands separators, because "17488" and
+// "17,488" are read at noticeably different speeds in a dense list.
+func formatCount(n int64) string {
+	s := fmt.Sprint(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+func resultSummary(r Results) string {
+	if r.Total == 1 {
+		return "1 asset"
+	}
+	return formatCount(r.Total) + " assets"
+}
+
+// control renders one filter link. Every control on the page is the same shape:
+// an anchor whose href is the state it leads to, so the page works with
+// JavaScript disabled, plus the htmx attributes that swap the results in place
+// when it is not.
+templ control(class string, next Filters, label string) {
+	<a
+		class={ class }
+		href={ templ.SafeURL(next.ShareURL()) }
+		hx-get={ next.FragmentURL(1) }
+		hx-target="#results-region"
+		hx-swap="innerHTML"
+	>
+		{ label }
+	</a>
+}
+
+templ SortControl(f Filters) {
+	<div class="segmented" role="group" aria-label="Sort order">
+		if f.Query != "" {
+			if f.ResolvedSort() == models.SortRelevance {
+				<span class="segment is-active" aria-current="true">Best match</span>
+			} else {
+				@control("segment", f.WithSort(models.SortRelevance), "Best match")
+			}
+		}
+		if f.ResolvedSort() == models.SortPopular {
+			<span class="segment is-active" aria-current="true">Popular</span>
+		} else {
+			@control("segment", f.WithSort(models.SortPopular), "Popular")
+		}
+		if f.ResolvedSort() == models.SortTitle {
+			<span class="segment is-active" aria-current="true">A–Z</span>
+		} else {
+			@control("segment", f.WithSort(models.SortTitle), "A–Z")
+		}
+	</div>
+}
+
+templ PriceControl(f Filters) {
+	<div class="segmented" role="group" aria-label="Price">
+		if f.Price == models.PricingFree {
+			@control("segment is-active", f.WithPrice(models.PricingFree), "Free ✕")
+		} else {
+			@control("segment", f.WithPrice(models.PricingFree), "Free")
+		}
+		if f.Price == models.PricingPaid {
+			@control("segment is-active", f.WithPrice(models.PricingPaid), "Paid ✕")
+		} else {
+			@control("segment", f.WithPrice(models.PricingPaid), "Paid")
+		}
+	</div>
+}
+
+// ActiveFilters shows what is currently narrowing the results, each removable.
+// Without it a tag applied from the sidebar, then scrolled past, is invisible -
+// and an empty result set looks like a broken search rather than an
+// over-constrained one.
+templ ActiveFilters(f Filters) {
+	if f.Any() {
+		<div class="active-filters">
+			<span class="active-label">Filtering by</span>
+			if f.Query != "" {
+				<span class="chip is-query">“{ f.Query }”</span>
+			}
+			for _, tag := range f.Tags {
+				@control("chip is-removable", f.WithoutTag(tag), tag+" ✕")
+			}
+			if f.Price != "" {
+				@control("chip is-removable", f.WithPrice(f.Price), f.Price+" ✕")
+			}
+			if len(f.Tags) > 0 || f.Price != "" {
+				@control("clear-filters", f.Cleared(), "Clear filters")
+			}
+		</div>
+	}
+}
+
+// TagSidebar lists the tags carried by the current results, with counts. The
+// counts are over the whole match set rather than the visible page, which is
+// what makes it a map of the results rather than a description of them: at a
+// glance it says how much of a search is pixel art and how much is 3D.
+templ TagSidebar(f Filters, tags []models.Tag) {
+	<aside class="facets" aria-label="Filter by tag">
+		<h2 class="facets-heading">Tags</h2>
+		if len(tags) == 0 {
+			<p class="facets-empty">No tags to narrow by.</p>
+		} else {
+			<input
+				type="text"
+				class="facet-search"
+				placeholder="find a tag..."
+				aria-label="Find a tag"
+				autocomplete="off"
+				data-facet-search
+			/>
+			<ul class="facet-list">
+				for _, tag := range shownFacets(tags) {
+					<li data-facet={ tag.Slug }>
+						<a
+							class="facet"
+							href={ templ.SafeURL(f.WithTag(tag.Slug).ShareURL()) }
+							hx-get={ f.WithTag(tag.Slug).FragmentURL(1) }
+							hx-target="#results-region"
+							hx-swap="innerHTML"
+						>
+							<span class="facet-name">{ tag.Slug }</span>
+							<span class="facet-count">{ formatCount(tag.Count) }</span>
+						</a>
+					</li>
+				}
+			</ul>
+			if len(f.Tags) >= MaxTags {
+				<p class="facets-empty">Tag limit reached.</p>
+			}
+		}
+	</aside>
+}
+
+// ResultsRegion is everything below the search box: the sidebar, the controls
+// and the first page of results. It is what every filter link swaps, because
+// changing a filter changes all three - the tag counts in the sidebar are
+// counts within the new result set, not the old one.
+templ ResultsRegion(f Filters, r Results) {
+	@TagSidebar(f, r.Tags)
+	<div class="results-main">
+		<div class="toolbar">
+			<span class="result-count">{ resultSummary(r) }</span>
+			<div class="toolbar-controls">
+				@PriceControl(f)
+				@SortControl(f)
+			</div>
+		</div>
+		@ActiveFilters(f)
+		<div id="asset-list">
+			@AssetPage(f, r)
+		</div>
+	</div>
+}

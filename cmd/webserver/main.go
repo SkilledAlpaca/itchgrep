@@ -81,8 +81,7 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(web.NewLimiter().Middleware)
 		r.Get("/", h.HandleIndex)
-		r.Get("/assets/{page}", h.HandleGetAssetPage)
-		r.Get("/search", h.HandleSearch)
+		r.Get("/results", h.HandleResults)
 		r.Get("/about", h.HandleAbout)
 	})
 	r.NotFound(web.Handle404)

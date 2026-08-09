@@ -14,9 +14,9 @@ import (
 	"github.com/blevesearch/bleve/search/query"
 )
 
-// ErrNotReady is returned by Page and QueryCache when no data/index has ever
-// been successfully loaded yet (e.g. the server just started and the initial
-// load is still retrying in the background).
+// ErrNotReady is returned by Find when no data/index has ever been
+// successfully loaded yet (e.g. the server just started and the initial load is
+// still retrying in the background).
 var ErrNotReady = errors.New("cache: not ready")
 
 // expiryCheckTTL is the minimum interval between live storage.GetAssetsUpdateTime
@@ -36,6 +36,13 @@ type Cache struct {
 	dataMap map[string]models.Asset
 	data    []models.Asset
 	index   bleve.Index
+
+	// tagCounts is how many assets carry each tag, across the whole dataset.
+	// Computed once per refresh rather than faceted per request: the unfiltered
+	// browse is the most-requested view there is and its facet never varies, so
+	// asking bleve to count 600 terms over 86,000 documents on every homepage
+	// load would be paying repeatedly for a constant.
+	tagCounts []models.Tag
 
 	// the time the data was last updated on the server.
 	// if we check if the current time is greater than this time, we know the
@@ -72,6 +79,10 @@ func NewCache(pageSize int64) *Cache {
 		dataUpdatedTime: time.Time{},
 	}
 }
+
+// PageSize is how many assets one page of results holds. Handlers need it to
+// work out whether a further page exists.
+func (c *Cache) PageSize() int64 { return c.pageSize }
 
 // DataUpdatedTime is when the currently-loaded dataset was published. Handlers
 // use it as Last-Modified so a shared cache can revalidate rather than refetch,
@@ -203,6 +214,7 @@ func (c *Cache) doRefresh() error {
 	c.index = newIndex
 	c.data = newData
 	c.dataMap = newDataMap
+	c.tagCounts = countTags(newData)
 	c.dataUpdatedTime = newServerUpdateTime
 	c.cacheLock.Unlock()
 
@@ -268,87 +280,6 @@ func buildExactQuery(queryString string) *query.DisjunctionQuery {
 	return query
 }
 
-func (c *Cache) QueryCache(queryString string, pageIndex int64) ([]models.Asset, error) {
-	if pageIndex < 1 {
-		return nil, fmt.Errorf("cache: pageIndex must be >= 1, got %d", pageIndex)
-	}
-
-	// check for stale cache, refresh if needed. If the refresh fails we
-	// still fall through and serve whatever was previously loaded (if
-	// anything) rather than failing the request.
-	if c.IsCacheExpired() {
-		if err := c.RefreshDataCache(); err != nil {
-			logging.Error("Failed to refresh cache, serving previous data if available: %v", err)
-		}
-	}
-
-	c.cacheLock.RLock()
-	defer c.cacheLock.RUnlock()
-
-	if c.index == nil {
-		return nil, ErrNotReady
-	}
-
-	veryFuzzyQuery := buildFuzzyQuery(queryString, 1, 2)
-	veryFuzzyQuery.SetBoost(2)
-	fuzzyQuery := buildFuzzyQuery(queryString, 1, 4)
-	fuzzyQuery.SetBoost(4)
-	exactQuery := buildExactQuery(queryString)
-	exactQuery.SetBoost(6)
-	query := bleve.NewDisjunctionQuery(veryFuzzyQuery, fuzzyQuery, exactQuery)
-
-	from := (int(pageIndex) - 1) * int(c.pageSize)
-	searchRequest := bleve.NewSearchRequestOptions(query, int(c.pageSize), from, false)
-
-	//searchRequest.Highlight = bleve.NewHighlight()
-	searchRequest.Fields = []string{"Title", "Author", "Description"}
-	searchRequest.SortBy([]string{"-_score", "InvPopularity"})
-
-	searchResult, err := c.index.Search(searchRequest)
-	if err != nil {
-		return nil, err
-	}
-
-	logging.Info("Got %d hits for query \"%s\"", searchResult.Total, queryString)
-
-	var matchedAssets []models.Asset
-	for _, hit := range searchResult.Hits {
-		matchedAssets = append(matchedAssets, c.dataMap[hit.ID])
-	}
-
-	return matchedAssets, nil
-}
-
-func (c *Cache) Page(pageNum int64) ([]models.Asset, error) {
-	if pageNum < 1 {
-		return nil, fmt.Errorf("cache: pageNum must be >= 1, got %d", pageNum)
-	}
-
-	// check for stale cache, refresh if needed. If the refresh fails we
-	// still fall through and serve whatever was previously loaded (if
-	// anything) rather than failing the request.
-	if c.IsCacheExpired() {
-		if err := c.RefreshDataCache(); err != nil {
-			logging.Error("Failed to refresh cache, serving previous data if available: %v", err)
-		}
-	}
-
-	c.cacheLock.RLock()
-	defer c.cacheLock.RUnlock()
-
-	if c.data == nil {
-		return nil, ErrNotReady
-	}
-
-	start := (pageNum - 1) * c.pageSize
-	end := start + c.pageSize
-	if start >= int64(len(c.data)) {
-		// out of range: an empty page (not an error) is how infinite scroll
-		// on the client knows to stop requesting further pages.
-		return []models.Asset{}, nil
-	}
-	if end > int64(len(c.data)) {
-		end = int64(len(c.data))
-	}
-	return c.data[start:end], nil
-}
+// Both entry points this file used to expose - QueryCache and Page - are now
+// one Find in search.go, because tags, price and ordering apply equally to a
+// search and to a browse.

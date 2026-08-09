@@ -242,6 +242,12 @@ func ParseAssetPage(respData itchResponse, pageNum int64) ([]models.Asset, error
 		linkNode := s.Find(".thumb_link")
 		link, _ := linkNode.Attr("href")
 		thumbUrl, _ := linkNode.Children().First().Attr("data-lazy_src")
+		// Price comes from the listing itself, so free-versus-paid is read off
+		// every view rather than inferred from which views an asset turned up in.
+		// The inference would have been partial by construction: an asset is only
+		// known to be free if the crawl happened to reach it through the free
+		// view, and the free view is capped at 7,200 of ~53,000.
+		price := strings.TrimSpace(s.Find(".price_value").First().Text())
 		assets = append(assets, models.Asset{
 			GameId:        gameId,
 			Title:         title,
@@ -249,6 +255,7 @@ func ParseAssetPage(respData itchResponse, pageNum int64) ([]models.Asset, error
 			Description:   description,
 			Link:          link,
 			ThumbUrl:      thumbUrl,
+			Price:         price,
 			InvPopularity: pageNum,
 		})
 	})

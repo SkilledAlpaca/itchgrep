@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"itchgrep/internal/cache"
+	"itchgrep/pkg/models"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -15,14 +16,13 @@ import (
 
 // newTestRouter wires the same routes cmd/webserver does, minus the rate
 // limiter, over a cache that has never loaded. That is enough to assert the
-// routing, caching and escaping contracts; result correctness belongs to the
-// cache package.
+// routing, parsing, caching and escaping contracts; result correctness belongs
+// to the cache package.
 func newTestRouter() (*chi.Mux, *handler) {
 	h := NewHandler(cache.NewCache(36))
 	r := chi.NewRouter()
 	r.Get("/", h.HandleIndex)
-	r.Get("/assets/{page}", h.HandleGetAssetPage)
-	r.Get("/search", h.HandleSearch)
+	r.Get("/results", h.HandleResults)
 	r.Get("/about", h.HandleAbout)
 	r.NotFound(Handle404)
 	return r, h
@@ -41,11 +41,54 @@ func TestSearchQueryIsRenderedIntoThePage(t *testing.T) {
 	r, _ := newTestRouter()
 	w := get(t, r, "/?q=pixel+art")
 
-	require.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
 	assert.Contains(t, body, `value="pixel art"`, "the query must be restored into the input")
-	assert.Contains(t, body, "/search?q=pixel+art&amp;page=1", "results must load for a shared link")
 	assert.Contains(t, body, "<title>", "a shared link renders the full page, not a fragment")
+	assert.Contains(t, body, "pixel art — ITCHGREP", "the title should say what was searched for")
+}
+
+func TestAppliedFiltersSurviveANewSearch(t *testing.T) {
+	// The search form posts to the same page, so anything it does not carry is
+	// silently dropped. Losing the tags a visitor just picked because they then
+	// typed a word would be the worst kind of surprise.
+	r, _ := newTestRouter()
+	body := get(t, r, "/?tags=2d,pixel-art&price=free").Body.String()
+
+	assert.Contains(t, body, `<input type="hidden" name="tags" value="2d">`)
+	assert.Contains(t, body, `<input type="hidden" name="tags" value="pixel-art">`)
+	assert.Contains(t, body, `<input type="hidden" name="price" value="free">`)
+}
+
+func TestFiltersAreParsedFromEitherEncoding(t *testing.T) {
+	// Links generate ?tags=a,b; a form submission of the hidden fields above
+	// generates ?tags=a&tags=b. Both have to mean the same thing.
+	comma := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=2d,pixel-art", nil))
+	repeated := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=2d&tags=pixel-art", nil))
+
+	assert.Equal(t, []string{"2d", "pixel-art"}, comma.Tags)
+	assert.Equal(t, comma.Tags, repeated.Tags)
+}
+
+func TestJunkFilterValuesAreDropped(t *testing.T) {
+	// They can only come from a hand-edited or stale URL. Answering with a 400
+	// would put an error page behind a link with an obvious harmless reading.
+	f := parseFilters(httptest.NewRequest(http.MethodGet,
+		"/?tags=Pixel_Art!&price=cheap&sort=whatever", nil))
+
+	assert.Empty(t, f.Tags, "a slug with characters itch.io never uses matches nothing")
+	assert.Empty(t, f.Price)
+	assert.Empty(t, f.Sort)
+}
+
+func TestTagsAreNormalisedAndDeduped(t *testing.T) {
+	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=+2D+,2d,,pixel-art", nil))
+	assert.Equal(t, []string{"2d", "pixel-art"}, f.Tags)
+}
+
+func TestValidFilterValuesAreKept(t *testing.T) {
+	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?price=paid&sort=title", nil))
+	assert.Equal(t, models.PricingPaid, f.Price)
+	assert.Equal(t, models.SortTitle, f.Sort)
 }
 
 func TestSuccessfulResponsesAreCacheable(t *testing.T) {
@@ -58,59 +101,47 @@ func TestSuccessfulResponsesAreCacheable(t *testing.T) {
 	assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"))
 }
 
-func TestBrowsePageIsNotCachedWhenTheIndexIsMissing(t *testing.T) {
-	// The opposite contract: a proxy caching this would pin "not ready" in
-	// front of a site that has since published.
-	r, _ := newTestRouter()
-	w := get(t, r, "/assets/1")
-
-	require.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
-}
-
-func TestIndexIsCacheable(t *testing.T) {
-	r, _ := newTestRouter()
-	w := get(t, r, "/")
-	assert.Contains(t, w.Header().Get("Cache-Control"), "public")
-}
-
 func TestNotReadyIsNeverCached(t *testing.T) {
 	// The cache has loaded nothing, so this is the 503 path. Caching it would
 	// pin "not ready" in front of a site that has since come up.
 	r, _ := newTestRouter()
-	w := get(t, r, "/search?q=anything")
+	w := get(t, r, "/results?q=anything")
 
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	assert.Contains(t, w.Body.String(), "Index not ready")
 }
 
-func TestSearchPushesTheShareableUrl(t *testing.T) {
-	// htmx swaps in a fragment from /search, but the address bar has to end up
-	// showing the form a visitor can copy.
+func TestIndexStillRendersWhenThereIsNoIndexYet(t *testing.T) {
+	// A visitor arriving during the first crawl should get the page and an
+	// explanation, not a bare error - and nothing should cache that state.
 	r, _ := newTestRouter()
-	w := get(t, r, "/search?q=pixel+art")
-	assert.Equal(t, "/?q=pixel+art", w.Header().Get("HX-Push-Url"))
+	w := get(t, r, "/")
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	assert.Contains(t, w.Body.String(), "<title>", "the shell must still render")
 }
 
-func TestSearchDoesNotPushUrlForLaterPages(t *testing.T) {
+func TestResultsPushTheShareableUrl(t *testing.T) {
+	// htmx swaps in a fragment from /results, but the address bar has to end up
+	// showing the form a visitor can copy - filters included.
+	r, _ := newTestRouter()
+	w := get(t, r, "/results?q=pixel+art&tags=2d&price=free")
+	assert.Equal(t, "/?price=free&q=pixel+art&tags=2d", w.Header().Get("HX-Push-Url"))
+}
+
+func TestResultsDoNotPushUrlForLaterPages(t *testing.T) {
 	// Infinite scroll must not rewrite the address bar on every page it pulls.
 	r, _ := newTestRouter()
-	w := get(t, r, "/search?q=pixel+art&page=3")
+	w := get(t, r, "/results?q=pixel+art&page=3")
 	assert.Empty(t, w.Header().Get("HX-Push-Url"))
 }
 
-func TestEmptySearchFallsBackToBrowse(t *testing.T) {
+func TestResultsRejectAnInvalidPage(t *testing.T) {
 	r, _ := newTestRouter()
-	w := get(t, r, "/search?q=")
-	assert.Equal(t, http.StatusSeeOther, w.Code)
-	assert.Equal(t, "/assets/1", w.Header().Get("Location"))
-}
-
-func TestSearchRejectsAnInvalidPage(t *testing.T) {
-	r, _ := newTestRouter()
-	assert.Equal(t, http.StatusBadRequest, get(t, r, "/search?q=x&page=0").Code)
-	assert.Equal(t, http.StatusBadRequest, get(t, r, "/search?q=x&page=abc").Code)
+	assert.Equal(t, http.StatusBadRequest, get(t, r, "/results?page=0").Code)
+	assert.Equal(t, http.StatusBadRequest, get(t, r, "/results?page=abc").Code)
 }
 
 func TestQueryIsClamped(t *testing.T) {
@@ -118,7 +149,7 @@ func TestQueryIsClamped(t *testing.T) {
 	// fuzzy passes, which cost more the longer the input.
 	long := strings.Repeat("a", maxQueryLen+50)
 	assert.Len(t, clampQuery(long), maxQueryLen)
-	assert.Equal(t, "short", clampQuery("short"))
+	assert.Equal(t, "short", clampQuery("  short  "))
 }
 
 func TestNotFoundIsStyledAndUncached(t *testing.T) {

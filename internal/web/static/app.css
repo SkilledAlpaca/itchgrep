@@ -253,6 +253,206 @@ a:hover {
   }
 }
 
+/* -------------------------------------------------------------- filters  */
+
+/* Sidebar first, results second. On a narrow screen the grid collapses to one
+ * column and the sidebar sits above the results, which is the right order:
+ * it is how you pick what to look at. */
+.results-region {
+  display: grid;
+  grid-template-columns: 22rem minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+  padding-top: var(--gap);
+}
+
+@media (max-width: 900px) {
+  .results-region {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.facets {
+  position: sticky;
+  /* Sticky so the tag list stays reachable while scrolling a long result set,
+   * which is exactly when a person decides to narrow it. Capped to the
+   * viewport and scrollable in its own right, or a long list would push its
+   * own bottom off the screen. */
+  top: 1.2rem;
+  max-height: calc(100vh - 2.4rem);
+  overflow-y: auto;
+  padding: 1.2rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 900px) {
+  .facets {
+    position: static;
+    max-height: 32rem;
+  }
+}
+
+.facets-heading {
+  margin: 0 0 0.9rem;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.facets-empty {
+  margin: 0.8rem 0 0;
+  font-size: 1.3rem;
+  color: var(--text-faint);
+}
+
+.facet-search {
+  width: 100%;
+  margin-bottom: 0.9rem;
+  padding: 0.5rem 0.8rem;
+  font: inherit;
+  font-size: 1.3rem;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.facet-search::placeholder {
+  color: var(--text-faint);
+}
+
+.facet-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.facet {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 1.35rem;
+  color: var(--text-dim);
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.facet:hover {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.facet-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.facet:hover .facet-count {
+  color: inherit;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.result-count {
+  font-size: 1.4rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.segment {
+  padding: 0.35rem 1rem;
+  font-size: 1.25rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-decoration: none;
+  white-space: nowrap;
+  border-right: 1px solid var(--border-strong);
+}
+
+.segment:last-child {
+  border-right: 0;
+}
+
+.segment:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.segment.is-active {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+}
+
+.active-label {
+  font-size: 1.25rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.chip {
+  padding: 0.3rem 0.8rem;
+  font-size: 1.25rem;
+  line-height: 1.5;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-radius: 999px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.chip.is-query {
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+}
+
+.chip.is-removable:hover {
+  background: var(--accent-dim);
+}
+
+.clear-filters {
+  font-size: 1.25rem;
+  color: var(--text-faint);
+  text-decoration: underline;
+}
+
+.clear-filters:hover {
+  color: var(--text);
+}
+
 /* ----------------------------------------------------------------- grid  */
 
 #asset-list {
@@ -350,12 +550,30 @@ a:hover {
 
 /* ------------------------------------------------------------------ tags  */
 
+.asset-meta {
+  margin-top: auto;
+  padding: 0.9rem 1.2rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.asset-price {
+  align-self: flex-start;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.asset-price.is-free {
+  color: var(--accent);
+}
+
 .asset-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin-top: auto;
-  padding: 0.9rem 1.2rem 1.1rem;
 }
 
 .tag {
@@ -369,9 +587,11 @@ a:hover {
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
 }
 
-.tag:hover {
+.tag:hover,
+.tag.is-active {
   color: var(--accent-contrast);
   background: var(--accent);
   border-color: var(--accent);

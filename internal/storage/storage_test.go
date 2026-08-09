@@ -121,12 +121,28 @@ func TestCheckpointRoundTripAndDelete(t *testing.T) {
 
 	got, updated, err := GetCheckpoint()
 	require.NoError(t, err)
+	cp.Version = CheckpointVersion // stamped on write, so the caller cannot forget it
 	assert.Equal(t, cp, got)
 	assert.WithinDuration(t, time.Now(), updated, 10*time.Second)
 
 	require.NoError(t, DeleteCheckpoint())
 	_, _, err = GetCheckpoint()
 	assert.Error(t, err, "a deleted checkpoint must read back as missing")
+}
+
+func TestCheckpointFromAnOlderSchemaIsRejected(t *testing.T) {
+	// Resuming across a schema change is silently lossy: the restored assets
+	// lack the new field and the slices that would have refilled it are already
+	// marked done. Price is the case in point - empty would have read as "free"
+	// for the 40% of the catalogue collected before the change.
+	useTempDir(t)
+
+	stale := Checkpoint{Version: CheckpointVersion - 1, Assets: testAssets(), TotalAssets: 108697}
+	require.NoError(t, writeJSON(CheckpointFileName, stale))
+
+	_, _, err := GetCheckpoint()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schema version")
 }
 
 func TestDeleteCheckpointIsIdempotent(t *testing.T) {

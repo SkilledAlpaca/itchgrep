@@ -130,8 +130,7 @@ func fetchAndStoreAssets() {
 		logging.Error("Failed to clear stale staging index at %s: %v", staging, err)
 		return
 	}
-	newIndexMapping := bleve.NewIndexMapping() // TODO: customize as needed
-	newIndex, err := bleve.New(staging, newIndexMapping)
+	newIndex, err := bleve.New(staging, storage.IndexMapping())
 	// On any failure below, the half-built index must not be left where the
 	// next run would trip over it. PublishIndex renames it away on success, so
 	// this is a no-op then.
@@ -146,14 +145,7 @@ func fetchAndStoreAssets() {
 	// first, convert the assets to IndexedAssets, which are smaller and used for indexing
 	var smolAssets []models.IndexedAsset = make([]models.IndexedAsset, len(assets))
 	for i, asset := range assets {
-		smolAssets[i] = models.IndexedAsset{
-			GameId:        asset.GameId,
-			Title:         asset.Title,
-			Author:        asset.Author,
-			Description:   asset.Description,
-			Tags:          asset.Tags,
-			InvPopularity: asset.InvPopularity,
-		}
+		smolAssets[i] = models.NewIndexedAsset(asset)
 	}
 
 	// indexing the assets in batches

@@ -1,14 +1,5 @@
 package templates
 
-import "fmt"
-import "net/url"
-
-// searchURL builds the URL for one page of results. Query escaping matters
-// here: a search for "a&b" would otherwise truncate at the ampersand.
-func searchURL(query string, page int64) string {
-	return fmt.Sprintf("/search?q=%s&page=%d", url.QueryEscape(query), page)
-}
-
 templ Masthead() {
 	<header class="masthead">
 		<h1 class="wordmark-heading">
@@ -25,48 +16,58 @@ templ Masthead() {
 			<nav class="masthead-links">
 				<a href="#" hx-get="/about" hx-swap="outerHTML" hx-target="#page-content">About</a>
 				<a href="https://github.com/wintermute-cell/itchgrep" target="_blank" rel="noopener">GitHub</a>
-				<a href="https://www.buymeacoffee.com/winterv" target="_blank" rel="noopener">Donate</a>
+				<a href="https://www.buymeacoffee.com/winterveil" target="_blank" rel="noopener">Donate</a>
 			</nav>
 		</div>
 	</header>
 }
 
-// Index renders the whole page. A non-empty query is rendered into the search
-// box and loaded as results, so /?q=pixel+art is a shareable link rather than
-// an empty page.
-templ Index(query string) {
+// SearchBar keeps the applied filters as hidden fields, so submitting a new
+// search narrows the results already on screen rather than silently discarding
+// the tags the visitor picked. Sort is deliberately not carried: it is the one
+// control whose sensible default changes with the query, from popularity to
+// relevance.
+templ SearchBar(f Filters) {
+	<form
+		class="searchbar"
+		role="search"
+		action="/"
+		method="get"
+		hx-get="/results"
+		hx-target="#results-region"
+		hx-swap="innerHTML"
+	>
+		<input
+			id="query-input"
+			type="text"
+			name="q"
+			value={ f.Query }
+			placeholder="pixel art tileset, isometric, bones..."
+			aria-label="Search assets"
+			autocomplete="off"
+			autocapitalize="off"
+			spellcheck="false"
+		/>
+		for _, tag := range f.Tags {
+			<input type="hidden" name="tags" value={ tag }/>
+		}
+		if f.Price != "" {
+			<input type="hidden" name="price" value={ f.Price }/>
+		}
+		<button type="submit">Search</button>
+		<div class="spinner" aria-hidden="true"></div>
+	</form>
+}
+
+// Index renders the whole page, results included, so that any filtered URL is
+// a shareable link that lands on populated results rather than on an empty box
+// that then fetches them.
+templ Index(f Filters, r Results) {
 	@Masthead()
 	<div id="page-content">
-		<form
-			class="searchbar"
-			role="search"
-			action="/"
-			method="get"
-			hx-get="/search"
-			hx-target="#asset-list"
-			hx-swap="innerHTML"
-		>
-			<input
-				id="query-input"
-				type="text"
-				name="q"
-				value={ query }
-				placeholder="pixel art tileset, isometric, bones..."
-				aria-label="Search assets"
-				autocomplete="off"
-				autocapitalize="off"
-				spellcheck="false"
-				required
-			/>
-			<button type="submit">Search</button>
-			<div class="spinner" aria-hidden="true"></div>
-		</form>
-		<div id="asset-list">
-			if query != "" {
-				<div hx-get={ searchURL(query, 1) } hx-trigger="load" hx-swap="outerHTML" hx-target="this"></div>
-			} else {
-				<div hx-get="/assets/1" hx-trigger="load" hx-swap="outerHTML" hx-target="this"></div>
-			}
+		@SearchBar(f)
+		<div id="results-region" class="results-region">
+			@ResultsRegion(f, r)
 		</div>
 	</div>
 }

@@ -27,17 +27,21 @@ templ Layout(title string, content templ.Component) {
 				}
 			});
 
-			// Tag chips are buttons inside cards that htmx swaps in and out, so
-			// the listener is delegated from a container that never gets
-			// replaced rather than bound per card.
-			document.addEventListener('click', function (e) {
-				var chip = e.target.closest('[data-tag]');
-				if (!chip) return;
-				var input = document.getElementById('query-input');
-				if (!input || !input.form) return;
-				input.value = chip.getAttribute('data-tag');
-				input.form.requestSubmit();
-				window.scrollTo({ top: 0, behavior: 'smooth' });
+			// The sidebar shows the top few dozen tags; this narrows that list to
+			// what was typed. Purely presentational - it hides list items that
+			// are already on the page rather than asking the server for more -
+			// so the sidebar stays exactly as useful with scripting off.
+			//
+			// Delegated, because the sidebar is replaced on every filter change.
+			document.addEventListener('input', function (e) {
+				var box = e.target.closest('[data-facet-search]');
+				if (!box) return;
+				var needle = box.value.trim().toLowerCase();
+				var list = box.parentNode.querySelectorAll('[data-facet]');
+				for (var i = 0; i < list.length; i++) {
+					var slug = list[i].getAttribute('data-facet');
+					list[i].hidden = needle !== '' && slug.indexOf(needle) === -1;
+				}
 			});
 
 			// "/" focuses the search box, as in every other search tool. Ignored

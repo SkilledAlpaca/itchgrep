@@ -90,7 +90,7 @@ func TestMiddlewareRefusesWithRetryAfterAndNoStore(t *testing.T) {
 	}))
 
 	first := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/search?q=x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/results?q=x", nil)
 	r.RemoteAddr = "1.2.3.4:1111"
 	h.ServeHTTP(first, r)
 	require.Equal(t, http.StatusOK, first.Code)

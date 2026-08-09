@@ -169,22 +169,44 @@ func GetTags() ([]models.Tag, time.Time, error) {
 // killed part way through is resumable instead of worthless. A full crawl is
 // ~75 minutes and lives entirely in memory until it publishes.
 type Checkpoint struct {
+	Version     int // CheckpointVersion at the time of writing
 	Assets      []models.Asset
 	DoneSlices  []string // Slice.Label() values already finished
 	MaxRootRank int64    // so slice-only assets keep ranking behind root-ranked ones
 	TotalAssets int64    // catalogue size when the checkpoint was taken
 }
 
-func PutCheckpoint(cp Checkpoint) error { return writeJSON(CheckpointFileName, cp) }
+// CheckpointVersion is the schema of the assets a checkpoint carries. Bump it
+// whenever the crawl starts populating a new field on models.Asset.
+//
+// Without this, resuming across such a change is silently lossy in a way
+// nothing downstream can detect: the assets restored from the checkpoint have
+// the new field empty, and every slice that collected them is marked done, so
+// they are never re-fetched. An empty field is indistinguishable from a
+// legitimately empty value - Price being the case in point, where it would have
+// meant "free" - so the resulting index would be confidently wrong.
+//
+// 2: added Asset.Price.
+const CheckpointVersion = 2
+
+func PutCheckpoint(cp Checkpoint) error {
+	// Stamped here rather than by the caller, which could forget.
+	cp.Version = CheckpointVersion
+	return writeJSON(CheckpointFileName, cp)
+}
 
 // GetCheckpoint returns the stored checkpoint and when it was written. A
-// missing checkpoint is the normal case - it just means the last crawl
-// finished cleanly - so callers treat the error as "start fresh".
+// missing or outdated checkpoint is not a failure - it just means the crawl
+// starts fresh - so callers treat the error as exactly that.
 func GetCheckpoint() (Checkpoint, time.Time, error) {
 	var cp Checkpoint
 	updated, err := readJSON(CheckpointFileName, &cp)
 	if err != nil {
 		return Checkpoint{}, time.Time{}, err
+	}
+	if cp.Version != CheckpointVersion {
+		return Checkpoint{}, time.Time{}, fmt.Errorf(
+			"checkpoint is schema version %d, this build writes %d", cp.Version, CheckpointVersion)
 	}
 	return cp, updated, nil
 }
