@@ -1,9 +1,14 @@
 
-# we don't commit generated templ .go files
-internal/web/templates/*.go
+# we don't commit generated templ .go files.
+# scoped to *_templ.go so hand-written helpers can live in this package
+# without being silently ignored.
+internal/web/templates/*_templ.go
 
 # this directory is used to persist the data for the local GCS instance
 local_data/
+
+# local docker compose overrides (SCRAPE_RPS, SCRAPE_MAX_PAGES, ...)
+.env
 
 #--------------------------------------------------#
 # The following was generated with gitignore.nvim: #

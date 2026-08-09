@@ -1,0 +1,11 @@
+# Keep line endings stable across Linux/Windows/WSL checkouts.
+# Without this, a Windows-side checkout rewrites every file to CRLF and makes
+# every diff a whole-file rewrite.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

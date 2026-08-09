@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"itchgrep/internal/cache"
 	"itchgrep/internal/logging"
 	"itchgrep/internal/web/templates"
@@ -20,22 +21,18 @@ func NewHandler(cache *cache.Cache) *handler {
 	}
 }
 
-func (h *handler) HandleHello(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Hello, World!"))
-}
-
-func handle404(w http.ResponseWriter, r *http.Request) {
+// Handle404 renders the site's styled 404 page with an HTTP 404 status
+// code. It is exported so cmd/webserver can wire it up as chi's NotFound
+// handler.
+func Handle404(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
 	component := templates.Layout("ITCHGREP", templates.Error404())
 	component.Render(r.Context(), w)
 }
 
 func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		handle404(w, r)
-	} else {
-		component := templates.Layout("ITCHGREP", templates.Index())
-		component.Render(r.Context(), w)
-	}
+	component := templates.Layout("ITCHGREP", templates.Index())
+	component.Render(r.Context(), w)
 }
 
 func (h *handler) HandleGetAssetPage(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +45,11 @@ func (h *handler) HandleGetAssetPage(w http.ResponseWriter, r *http.Request) {
 	assets, err := h.cache.Page(pageNum)
 	if err != nil {
 		logging.Error("Error fetching page: %s", err)
-		http.Error(w, "Error fetching page", http.StatusBadRequest)
+		if errors.Is(err, cache.ErrNotReady) {
+			http.Error(w, "Cache not ready yet", http.StatusServiceUnavailable)
+		} else {
+			http.Error(w, "Error fetching page", http.StatusBadRequest)
+		}
 		return
 	}
 
@@ -74,7 +75,11 @@ func (h *handler) HandleQuery(w http.ResponseWriter, r *http.Request) {
 	assets, err := h.cache.QueryCache(query, pageNum)
 	if err != nil {
 		logging.Error("Error searching: %s", err)
-		http.Error(w, "Error searching", http.StatusBadRequest)
+		if errors.Is(err, cache.ErrNotReady) {
+			http.Error(w, "Cache not ready yet", http.StatusServiceUnavailable)
+		} else {
+			http.Error(w, "Error searching", http.StatusBadRequest)
+		}
 		return
 	}
 

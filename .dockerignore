@@ -1,1 +1,21 @@
-internal/web/templates/*.go
+# Generated templ files - regenerated inside the webserver image build.
+# Scoped to *_templ.go so hand-written helpers in that package still ship.
+internal/web/templates/*_templ.go
+
+# Nothing below is needed to build either binary; excluding it keeps the
+# build context small and avoids shipping repo history to the daemon.
+.git
+.github
+.gitattributes
+.gitignore
+local_data/
+.tmp_local_data/
+tasks/
+docker-compose.yml
+README.md
+LICENSE
+Taskfile.dist.yml
+
+# Compiled binaries from a host-side `go build`
+/dataservice
+/webserver

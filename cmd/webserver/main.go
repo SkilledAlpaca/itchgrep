@@ -8,9 +8,17 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
+
+// initialCacheLoadRetryInterval is how often we retry the initial cache
+// load in the background if it fails at startup, so a transient/unreachable
+// bucket doesn't permanently degrade the server (it just serves 503 until
+// the load succeeds).
+const initialCacheLoadRetryInterval = 15 * time.Second
 
 func logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +36,26 @@ func initializeCache() *cache.Cache {
 		pageSize = 36
 	}
 	c := cache.NewCache(pageSize)
-	c.RefreshDataCache()
+
+	if err := c.RefreshDataCache(); err != nil {
+		logging.Error("Initial cache load failed, will retry in background every %v: %v", initialCacheLoadRetryInterval, err)
+		// Do not block startup / ListenAndServe on this — Cloud Run enforces
+		// a startup deadline. Requests get 503 (cache.ErrNotReady) until a
+		// retry succeeds.
+		go func() {
+			ticker := time.NewTicker(initialCacheLoadRetryInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := c.RefreshDataCache(); err != nil {
+					logging.Error("Retrying initial cache load failed: %v", err)
+					continue
+				}
+				logging.Info("Initial cache load succeeded")
+				return
+			}
+		}()
+	}
+
 	return c
 }
 
@@ -41,6 +68,7 @@ func main() {
 
 	// HANDLERS
 	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
 	r.Use(logMiddleware)
 
 	h := web.NewHandler(cache)
@@ -48,6 +76,7 @@ func main() {
 	r.Get("/assets/{page}", h.HandleGetAssetPage)
 	r.Post("/query/{page}", h.HandleQuery)
 	r.Get("/about", h.HandleAbout)
+	r.NotFound(web.Handle404)
 
 	// SERVER
 	port := fmt.Sprintf(":%s", os.Getenv("PORT"))

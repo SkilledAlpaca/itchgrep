@@ -88,7 +88,11 @@ func TestPutAndGetFSWithDirectoryContainingFile(t *testing.T) {
 
 	nameInStorage := "testDirInStorage.gz.tar"
 
-	fileSizeMegabytes := 100
+	// 8MB rather than 100MB: this exercises the same multi-chunk archive and
+	// upload path (the GCS writer's default chunk size is 16MB, and gzip/tar
+	// streaming is size-independent) without spending ~12x the time and
+	// memory to prove the same thing.
+	fileSizeMegabytes := 8
 	fileContents := make([]byte, fileSizeMegabytes*1024*1024)
 	rand.Read(fileContents)
 

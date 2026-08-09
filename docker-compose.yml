@@ -1,0 +1,164 @@
+# Local, self-contained itchgrep stack.
+#
+#   docker compose up --build
+#
+# Use --build after ANY Go source change. Plain `docker compose up` reuses the
+# previously built image and will silently run stale code.
+#
+# Brings up, in order:
+#   1. fake-gcs-server  - GCS emulator standing in for Google Cloud Storage
+#   2. dataservice      - scrapes itch.io, builds the bleve index, uploads both
+#   3. indexer          - one-shot job: creates the bucket, triggers the scrape,
+#                         waits until the data is actually in the bucket
+#   4. webserver        - http://localhost:8080 (only starts once data exists)
+#
+# The first run crawls the whole itch.io asset catalogue (~108,000 assets) at a
+# deliberately polite 2 requests/second, so expect an hour or more. It cannot be
+# done in one pass: itch.io serves at most 200 pages per browse view (~7,200
+# assets), so the crawl walks many tag-filtered views and deduplicates. The
+# first run also spends a few hundred requests discovering the tag universe,
+# which is then cached in the bucket as tags.json.
+# Data is persisted in the `gcs-data` volume, so later runs skip the crawl.
+#
+# Re-scrape:  FORCE_REINDEX=true docker compose up indexer
+# Wipe data:  docker compose down -v
+# Faster (at the cost of politeness):  SCRAPE_RPS=5 docker compose up
+
+services:
+  # The hostname MUST be `fake-gcs-server` - it is hardcoded in
+  # internal/storage/storage.go when RUN_LOCAL=true.
+  fake-gcs-server:
+    image: fsouza/fake-gcs-server:latest
+    command:
+      - -scheme=http
+      - -port=4443
+      - -backend=filesystem
+      # -filesystem-root is where the emulator STORES data; -data is only a
+      # seed directory it LOADS from at startup. Mounting the volume on -data
+      # (the obvious-looking choice) silently persists nothing: writes land in
+      # the container's own /storage and die with the container, so every run
+      # re-crawls from scratch and the volume stays empty.
+      - -filesystem-root=/data
+      # Without this, resumable uploads hand back a Location header pointing at
+      # the emulator's own bind address, which is unreachable from sibling
+      # containers. This is what makes the dockerized dataservice work.
+      - -external-url=http://fake-gcs-server:4443
+      - -public-host=fake-gcs-server:4443
+    ports:
+      - "4443:4443"
+    volumes:
+      - gcs-data:/data
+
+  dataservice:
+    build:
+      context: .
+      dockerfile: Dockerfile.dataservice
+    environment:
+      RUN_LOCAL: "true"
+      PORT: "8080"
+      # Outbound requests/second to itch.io, retries included. Fixed: a 429
+      # pauses every worker for any Retry-After the server sent, but does not
+      # change this rate.
+      SCRAPE_RPS: "${SCRAPE_RPS:-2}"
+      # Caps total pages fetched across every view. Unset means a full crawl.
+      # Set it to a small number to smoke-test the whole pipeline in a couple
+      # of minutes instead of the better part of an hour. Produces a PARTIAL
+      # index, so it also disarms COVERAGE_FLOOR and shrinks tag discovery.
+      SCRAPE_MAX_PAGES: "${SCRAPE_MAX_PAGES:-}"
+      # Stop crawling once this fraction of the catalogue has been collected.
+      # The last few percent costs disproportionately many requests.
+      COVERAGE_TARGET: "${COVERAGE_TARGET:-0.95}"
+      # Refuse to publish below this fraction, leaving the previous index in
+      # place. Stops a stalled run replacing a good index with a worse one.
+      COVERAGE_FLOOR: "${COVERAGE_FLOOR:-0.90}"
+      # Abandon a view once it stops yielding new assets, as a fraction of a
+      # page. Assets appear in ~9 views each, so without this the overlap
+      # dominates the crawl.
+      SLICE_MIN_YIELD: "${SLICE_MIN_YIELD:-0.05}"
+      # How many tags discovery may visit. One request each, so this is the
+      # main cost of a cold start.
+      MAX_TAGS: "${MAX_TAGS:-1000}"
+      # Rediscover the tag universe when the cached tags.json is older than this.
+      TAG_CACHE_MAX_AGE: "${TAG_CACHE_MAX_AGE:-168h}"
+    ports:
+      - "8081:8080" # GET http://localhost:8081/trigger-fetch to re-scrape
+    depends_on:
+      - fake-gcs-server
+
+  # One-shot orchestration so `docker compose up` is the only command needed.
+  indexer:
+    image: curlimages/curl:latest
+    depends_on:
+      - fake-gcs-server
+      - dataservice
+    environment:
+      FORCE_REINDEX: "${FORCE_REINDEX:-false}"
+    entrypoint:
+      - sh
+      - -eu
+      - -c
+      - |
+        GCS=http://fake-gcs-server:4443
+        BUCKET=itchgrep-data
+        OBJECT=$${GCS}/storage/v1/b/$${BUCKET}/o/assets.json
+
+        echo "[indexer] waiting for fake-gcs-server..."
+        until curl -sf "$${GCS}/storage/v1/b?project=itchgrep" >/dev/null; do sleep 2; done
+
+        echo "[indexer] ensuring bucket $${BUCKET} exists"
+        curl -s -o /dev/null -X POST "$${GCS}/storage/v1/b?project=itchgrep" \
+          -H 'Content-Type: application/json' \
+          -d "{\"name\":\"$${BUCKET}\"}" || true
+
+        if [ "$${FORCE_REINDEX}" != "true" ] && curl -sf "$${OBJECT}" >/dev/null 2>&1; then
+          echo "[indexer] assets.json already present, skipping scrape"
+          exit 0
+        fi
+
+        echo "[indexer] waiting for dataservice..."
+        until curl -s -o /dev/null http://dataservice:8080/; do sleep 2; done
+
+        echo "[indexer] triggering itch.io scrape (~25-45 minutes at the default 2 req/s)"
+        # 409 means a scrape is already running - that is fine, fall through
+        # and poll for its result rather than failing.
+        code=$$(curl -s -o /dev/null -w '%{http_code}' http://dataservice:8080/trigger-fetch)
+        echo "[indexer] trigger returned HTTP $${code}"
+        if [ "$${code}" != "200" ] && [ "$${code}" != "409" ]; then
+          echo "[indexer] unexpected response from dataservice; check: docker compose logs dataservice"
+          exit 1
+        fi
+
+        # The dataservice uploads the index first, then assets.json, so
+        # assets.json appearing means the whole set is ready.
+        elapsed=0
+        limit=5400
+        until curl -sf "$${OBJECT}" >/dev/null 2>&1; do
+          if [ "$${elapsed}" -ge "$${limit}" ]; then
+            echo "[indexer] timed out after $${limit}s; check: docker compose logs dataservice"
+            exit 1
+          fi
+          sleep 15
+          elapsed=$$((elapsed + 15))
+          echo "[indexer] still scraping... $${elapsed}s elapsed"
+        done
+
+        echo "[indexer] data is in the bucket, starting webserver"
+
+  webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.webserver
+    environment:
+      RUN_LOCAL: "true"
+      PAGE_SIZE: "36"
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      fake-gcs-server:
+        condition: service_started
+      indexer:
+        condition: service_completed_successfully
+
+volumes:
+  gcs-data:

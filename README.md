@@ -45,6 +45,126 @@ follow the instructions below.
 > generally impossible to run on Windows, but the
 > [Taskfile](https://taskfile.dev/) is written using Linux commands.
 
+### Quick Start (Docker Compose)
+If you just want the whole thing running locally, `docker` is the only
+dependency:
+
+```bash
+docker compose up --build
+```
+
+> Use `--build` after any change to the Go source. Plain `docker compose up`
+> reuses the previously built image and will silently run stale code.
+
+This starts a local GCS emulator, builds and runs the `dataservice`, triggers a
+full scrape + index of itch.io, and only then starts the `webserver` on
+[localhost:8080](http://localhost:8080).
+
+> The first run crawls the whole asset catalogue (~108,000 assets) at a
+> deliberately polite 2 requests/second, so expect an hour or more. Progress is
+> visible in the `dataservice` logs. The result is kept in the `gcs-data`
+> docker volume, so subsequent `docker compose up` runs skip the crawl and come
+> up immediately.
+
+#### Why the crawl is not just "fetch every page"
+
+itch.io serves **at most 200 pages per browse view** — about 7,200 assets —
+while the catalogue holds ~108,000. Paging `/game-assets` alone can therefore
+never reach more than 7% of it, and requesting the pages the total count
+implies just produces thousands of 404s.
+
+The crawl gets past that by fetching many *filtered* views and deduplicating by
+`GameId`. The URL grammar itch.io accepts is narrow, and violating it fails
+loudly rather than degrading:
+
+```
+/game-assets                    root
+/game-assets/<sort>             newest | new-and-popular | top-rated
+/game-assets/tag-A              any single tag
+/game-assets/<sort>/tag-A       sort plus one tag
+/game-assets/tag-A/tag-B        two tags, default sort only, A < B
+```
+
+Three tags is a **403**. A sort together with two tags is a **403**. Tags out of
+lexicographic order is a **301**. So views cannot be subdivided arbitrarily, and
+there is no "NOT tag-X" facet to partition with — coverage is the *union* of
+views, which is why it is measured rather than assumed.
+
+The plan rests on one observation: an asset is fully reachable if it carries at
+least one tag small enough to page through. Assets carry ~9 tags each and most
+tags are small, so a view per small tag covers the large majority; big tags are
+taken under all four orderings, and the remainder is reached by pairing big tags
+with each other.
+
+- Re-scrape and rebuild the index: `FORCE_REINDEX=true docker compose up indexer`
+  (or hit `curl http://localhost:8081/trigger-fetch` directly).
+- Throw away the scraped data: `docker compose down -v`.
+- Tune the crawl rate with `SCRAPE_RPS` (default `2`). The rate is fixed: the
+  fetcher does not speed up or slow down on its own. A 429 pauses every worker
+  for the length of any `Retry-After` the server sent, then the crawl resumes
+  at the same rate.
+- If you see a flood of 429s, **check the cookie jar before touching
+  `SCRAPE_RPS`**. itch.io sets an `itchio_token` cookie and refuses cookieless
+  clients about half the time no matter how slowly they ask — measured at 8/16
+  requests refused without the jar versus 0/16 with it, at one request per
+  second. That failure looks exactly like an aggressive rate limit and cannot
+  be fixed by slowing down. The `429s:` counter in the scrape progress log is
+  there to make it visible.
+- Smoke-test the whole pipeline quickly with `SCRAPE_MAX_PAGES`, which caps
+  total pages across every view. It still exercises tag discovery, crawling,
+  indexing, archiving, upload and webserver startup end to end. Because such a
+  run is deliberately partial, it also disarms `COVERAGE_FLOOR` and shrinks tag
+  discovery — otherwise the run would refuse to publish, and would spend longer
+  discovering tags than fetching assets.
+- Coverage knobs: `COVERAGE_TARGET` (default `0.95`) stops the crawl once that
+  fraction of the catalogue is collected, since the last few percent costs
+  disproportionately many requests. `COVERAGE_FLOOR` (default `0.90`) refuses to
+  publish below that, leaving the previous index in place so a stalled run
+  cannot replace a good index with a worse one.
+- `SLICE_MIN_YIELD` (default `0.05`) abandons a view once it stops yielding new
+  assets. Assets appear in ~9 views each, so without it the overlap dominates
+  the crawl.
+- Tag discovery seeds from itch.io's own asset tag directory at `/tags/assets`,
+  which lists ~607 tags in one document, then walks the co-tag links each facet
+  page offers. It costs one request per tag and is cached in the bucket as
+  `tags.json`, refreshed when older than `TAG_CACHE_MAX_AGE` (default `168h`).
+  `MAX_TAGS` (default `1000`) bounds the total.
+- The seed source matters more than it looks. Seeding instead from the browse
+  sitemap (~39 facets) and walking co-tags converges at ~135 tags — a clique of
+  popular tags that link to each other — and the long tail never appears. Since
+  an asset is only fully pageable if it carries a tag small enough to fit under
+  the 200-page cap, losing the long tail loses coverage directly. If you see
+  `falling back to the browse sitemap` in the logs, expect a much worse result.
+
+### Configuring the local stack
+
+Settings are passed as environment variables. The portable way — identical in
+bash, PowerShell and cmd — is a `.env` file next to `docker-compose.yml`, which
+Compose reads automatically:
+
+```
+cp .env.example .env      # `copy` on Windows
+```
+
+then edit it and run `docker compose up --build` as normal. `.env` is
+gitignored.
+
+If you'd rather set them inline, the syntax differs per shell:
+
+```bash
+# bash / zsh
+SCRAPE_MAX_PAGES=20 docker compose up --build
+```
+
+```powershell
+# PowerShell - the bash `VAR=value cmd` prefix form is NOT valid here
+$env:SCRAPE_MAX_PAGES=20; docker compose up --build
+```
+
+> Note that the webserver deliberately does not start until the scrape has
+> finished and data exists in the bucket, so port 8080 will refuse connections
+> for the duration of the scrape. Port 4443 is the GCS emulator, not the app.
+
 ### Tooling Dependencies
 - [Golang](https://go.dev/)
 - [Task](https://taskfile.dev/)

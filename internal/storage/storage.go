@@ -9,6 +9,7 @@ import (
 	"itchgrep/pkg/models"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -19,6 +20,7 @@ import (
 const (
 	BucketName       = "itchgrep-data"
 	DataFileName     = "assets.json"
+	TagsFileName     = "tags.json"
 	IndexDirName     = "index.bleve"
 	IndexArchiveName = "index.bleve.gz.tar"
 )
@@ -28,32 +30,54 @@ var ArchiveFormat = archiver.CompressedArchive{
 	Archival:    archiver.Tar{},
 }
 
-func createClient(ctx context.Context) (*storage.Client, error) {
-	local := os.Getenv("RUN_LOCAL") == "true"
-	logging.Info("RUN_LOCAL: %v", local)
-	test := os.Getenv("RUN_TEST") == "true"
-	logging.Info("RUN_TEST: %v", test)
+// sharedClient, sharedClientErr, and clientOnce implement a package-level,
+// lazily-initialised GCS client. createClient used to be called on every
+// exported function (i.e. on every HTTP request, via cache.IsCacheExpired),
+// creating a fresh client and TLS connection each time and racing on
+// os.Setenv. Now the client (and the env var write) is created exactly once
+// and the error from that one attempt is cached and returned to every
+// caller.
+var (
+	clientOnce      sync.Once
+	sharedClient    *storage.Client
+	sharedClientErr error
+)
 
-	if local {
-		if !test {
-			os.Setenv("STORAGE_EMULATOR_HOST", "http://fake-gcs-server:4443") // name of the docker container
-			logging.Info("Using address: http://fake-gcs-server:4443")
-			return storage.NewClient(
-				ctx,
-				option.WithEndpoint("http://fake-gcs-server:4443/storage/v1/"),
-				storage.WithJSONReads())
-		} else { // if we are running tests, this is not running in a container
-			os.Setenv("STORAGE_EMULATOR_HOST", "http://localhost:4443")
-			logging.Info("Using address: http://localhost:4443")
-			return storage.NewClient(
-				ctx,
-				option.WithEndpoint("http://localhost:4443/storage/v1/"),
-				storage.WithJSONReads())
+// The caller's ctx is deliberately not used to construct the shared client:
+// storage.NewClient ties token refresh to the ctx it is given, so binding it to
+// whichever request happened to initialise the client first would break every
+// later caller once that request finished.
+func createClient(context.Context) (*storage.Client, error) {
+	clientOnce.Do(func() {
+		ctx := context.Background()
+
+		local := os.Getenv("RUN_LOCAL") == "true"
+		logging.Info("RUN_LOCAL: %v", local)
+		test := os.Getenv("RUN_TEST") == "true"
+		logging.Info("RUN_TEST: %v", test)
+
+		if local {
+			if !test {
+				os.Setenv("STORAGE_EMULATOR_HOST", "http://fake-gcs-server:4443") // name of the docker container
+				logging.Info("Using address: http://fake-gcs-server:4443")
+				sharedClient, sharedClientErr = storage.NewClient(
+					ctx,
+					option.WithEndpoint("http://fake-gcs-server:4443/storage/v1/"),
+					storage.WithJSONReads())
+			} else { // if we are running tests, this is not running in a container
+				os.Setenv("STORAGE_EMULATOR_HOST", "http://localhost:4443")
+				logging.Info("Using address: http://localhost:4443")
+				sharedClient, sharedClientErr = storage.NewClient(
+					ctx,
+					option.WithEndpoint("http://localhost:4443/storage/v1/"),
+					storage.WithJSONReads())
+			}
+		} else {
+			logging.Info("Using production GCS client.")
+			sharedClient, sharedClientErr = storage.NewClient(ctx)
 		}
-	} else {
-		logging.Info("Using production GCS client.")
-		return storage.NewClient(ctx)
-	}
+	})
+	return sharedClient, sharedClientErr
 }
 
 // PutAssets writes the provided assets to a Google Cloud Storage bucket as a JSON file.
@@ -64,7 +88,6 @@ func PutAssets(assets []models.Asset) error {
 	if err != nil {
 		return fmt.Errorf("storage.NewClient: %v", err)
 	}
-	defer client.Close()
 
 	bkt := client.Bucket(BucketName)
 
@@ -94,7 +117,6 @@ func GetAssets() ([]models.Asset, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage.NewClient: %v", err)
 	}
-	defer client.Close()
 
 	bkt := client.Bucket(BucketName)
 	obj := bkt.Object(DataFileName)
@@ -117,13 +139,72 @@ func GetAssets() ([]models.Asset, error) {
 	return assets, nil
 }
 
+// PutTags caches the discovered tag universe. Discovery costs several hundred
+// requests to itch.io and the tag set barely moves between scrapes, so it is
+// persisted rather than rebuilt every run.
+func PutTags(tags []models.Tag) error {
+	ctx := context.Background()
+
+	client, err := createClient(ctx)
+	if err != nil {
+		return fmt.Errorf("storage.NewClient: %v", err)
+	}
+
+	tagsJSON, err := json.Marshal(tags)
+	if err != nil {
+		return fmt.Errorf("json.Marshal: %v", err)
+	}
+
+	w := client.Bucket(BucketName).Object(TagsFileName).NewWriter(ctx)
+	if _, err := w.Write(tagsJSON); err != nil {
+		return fmt.Errorf("Writer.Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("Writer.Close: %v", err)
+	}
+	return nil
+}
+
+// GetTags returns the cached tag universe and when it was written. A missing
+// cache is not an error condition the caller should fail on - it just means
+// discovery has to run - so callers check the error and rediscover.
+func GetTags() ([]models.Tag, time.Time, error) {
+	ctx := context.Background()
+	client, err := createClient(ctx)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("storage.NewClient: %v", err)
+	}
+
+	obj := client.Bucket(BucketName).Object(TagsFileName)
+	attrs, err := obj.Attrs(ctx)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("Object.Attrs: %v", err)
+	}
+
+	r, err := obj.NewReader(ctx)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("Object.NewReader: %v", err)
+	}
+	defer r.Close()
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("io.ReadAll: %v", err)
+	}
+
+	var tags []models.Tag
+	if err := json.Unmarshal(data, &tags); err != nil {
+		return nil, time.Time{}, fmt.Errorf("json.Unmarshal: %v", err)
+	}
+	return tags, attrs.Updated, nil
+}
+
 func GetAssetsUpdateTime() (time.Time, error) {
 	ctx := context.Background()
 	client, err := createClient(ctx)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("storage.NewClient: %v", err)
 	}
-	defer client.Close()
 
 	bkt := client.Bucket(BucketName)
 	objAttrs, err := bkt.Object(DataFileName).Attrs(ctx)
@@ -143,7 +224,6 @@ func PutFS(dirPath, nameInStorage string) error {
 	if err != nil {
 		return fmt.Errorf("storage.NewClient: %v", err)
 	}
-	defer client.Close()
 
 	bkt := client.Bucket(BucketName)
 
@@ -165,23 +245,29 @@ func PutFS(dirPath, nameInStorage string) error {
 	}
 	archiveFileHandle.Close()
 
-	// load zip file as bytes
-	archiveBytes, err := os.ReadFile(nameInStorage)
+	// Reopen the archive and stream it to GCS rather than reading it fully
+	// into memory: on Cloud Run the filesystem is an in-memory tmpfs, so an
+	// os.ReadFile here would count the archive against the memory limit a
+	// second time on top of the tmpfs copy.
+	archiveFile, err := os.Open(nameInStorage)
 	if err != nil {
-		return fmt.Errorf("zipFile.Read: %v", err)
+		return fmt.Errorf("os.Open: %v", err)
 	}
+	defer archiveFile.Close()
 
-	logging.Debug("Archive size: %d", len(archiveBytes))
-
-	// Create a new writer to write the index zip file
+	// Create a new writer to write the index archive file
 	obj := bkt.Object(nameInStorage)
 	w := obj.NewWriter(ctx)
-	if _, err := w.Write(archiveBytes); err != nil {
-		return fmt.Errorf("Writer.Write: %v", err)
+	written, err := io.Copy(w, archiveFile)
+	if err != nil {
+		w.Close()
+		return fmt.Errorf("io.Copy: %v", err)
 	}
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("Writer.Close: %v", err)
 	}
+
+	logging.Debug("Archive size: %d", written)
 
 	return nil
 }
@@ -196,7 +282,6 @@ func GetFS(nameInStorage, targetPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("storage.NewClient: %v", err)
 	}
-	defer client.Close()
 
 	bkt := client.Bucket(BucketName)
 	obj := bkt.Object(nameInStorage)

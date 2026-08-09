@@ -66,11 +66,16 @@ tasks:
     cmds:
       - docker build -f Dockerfile.webserver -t "gcr.io/{{.PROJECT_ID}}/webserver" .
       - docker push "gcr.io/{{.PROJECT_ID}}/webserver"
+      # --memory 1Gi: the bleve index is downloaded and extracted onto the
+      # container filesystem, which on Cloud Run is an in-memory tmpfs. It
+      # therefore counts against the memory limit alongside the asset data
+      # held in the cache, so the 512Mi default is not enough.
       - gcloud run deploy webserver
         --image "gcr.io/{{.PROJECT_ID}}/webserver"
         --platform managed
         --allow-unauthenticated
         --region "{{.REGION}}"
+        --memory 1Gi
     vars:
       PROJECT_ID: itchgrep
       REGION: europe-west1

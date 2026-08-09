@@ -1,6 +1,6 @@
 # Use the official Golang image to create a build artifact.
 # This is based on Debian and sets the GOPATH environment variable at /go.
-FROM golang:1.22 as builder
+FROM golang:1.22 AS builder
 
 # Create and change to the app directory.
 WORKDIR /app
@@ -14,8 +14,10 @@ COPY pkg/ pkg/
 # Fetch dependencies.
 RUN go mod download
 
-# Build the binary.
-RUN go build -v -o dataservice ./cmd/dataservice
+# Build the binary. CGO is disabled so the result is a static binary with no
+# glibc dependency on the distroless runtime image; every dependency here is
+# pure Go. -s -w strips the symbol table and DWARF data to shrink the image.
+RUN CGO_ENABLED=0 go build -v -ldflags="-s -w" -o dataservice ./cmd/dataservice
 
 # Use a Docker multi-stage build to create a lean production image.
 # https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds
