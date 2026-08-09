@@ -61,12 +61,25 @@ const (
 // ?sort=price and ?sort=newest both return byte-identical results to the
 // default - and the path-segment sorts are newest, top-rated and
 // new-and-popular only.
+//
+// The genre entries are each a small, stable subset - measured against tag-2d:
+// action 1,741, adventure 4,640, shooter 658, puzzle 472, against the tag's own
+// 40,272. Being under the 7,200 ceiling is exactly what makes them valuable:
+// such a view can be paged to its end, so it reaches assets sitting far below
+// the depth any window on the parent tag can show.
+//
+// genre-survival, genre-fighting, genre-racing and genre-card-game all 301:
+// they exist for games but not for assets.
 var allFilters = []string{
 	FilterFree,
 	FilterPaid,
 	FilterRecent,
 	"genre-platformer",
 	"genre-rpg",
+	"genre-action",
+	"genre-adventure",
+	"genre-shooter",
+	"genre-puzzle",
 }
 
 // Slice is one browsable view of the catalogue: a URL that can be paged
@@ -92,6 +105,31 @@ type Slice struct {
 	Filter string   // FilterNone, or one of allFilters; never set alongside Sort
 	Tags   []string // canonical (lexicographic) order; empty means the root view
 	Count  int64    // reported result count, for ordering the crawl
+
+	// PageInFull marks a view that must be paged to its end rather than
+	// abandoned once its yield drops off.
+	//
+	// This distinction is the whole ballgame for coverage. Browse results are
+	// popularity-ordered, so the first pages of EVERY view are the assets
+	// already collected and the yield heuristic reads near-zero on all of them.
+	// Applied to a view reaching assets nothing else reaches, that abandons
+	// precisely the deep, unpopular tail - which is how small tags came to be
+	// sampled at 5% of their catalogue count while the crawl called itself
+	// healthy.
+	//
+	// Set for the two view shapes that pay for the pages they cost:
+	//
+	//   - a tag under the ceiling, whose view therefore contains every asset
+	//     carrying it. This is the plan's entire premise.
+	//   - a filter applied to an oversized tag, which either narrows it under
+	//     the ceiling (the genre filters do: action/2d is 1,741 of 40,272) or
+	//     splits it into halves each far deeper than any ordering reaches.
+	//
+	// Not set for re-orderings, tag pairs or untagged filter views. Those are
+	// windows onto sets already covered elsewhere, they cannot be exhausted
+	// anyway, and left uncapped they would each run the full 200 pages - about
+	// 50,000 pages between them.
+	PageInFull bool
 }
 
 // Valid reports whether this slice satisfies the URL grammar above. A slice
@@ -226,7 +264,10 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 
 	var out []Slice
 
-	// Filter-only views, carrying no tag at all. Measured across two full
+	// Filter-only views, carrying no tag at all. Each shows the most popular
+	// 7,200 of a set spanning tens of thousands, and the popular end is what
+	// every other view has already collected, so these are sampled rather than
+	// paged in full. Measured across two full
 	// crawls, the tag slices below plateau at 79.5% of the catalogue, and
 	// applying free/store - a true partition - to every oversized tag moved
 	// that by 0.2 points. So the residual is not "assets whose every tag is too
@@ -239,13 +280,18 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 		out = append(out, Slice{Filter: f, Count: ceiling})
 	}
 
-	// A small tag fits in one view, so one slice covers it completely.
+	// A small tag fits in one view, so one slice covers it completely - and
+	// that is the entire premise the plan rests on. Always PageInFull: paging
+	// one to its end is bounded work with guaranteed full coverage of its slice,
+	// and it is the only mechanism that reaches an unpopular asset at all.
 	for _, t := range small {
-		out = append(out, Slice{Tags: []string{t.Slug}, Count: t.Count})
+		out = append(out, Slice{Tags: []string{t.Slug}, Count: t.Count, PageInFull: true})
 	}
 
 	// A big tag cannot be paged through, but each ordering exposes a different
-	// window onto it, so take all four.
+	// window onto it, so take all four. Re-orderings of one result set overlap
+	// heavily by construction, so a tail that has stopped yielding really has
+	// stopped yielding - these are left abandonable.
 	for _, t := range big {
 		for _, srt := range allSorts {
 			out = append(out, Slice{Sort: srt, Tags: []string{t.Slug}, Count: t.Count})
@@ -260,7 +306,7 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 		// of a shorter view, which FetchExhausted then handles, and it avoids a
 		// request per filter per tag just to size them up front.
 		for _, f := range allFilters {
-			out = append(out, Slice{Filter: f, Tags: []string{t.Slug}, Count: t.Count})
+			out = append(out, Slice{Filter: f, Tags: []string{t.Slug}, Count: t.Count, PageInFull: true})
 		}
 	}
 

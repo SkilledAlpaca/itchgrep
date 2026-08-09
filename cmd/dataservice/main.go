@@ -584,7 +584,14 @@ func (c *crawler) runSlice(s fetcher.Slice) {
 	// Trailing window of per-page yields. A single page is too noisy to judge
 	// a slice on: one dense page among barren ones would keep a spent slice
 	// alive, and one sparse page would abandon a productive one.
-	const yieldWindow = 5
+	//
+	// Sized in whole batches. It used to be 5, but fetchPages returns
+	// maxConcurrentRequests (8) counts at a time, so the window was already
+	// full when the first batch landed and every slice was judged on its first
+	// 8 pages - the guard against judging a slice before it had a fair sample
+	// never once fired. Measured consequence: 257 of 314 abandoned slices died
+	// at exactly page 8.
+	const yieldWindow = 2 * maxConcurrentRequests
 	var recentYield []int
 	threshold := c.cfg.minYield * float64(c.itemsPerPage)
 
@@ -620,6 +627,14 @@ func (c *crawler) runSlice(s fetcher.Slice) {
 		// global popularity rank, and truncating it would leave later slices
 		// ranking against an incomplete baseline.
 		if isRoot {
+			continue
+		}
+		// Nor is a view that reaches assets nothing else reaches. Browse results
+		// are popularity-ordered, so a low yield near the front means "the
+		// popular end of this set is already collected", not "this set holds
+		// nothing new" - the unique assets are precisely the deepest ones. See
+		// Slice.PageInFull.
+		if s.PageInFull {
 			continue
 		}
 		if sliceSpent(recentYield, yieldWindow, threshold) {

@@ -304,3 +304,80 @@ func TestRootSliceIsPagedToTheCap(t *testing.T) {
 	assert.Equal(t, int64(MaxPagesPerView), root.PagesToFetch(testItemsPerPage),
 		"the root view must page to the cap, not to one page")
 }
+
+func TestSmallTagSlicesArePagedInFull(t *testing.T) {
+	// The plan's entire premise is that a tag small enough to page through
+	// gives complete coverage of the assets carrying it. Leaving one
+	// abandonable lets the crawler cut it short, which forfeits exactly the
+	// deep, unpopular assets no other view reaches. Measured before this was
+	// fixed: tag-icons yielded 288 of its 5,867 assets.
+	out := PlanSlices([]models.Tag{smallTag("icons"), smallTag("fonts")}, testItemsPerPage)
+
+	seen := 0
+	for _, s := range out {
+		if len(s.Tags) == 1 && s.Count <= testCeiling {
+			seen++
+			assert.True(t, s.PageInFull,
+				"small tag slice %q must be paged to its end", s.Label())
+		}
+	}
+	assert.Equal(t, 2, seen)
+}
+
+func TestFilteredBigTagViewsArePagedInFull(t *testing.T) {
+	// A filter either narrows an oversized tag under the ceiling or splits it
+	// into halves each far deeper than any ordering reaches, so its tail is
+	// where the otherwise-unreachable assets are. A re-ordering is a different
+	// window onto a set already covered, so its tail really is spent.
+	out := PlanSlices([]models.Tag{bigTag("pixel-art"), bigTag("sprites")}, testItemsPerPage)
+
+	filtered, sorted := 0, 0
+	for _, s := range out {
+		switch {
+		case s.Filter != FilterNone && len(s.Tags) > 0:
+			filtered++
+			assert.True(t, s.PageInFull, "filtered view %q reaches assets nothing else does", s.Label())
+		case s.Sort != SortDefault:
+			sorted++
+			assert.False(t, s.PageInFull, "sort view %q re-orders a covered set", s.Label())
+		}
+	}
+	assert.Equal(t, 2*len(allFilters), filtered)
+	assert.Equal(t, 2*3, sorted)
+}
+
+func TestExpensiveViewsStayAbandonable(t *testing.T) {
+	// Untagged filter views and tag pairs cannot be exhausted and overlap
+	// heavily with what is already collected. Paging all of them in full would
+	// cost roughly 50,000 pages - about seven hours at the default rate - for
+	// the +82 assets two full crawls measured from the filter views.
+	out := PlanSlices([]models.Tag{bigTag("a"), bigTag("b"), smallTag("fonts")}, testItemsPerPage)
+
+	filterOnly, pairs := 0, 0
+	for _, s := range out {
+		if len(s.Tags) == 0 && s.Filter != FilterNone {
+			filterOnly++
+			assert.False(t, s.PageInFull, "filter-only view %q must stay abandonable", s.Label())
+		}
+		if len(s.Tags) == 2 {
+			pairs++
+			assert.False(t, s.PageInFull, "tag pair %q must stay abandonable", s.Label())
+		}
+	}
+	assert.Equal(t, len(allFilters), filterOnly)
+	assert.Equal(t, 1, pairs)
+}
+
+func TestGenreFiltersAreCrawlable(t *testing.T) {
+	// Verified against itch.io: these four return 200 with counts well under
+	// the page ceiling, which is what makes them worth having. survival,
+	// fighting, racing and card-game all 301 and must not be added.
+	for _, f := range []string{"genre-action", "genre-adventure", "genre-shooter", "genre-puzzle"} {
+		assert.True(t, Slice{Filter: f, Tags: []string{"2d"}}.Valid(),
+			"%s should be an accepted filter", f)
+	}
+	for _, f := range []string{"genre-survival", "genre-fighting", "genre-racing", "genre-card-game"} {
+		assert.False(t, Slice{Filter: f, Tags: []string{"2d"}}.Valid(),
+			"%s 301s on itch.io and must not be planned", f)
+	}
+}
