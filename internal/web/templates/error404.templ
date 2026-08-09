@@ -1,5 +1,32 @@
 package templates
 
 templ Error404() {
-	<p>Not found</p>
+	@Masthead()
+	<div class="notice">
+		<h2>404 — nothing here</h2>
+		<p><a href="/">Back to search</a></p>
+	</div>
+}
+
+// NotReady is served while the webserver has no index to search: on a first run
+// the crawl has not published yet. It replaced a bare "Cache not ready yet"
+// string, which htmx dropped into the results grid as unstyled text with no
+// indication of what to do about it.
+templ NotReady() {
+	<div class="notice">
+		<h2>Index not ready yet</h2>
+		<p>
+			The crawl has not published an index yet. This page picks it up on
+			its own within a few seconds of it landing — watch progress with
+			<code>docker compose logs -f dataservice</code>.
+		</p>
+	</div>
+}
+
+// SearchFailed covers a query the index rejected.
+templ SearchFailed() {
+	<div class="notice">
+		<h2>That search could not be run</h2>
+		<p>Try different terms.</p>
+	</div>
 }

@@ -4,6 +4,11 @@ import "encoding/json"
 import "fmt"
 import "itchgrep/pkg/models"
 
+// maxTagsShown caps the chips rendered per card. Assets carry ~5 tags on
+// average but some carry dozens, and letting those grow unbounded makes the
+// grid rows ragged for no gain.
+const maxTagsShown = 5
+
 // hxValsQuery builds the JSON object used for the htmx hx-vals attribute,
 // safely escaping the query string via encoding/json instead of naive
 // string interpolation (which breaks on queries containing a double quote).
@@ -17,22 +22,57 @@ func hxValsQuery(query string) string {
 	return string(b)
 }
 
+func shownTags(tags []string) []string {
+	if len(tags) > maxTagsShown {
+		return tags[:maxTagsShown]
+	}
+	return tags
+}
+
+templ AssetCard(asset models.Asset) {
+	<article class="asset">
+		<a class="asset-link" href={ templ.SafeURL(asset.Link) } target="_blank" rel="noopener">
+			if asset.ThumbUrl != "" {
+				<img
+					src={ asset.ThumbUrl }
+					alt={ fmt.Sprintf("Thumbnail for %s", asset.Title) }
+					loading="lazy"
+					decoding="async"
+				/>
+			}
+			<div class="asset-body">
+				<div class="asset-title">{ asset.Title }</div>
+				<div class="asset-author">{ asset.Author }</div>
+				if asset.Description != "" {
+					<p class="asset-description">{ asset.Description }</p>
+				}
+			</div>
+		</a>
+		if len(asset.Tags) > 0 {
+			<div class="asset-tags">
+				for _, tag := range shownTags(asset.Tags) {
+					<button type="button" class="tag" data-tag={ tag }>{ tag }</button>
+				}
+			</div>
+		}
+	</article>
+}
+
+// NoResults is what an exhausted or empty search renders. Without it a query
+// matching nothing produced a silently blank page.
+templ NoResults(query string) {
+	<div class="notice">
+		<h2>No assets match “{ query }”</h2>
+		<p>Try a broader term, or click a tag on any asset to search by it.</p>
+	</div>
+}
+
 templ AssetPage(pageNum int64, assets []models.Asset, isQuery bool, query string) {
+	if len(assets) == 0 && isQuery && pageNum == 1 {
+		@NoResults(query)
+	}
 	for _, asset := range assets {
-		<div class="asset">
-			<a href={ templ.SafeURL(asset.Link) }>
-				<img src={ asset.ThumbUrl }/>
-				<div class="asset-details">
-					<div class="asset-head">
-						<div class="asset-title">{ asset.Title }</div>
-						<div class="asset-author">{ asset.Author }</div>
-					</div>
-					if asset.Description != "" {
-						<blockquote class="asset-description">{ asset.Description }</blockquote>
-					}
-				</div>
-			</a>
-		</div>
+		@AssetCard(asset)
 	}
 	if len(assets) > 0 {
 		if !isQuery {
@@ -41,7 +81,6 @@ templ AssetPage(pageNum int64, assets []models.Asset, isQuery bool, query string
 				hx-get={ fmt.Sprintf("/assets/%d", pageNum+1) }
 				hx-trigger="revealed"
 				hx-swap="outerHTML"
-				style="height: 10rem; width: 1rem;"
 			></div>
 		} else {
 			<div
@@ -50,7 +89,6 @@ templ AssetPage(pageNum int64, assets []models.Asset, isQuery bool, query string
 				hx-post={ fmt.Sprintf("/query/%d", pageNum+1) }
 				hx-trigger="revealed"
 				hx-swap="outerHTML"
-				style="height: 10rem; width: 1rem;"
 			></div>
 		}
 	}

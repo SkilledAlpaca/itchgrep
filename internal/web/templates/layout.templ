@@ -6,101 +6,53 @@ templ Layout(title string, content templ.Component) {
 		<head>
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="description" content="Full-text search over itch.io game assets, by title, author, description and tag."/>
+			<meta name="color-scheme" content="dark light"/>
 			<title>
 				{ title }
 			</title>
-			<link rel="icon" href="data:image/ico;base64,R0lGODlhEAAQAPEAAAAAAP///wAAAAAAACH5BAlkAAIAIf8LTkVUU0NBUEUyLjADAQAAACwAAAAAEAAQAAAC55QkEhERIYQQQggRQgghhBAEgiAIQhAEQRAEQRAEgSAIQRAAAAAAAAAIBAICQQAAAAAAAAAAAAAAAoJAAAAAAAAAAAAAAAACgUAgAAgEAgBAIBAABAKBQCAAAAQAgAAAAAAQEBAQEBAAABAAABAAAAAAEBAQEBAQAAAQAAAQABAQABAQEBAQEAAAEAAAEAAAEAAQEBAgEBAAEBAQAAAQEAAAEBAgIBAQAAAAAAAAAAAAABAQICAgEBAQEBAQEBAQEBAQICAgICAQEBAQEBAQEBAQICAgICAgICAQEBAQEBAgQIAAAQIKAAAh+QQJZAACACwAAAAAEAAQAAAC55QkEhERIYQQQggRQgghhBAEgiAIQhAEQRAEQRAEgSAIQRAAAAAAAAAIBAICQQAAAAAAAAAAAAAAAoJAAAAAAAAAAAAAAAACgUAgAAAAAAAAAAAABAKBQCAAAAQCgUAgAAAQEBAQEBAAABAQAAAQEAAAEBAQEBAQABAQEBAQEBAQABAQEBAQEAAQEAAAAAAQEAAQEBAgEBAAEAAAAAAAABAAEBAgIBAQAAAAAAAAAAAAABAQICAgEBAQEBAQEBAQEBAQICAgICAQEBAQEBAQEBAQICAgICAgICAQEBAQEBAgQIAAAQIKAAA7" type="image/png"/>
-			<link href="https://unpkg.com/normalize.css@8.0.1/normalize.css" rel="stylesheet"/>
-			<link href="https://unpkg.com/concrete.css@2.1.1/concrete.css" rel="stylesheet"/>
-			<script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
-			<script type="text/javascript">
-                window.onload = function() {
-                    window.scrollTo(0, 0);
-                    document.getElementById('query-input').value = '';
-                    document.getElementById('query-input').focus();
-                }
+			<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2314161a'/%3E%3Ctext x='8' y='12' font-family='monospace' font-size='11' font-weight='bold' text-anchor='middle' fill='%237ee787'%3E%3E%3C/text%3E%3C/svg%3E"/>
+			<link href="/static/app.css" rel="stylesheet"/>
+			<script src="/static/htmx.min.js" defer></script>
+			<script>
+			// htmx discards non-2xx responses without swapping, so a 503 from a
+			// server with no index yet would render nothing at all. These
+			// responses carry a rendered explanation, so let them through while
+			// leaving the status code honest.
+			document.addEventListener('htmx:beforeSwap', function (evt) {
+				var status = evt.detail.xhr.status;
+				if (status === 503 || status === 400) {
+					evt.detail.shouldSwap = true;
+					evt.detail.isError = false;
+				}
+			});
+
+			// Tag chips are buttons inside cards that htmx swaps in and out, so
+			// the listener is delegated from a container that never gets
+			// replaced rather than bound per card.
+			document.addEventListener('click', function (e) {
+				var chip = e.target.closest('[data-tag]');
+				if (!chip) return;
+				var input = document.getElementById('query-input');
+				if (!input || !input.form) return;
+				input.value = chip.getAttribute('data-tag');
+				input.form.requestSubmit();
+				window.scrollTo({ top: 0, behavior: 'smooth' });
+			});
+
+			// "/" focuses the search box, as in every other search tool. Ignored
+			// while typing, so it does not swallow the character.
+			document.addEventListener('keydown', function (e) {
+				if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+				var t = e.target;
+				if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+				var input = document.getElementById('query-input');
+				if (!input) return;
+				e.preventDefault();
+				input.focus();
+				input.select();
+			});
 			</script>
-			<style>
-
-            .links {
-                margin: -0.4rem 0px 0px 0px;
-                text-align: left;
-            }
-
-            #asset-list {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr); /* 3 items per row */
-                gap: 20px; /* Adjust the gap between grid items */
-            }
-
-            .asset {
-                text-align: left; /* Center-align text */
-            }
-
-            .asset a {
-                text-decoration: none; /* Remove underline from links */
-                overflow: hidden;
-            }
-
-            .asset img {
-                border-radius: 8px;
-                border: 2px solid black;
-            }
-
-            .asset-head {
-                min-height: 6.8rem;
-            }
-
-            .asset-title {
-                font-weight: bold;
-                padding: 4px 0px 4px 0px;
-                margin-bottom: 4px;
-                overflow: hidden;
-                font-size: 1.6rem;
-
-                -webkit-line-clamp: 2;
-                -webkit-box-orient: vertical;
-                display: -webkit-box;
-
-                /* We need this to correctly handle */
-                /* long continuous strings without */
-                /* breakable chars like spaces or dashes */
-                word-break: break-word;
-            }
-
-            .asset-author {
-                font-size: 1.6rem;
-            }
-
-            .asset-description {
-                padding-top: 0.3rem;
-                color: gray;
-                font-size: 1.5rem;
-                overflow: hidden;
-                max-height: 4rem;
-                font-style: italic;
-                margin: 3px 0px 3px 0px;
-
-                -webkit-line-clamp: 2;
-                -webkit-box-orient: vertical;
-                display: -webkit-box;
-
-                /* We need this to correctly handle */
-                /* long continuous strings without */
-                /* breakable chars like spaces or dashes */
-                word-break: break-word;
-            }
-
-            @media (max-width: 660px) {
-                .links {
-                    margin-top: 1rem;
-                    text-align: right;
-                }
-                #asset-list {
-                    grid-template-columns: repeat(2, 1fr);
-                }
-            }
-            </style>
 		</head>
 		<body>
 			<main>

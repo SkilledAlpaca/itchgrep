@@ -1,7 +1,7 @@
 package templates
 
 templ About() {
-	<section style="padding: 0;">
+	<div id="page-content" class="prose">
 		<h2>About</h2>
 		<p>
 			I built <a href="/">itchgrep.com</a> to solve a simple problem:
@@ -13,8 +13,6 @@ templ About() {
 			I need. That's why this site is no fluff, just a utility to help
 			you and me find what we need.
 		</p>
-	</section>
-	<section style="padding: 0;">
 		<h2>Contact</h2>
 		<p>
 			Want to get in contact? Email me:
@@ -23,13 +21,13 @@ templ About() {
 		<hr/>
 		<p>
 			I'm on Twitter:
-			<a href="https://twitter.com/winterveil_dev" target="_blank">
+			<a href="https://twitter.com/winterveil_dev" target="_blank" rel="noopener">
 				&commat;winterveil_dev
 			</a>.
 		</p>
 		<p>
 			And mastodon (the better platform!):
-			<a href="https://mastodon.social/@winterveil" target="_blank">
+			<a href="https://mastodon.social/@winterveil" target="_blank" rel="noopener">
 				&commat;winterveil
 			</a>
 		</p>
@@ -37,12 +35,14 @@ templ About() {
 		<p>
 			For discussions and community, or if you're interested in what
 			else I build, and how I build it, our Discord is here:
-			<a href="https://discord.gg/f8nyyK4ngZ" target="_blank">winterveil's netsphere</a>.
+			<a href="https://discord.gg/f8nyyK4ngZ" target="_blank" rel="noopener">winterveil's netsphere</a>.
 		</p>
 		<hr/>
 		<p>
 			And of course I also have an itch.io profile:
-			<a href="https://winterveil.itch.io/" target="_blank">winterveil.itch.io</a>.
+			<a href="https://winterveil.itch.io/" target="_blank" rel="noopener">winterveil.itch.io</a>.
 		</p>
-	</section>
+		<hr/>
+		<p><a href="/">← Back to search</a></p>
+	</div>
 }

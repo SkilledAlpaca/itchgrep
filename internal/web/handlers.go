@@ -45,11 +45,7 @@ func (h *handler) HandleGetAssetPage(w http.ResponseWriter, r *http.Request) {
 	assets, err := h.cache.Page(pageNum)
 	if err != nil {
 		logging.Error("Error fetching page: %s", err)
-		if errors.Is(err, cache.ErrNotReady) {
-			http.Error(w, "Cache not ready yet", http.StatusServiceUnavailable)
-		} else {
-			http.Error(w, "Error fetching page", http.StatusBadRequest)
-		}
+		renderProblem(w, r, err)
 		return
 	}
 
@@ -75,16 +71,26 @@ func (h *handler) HandleQuery(w http.ResponseWriter, r *http.Request) {
 	assets, err := h.cache.QueryCache(query, pageNum)
 	if err != nil {
 		logging.Error("Error searching: %s", err)
-		if errors.Is(err, cache.ErrNotReady) {
-			http.Error(w, "Cache not ready yet", http.StatusServiceUnavailable)
-		} else {
-			http.Error(w, "Error searching", http.StatusBadRequest)
-		}
+		renderProblem(w, r, err)
 		return
 	}
 
 	component := templates.AssetPage(pageNum, assets, true, query)
 	component.Render(r.Context(), w)
+}
+
+// renderProblem answers a failed fetch with a rendered notice rather than a
+// bare error string. The status code stays honest - htmx is configured in the
+// layout to swap 503 responses, which it otherwise discards, so the page can
+// say what is wrong instead of silently rendering nothing.
+func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, cache.ErrNotReady) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		templates.NotReady().Render(r.Context(), w)
+		return
+	}
+	w.WriteHeader(http.StatusBadRequest)
+	templates.SearchFailed().Render(r.Context(), w)
 }
 
 func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {

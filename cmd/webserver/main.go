@@ -72,6 +72,9 @@ func main() {
 	r.Use(logMiddleware)
 
 	h := web.NewHandler(cache)
+	// The stylesheet and htmx are embedded in the binary rather than pulled
+	// from a CDN, so the page renders with no outbound network access.
+	r.Handle("/static/*", web.StaticHandler())
 	r.Get("/", h.HandleIndex)
 	r.Get("/assets/{page}", h.HandleGetAssetPage)
 	r.Post("/query/{page}", h.HandleQuery)
