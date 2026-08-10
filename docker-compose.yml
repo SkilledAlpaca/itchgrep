@@ -29,6 +29,22 @@
 # Wipe data:  docker compose down -v
 # Faster (at the cost of politeness):  SCRAPE_RPS=5 docker compose up
 
+# Every long-running service below points its `logging:` at this.
+#
+# Docker's json-file driver keeps every line ever written unless told a limit,
+# so without this the webserver's request log - one line per request, carrying
+# the client IP and the raw query string - accumulates on the host forever.
+# Nothing rotates it and nothing expires it. 30 MB per service is weeks of
+# traffic at this volume, enough to debug against and bounded either way.
+#
+# Set here rather than in the daemon's config so the bound travels with the
+# stack instead of depending on how the host was set up.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   dataservice:
     build:
@@ -83,6 +99,7 @@ services:
       - "62685:8080" # GET http://localhost:62685/trigger-fetch to re-scrape
     volumes:
       - "${DATA_PATH:-itchgrep-data}:/data"
+    logging: *logging
 
   # One-shot orchestration so `docker compose up` is the only command needed.
   indexer:
@@ -173,6 +190,10 @@ services:
       # Read-write, not read-only: bleve takes a lock file inside the index
       # directory when opening it, even for search-only use.
       - "${DATA_PATH:-itchgrep-data}:/data"
+    # The service this bound exists for: internal/web/logmiddleware.go writes
+    # the client IP and full request URL on every request, and that is the only
+    # place either is retained past the request.
+    logging: *logging
     # Deliberately NOT gated on the indexer completing. The webserver tolerates
     # having no data - it serves 503 and retries the load in the background -
     # and it re-checks storage per request (throttled to once every few
@@ -218,6 +239,7 @@ services:
       TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
     depends_on:
       - webserver
+    logging: *logging
 
 volumes:
   itchgrep-data:
