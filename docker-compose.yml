@@ -82,7 +82,7 @@ services:
     ports:
       - "8081:8080" # GET http://localhost:8081/trigger-fetch to re-scrape
     volumes:
-      - itchgrep-data:/data
+      - "${DATA_PATH:-itchgrep-data}:/data"
 
   # One-shot orchestration so `docker compose up` is the only command needed.
   indexer:
@@ -95,7 +95,7 @@ services:
     volumes:
       # Read-only: this container only needs to see whether the crawl has
       # published yet.
-      - itchgrep-data:/data:ro
+      - "${DATA_PATH:-itchgrep-data}:/data:ro"
     entrypoint:
       - sh
       - -eu
@@ -172,7 +172,7 @@ services:
     volumes:
       # Read-write, not read-only: bleve takes a lock file inside the index
       # directory when opening it, even for search-only use.
-      - itchgrep-data:/data
+      - "${DATA_PATH:-itchgrep-data}:/data"
     # Deliberately NOT gated on the indexer completing. The webserver tolerates
     # having no data - it serves 503 and retries the load in the background -
     # and it re-checks storage per request (throttled to once every few
