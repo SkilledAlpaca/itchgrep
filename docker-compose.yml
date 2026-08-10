@@ -38,6 +38,10 @@ services:
       # The storage directory. Everything the crawl produces lands here.
       DATA_DIR: /data
       PORT: "8080"
+      # Rebuild the index whenever the published one is older than this. The
+      # check is against the age of the data on disk, not a timer, so restarts
+      # do not postpone it. Set to 0 to only ever crawl on /trigger-fetch.
+      CRAWL_INTERVAL: "${CRAWL_INTERVAL:-168h}"
       # Outbound requests/second to itch.io, retries included. Fixed: a 429
       # pauses every worker for any Retry-After the server sent, but does not
       # change this rate.
@@ -87,6 +91,7 @@ services:
       - dataservice
     environment:
       FORCE_REINDEX: "${FORCE_REINDEX:-false}"
+      INDEXER_TIMEOUT_SECONDS: "${INDEXER_TIMEOUT_SECONDS:-43200}"
     volumes:
       # Read-only: this container only needs to see whether the crawl has
       # published yet.
@@ -106,7 +111,7 @@ services:
         echo "[indexer] waiting for dataservice..."
         until curl -s -o /dev/null http://dataservice:8080/; do sleep 2; done
 
-        echo "[indexer] triggering itch.io scrape (~60-90 minutes at the default 2 req/s)"
+        echo "[indexer] triggering itch.io scrape (~6 hours at the default 2 req/s)"
         # 409 means a scrape is already running - that is fine, fall through
         # and poll for its result rather than failing.
         code=$$(curl -s -o /dev/null -w '%{http_code}' http://dataservice:8080/trigger-fetch)
@@ -118,8 +123,12 @@ services:
 
         # The dataservice publishes the index first, then assets.json, so
         # assets.json appearing means the whole set is ready.
+        # A full crawl takes about six hours at the default rate, so the old
+        # two-hour limit reported failure on every healthy first run while the
+        # crawl carried on regardless. Twelve gives a slow network or a lowered
+        # SCRAPE_RPS room without waiting forever on a genuinely stuck one.
         elapsed=0
-        limit=7200
+        limit=$${INDEXER_TIMEOUT_SECONDS}
         until [ -f "$${ASSETS}" ]; do
           if [ "$${elapsed}" -ge "$${limit}" ]; then
             echo "[indexer] timed out after $${limit}s; check: docker compose logs dataservice"

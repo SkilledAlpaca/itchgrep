@@ -147,7 +147,12 @@ the storage layer: `assets.json`, `tags.json`, `checkpoint.json` and
 `index.bleve/`. Writes land in a temporary file and are renamed into place, so a
 reader never sees a half-written file.
 
-- Re-crawl and rebuild: `curl http://localhost:8081/trigger-fetch`
+The index rebuilds itself once it is older than `CRAWL_INTERVAL` (a week by
+default). That check runs against the timestamp of the data on disk rather than
+a timer started at boot, so restarts — updates, reboots, a nightly backup — do
+not postpone it.
+
+- Re-crawl now, without waiting: `curl http://localhost:8081/trigger-fetch`
 - Throw away all scraped data: `docker compose down -v`
 - Generate `.go` from `.templ` files: `task templ` (not required to build; it
   just stops the language server complaining)
@@ -171,10 +176,12 @@ cp .env.example .env      # `copy` on Windows
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `CRAWL_INTERVAL` | `168h` | Rebuilds the index whenever the published one is older than this. `0` disables it, leaving `/trigger-fetch` as the only way to refresh. |
 | `SCRAPE_RPS` | `2` | Outbound requests/second, retries included. Fixed — the fetcher never speeds up or slows down on its own. |
 | `SCRAPE_MAX_PAGES` | unset | Caps total pages across every view, for smoke-testing the whole pipeline. Also disarms `COVERAGE_FLOOR`. |
 | `COVERAGE_TARGET` | `0.95` | Stops the crawl once that fraction is collected. Never triggers in practice. |
-| `COVERAGE_FLOOR` | `0.70` | Refuses to publish below this, leaving the previous index in place. **Keep it below ~0.89** or it rejects every healthy run. |
+| `COVERAGE_FLOOR` | `0.75` | Refuses to publish below this, leaving the previous index in place. **Keep it below ~0.89** or it rejects every healthy run. |
+| `INDEXER_TIMEOUT_SECONDS` | `43200` | How long the bootstrap container waits for the first crawl before reporting failure. |
 | `SLICE_MIN_YIELD` | `0.05` | Abandons a view once it stops yielding new assets. Assets appear in ~5 views each, so without it overlap dominates. |
 | `CHECKPOINT_MAX_AGE` | `24h` | How stale a checkpoint may be before it is ignored. Crawls checkpoint every 3 minutes and resume rather than restart. |
 | `TAG_CACHE_MAX_AGE` | `168h` | How long `tags.json` is reused before tags are rediscovered. |

@@ -23,8 +23,20 @@ import (
 // same storage.IndexDirName directory and corrupt the index.
 var scrapeInProgress atomic.Bool
 
+// defaultCrawlInterval is how long a published index is allowed to go without
+// being rebuilt.
+//
+// A week, because the two costs point in opposite directions: a full crawl
+// takes about six hours at the polite default rate, while the catalogue grows
+// by a few dozen assets in that time. Daily would spend a quarter of every day
+// re-fetching assets that have not changed, for a freshness nobody browsing an
+// asset catalogue would notice.
+const defaultCrawlInterval = 168 * time.Hour
+
 func main() {
 	logging.Init("", true)
+
+	go scheduleCrawls(crawlInterval())
 
 	http.HandleFunc("/trigger-fetch", handleFetchTrigger)
 	port := fmt.Sprintf(":%s", os.Getenv("PORT")) // as per cloud run standard
@@ -37,6 +49,88 @@ func main() {
 	}
 }
 
+// crawlInterval reads CRAWL_INTERVAL, where zero means "never on my own".
+//
+// Parsed here rather than through envDuration because that helper rejects
+// non-positive values, and zero is the one value that has to survive: it is how
+// an operator asks for the old behaviour, an index that only ever refreshes
+// when something calls /trigger-fetch.
+func crawlInterval() time.Duration {
+	v := os.Getenv("CRAWL_INTERVAL")
+	if v == "" {
+		return defaultCrawlInterval
+	}
+	parsed, err := time.ParseDuration(v)
+	if err != nil || parsed < 0 {
+		logging.Warning("Ignoring invalid CRAWL_INTERVAL=%q, using %v", v, defaultCrawlInterval)
+		return defaultCrawlInterval
+	}
+	return parsed
+}
+
+// scheduleCrawls rebuilds the index whenever the published one is older than
+// interval, and is what stops a long-running deployment freezing at whatever
+// the first crawl produced.
+//
+// The decision is made from the age of the data on disk rather than from a
+// ticker started at boot. A ticker would restart its count on every container
+// restart, so a service that gets restarted more often than the interval - a
+// nightly appdata backup, an update, a reboot - would never crawl at all, and
+// would do it silently.
+func scheduleCrawls(interval time.Duration) {
+	if interval == 0 {
+		logging.Info("CRAWL_INTERVAL=0: the index will only rebuild when /trigger-fetch is called")
+		return
+	}
+	logging.Info("Rebuilding the index whenever it is older than %v", interval)
+
+	// Checked far more often than the interval so that a due crawl starts
+	// promptly after a restart, and so the log says something on a cadence a
+	// human watching it can make sense of.
+	const checkEvery = 15 * time.Minute
+	for {
+		age, err := publishedAge()
+		switch {
+		case err != nil:
+			// No data yet. The initial crawl is the indexer's job, and starting
+			// a second one here would race it for the same index directory.
+			logging.Info("No published index yet; leaving the first crawl to the bootstrap")
+		case age >= interval:
+			if startScrape() {
+				logging.Info("Index is %v old, past the %v limit; rebuilding", age.Truncate(time.Minute), interval)
+			}
+		}
+		time.Sleep(checkEvery)
+	}
+}
+
+// publishedAge is how long ago the current dataset was published. It reads the
+// asset file rather than the index because the dataservice writes that one last,
+// so its timestamp is the moment a crawl actually finished.
+func publishedAge() (time.Duration, error) {
+	updated, err := storage.GetAssetsUpdateTime()
+	if err != nil {
+		return 0, err
+	}
+	return time.Since(updated), nil
+}
+
+// startScrape begins a crawl unless one is already running, reporting whether
+// it did. Shared by the HTTP trigger and the scheduler so that both honour the
+// same guard - two crawls would write the same index directory and corrupt it.
+func startScrape() bool {
+	if !scrapeInProgress.CompareAndSwap(false, true) {
+		return false
+	}
+	go func() {
+		// Released on every exit path of fetchAndStoreAssets, including its
+		// early returns on error.
+		defer scrapeInProgress.Store(false)
+		fetchAndStoreAssets()
+	}()
+	return true
+}
+
 func handleFetchTrigger(w http.ResponseWriter, r *http.Request) {
 	// Ensure that we only accept GET requests
 	if r.Method != http.MethodGet {
@@ -44,17 +138,10 @@ func handleFetchTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !scrapeInProgress.CompareAndSwap(false, true) {
+	if !startScrape() {
 		http.Error(w, "A scrape is already in progress", http.StatusConflict)
 		return
 	}
-
-	go func() {
-		// Released on every exit path of fetchAndStoreAssets, including its
-		// early returns on error.
-		defer scrapeInProgress.Store(false)
-		fetchAndStoreAssets()
-	}()
 
 	// Respond to indicate the process has started
 	w.WriteHeader(http.StatusOK)
@@ -240,7 +327,11 @@ type crawlConfig struct {
 func loadCrawlConfig() crawlConfig {
 	cfg := crawlConfig{
 		coverageTarget:   envFloat("COVERAGE_TARGET", 0.95),
-		coverageFloor:    envFloat("COVERAGE_FLOOR", 0.90),
+		// Below what a full crawl actually reaches (~89%), or the run that
+		// proves the crawler works is the run that refuses to publish. Above
+		// what a stalled or truncated one produces, so a bad run still cannot
+		// replace a good index.
+		coverageFloor: envFloat("COVERAGE_FLOOR", 0.75),
 		minYield:         envFloat("SLICE_MIN_YIELD", 0.05),
 		tagCacheMaxAge:   envDuration("TAG_CACHE_MAX_AGE", 168*time.Hour),
 		checkpointMaxAge: envDuration("CHECKPOINT_MAX_AGE", 24*time.Hour),

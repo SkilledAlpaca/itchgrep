@@ -3,6 +3,7 @@ package main
 import (
 	"itchgrep/pkg/models"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -113,9 +114,36 @@ func TestLoadCrawlConfigDefaults(t *testing.T) {
 	cfg := loadCrawlConfig()
 
 	assert.Equal(t, 0.95, cfg.coverageTarget)
-	assert.Equal(t, 0.90, cfg.coverageFloor)
 	assert.Equal(t, 0.05, cfg.minYield)
 	assert.EqualValues(t, 0, cfg.maxPages, "unbounded unless SCRAPE_MAX_PAGES is set")
+
+	// The floor has to sit below what a full crawl reaches, or the default
+	// configuration rejects its own best result after six hours of work.
+	assert.Less(t, cfg.coverageFloor, 0.89,
+		"a full crawl reaches ~89%; a floor above that refuses every healthy run")
+	assert.Equal(t, 0.75, cfg.coverageFloor)
+}
+
+func TestCrawlIntervalDefaultsToWeekly(t *testing.T) {
+	assert.Equal(t, defaultCrawlInterval, crawlInterval())
+}
+
+func TestCrawlIntervalCanBeDisabled(t *testing.T) {
+	// Zero is the only way back to the old behaviour - an index that refreshes
+	// only when something calls /trigger-fetch - so it must survive parsing
+	// rather than being treated as "unset" and replaced by the default.
+	t.Setenv("CRAWL_INTERVAL", "0")
+	assert.Equal(t, time.Duration(0), crawlInterval())
+}
+
+func TestInvalidCrawlIntervalFallsBackRatherThanDisabling(t *testing.T) {
+	// Silently reading a typo as "never crawl again" would freeze the index on
+	// a deployment nobody is watching, which is the failure this whole schedule
+	// exists to prevent.
+	for _, v := range []string{"weekly", "-1h", "168"} {
+		t.Setenv("CRAWL_INTERVAL", v)
+		assert.Equal(t, defaultCrawlInterval, crawlInterval(), "CRAWL_INTERVAL=%q", v)
+	}
 }
 
 func TestScrapeMaxPagesDisarmsThePublishFloor(t *testing.T) {
