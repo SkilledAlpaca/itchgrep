@@ -37,7 +37,7 @@ func TestNothingIsClaimedBeforeAnIndexHasLoaded(t *testing.T) {
 	assert.False(t, cold.Known())
 	assert.False(t, cold.Stale(), "unknown is not stale; there is nothing to be stale")
 	assert.Empty(t, cold.DateTime())
-	assert.NotContains(t, render(t, IndexAge(cold)), "index updated")
+	assert.NotContains(t, render(t, IndexAge(cold, Coverage{})), "index updated")
 }
 
 func TestAFutureTimestampIsClampedRatherThanRendered(t *testing.T) {
@@ -55,7 +55,7 @@ func TestStalenessIsFlaggedOnlyOnceItMeansSomething(t *testing.T) {
 	assert.False(t, at(2*24*time.Hour).Stale())
 	assert.True(t, at(8*24*time.Hour).Stale())
 
-	html := render(t, IndexAge(at(8*24*time.Hour)))
+	html := render(t, IndexAge(at(8*24*time.Hour), Coverage{}))
 	assert.Contains(t, html, "is-stale")
 	assert.Contains(t, html, "crawl may have stopped")
 }
@@ -63,7 +63,7 @@ func TestStalenessIsFlaggedOnlyOnceItMeansSomething(t *testing.T) {
 func TestTheExactTimeIsAlwaysAvailableBehindTheRoundedOne(t *testing.T) {
 	// "3 days ago" is served from a cache for up to five minutes, so it is only
 	// ever approximate. The machine-readable stamp is what is actually true.
-	html := render(t, IndexAge(at(3*24*time.Hour)))
+	html := render(t, IndexAge(at(3*24*time.Hour), Coverage{}))
 
 	assert.Contains(t, html, `datetime="2026-08-09T14:30:00Z"`)
 	assert.Contains(t, html, `title="9 August 2026, 14:30 UTC"`)

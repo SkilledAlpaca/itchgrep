@@ -305,6 +305,16 @@ func fetchAndStoreAssets() {
 	}
 	logging.Info("Successfully stored assets")
 
+	// Written last, and only on a run that published, so the figure the site
+	// quotes always describes the dataset actually being served. A failure here
+	// costs the coverage line and nothing else, so it is not worth returning on.
+	if err := storage.PutStats(models.Stats{
+		Indexed:   int64(len(assets)),
+		Catalogue: int64(totalAssets),
+	}); err != nil {
+		logging.Error("Failed to store crawl stats, coverage will not be shown: %v", err)
+	}
+
 	// The crawl completed and published, so the checkpoint is now stale. Left
 	// behind, the next run would resume a finished crawl and skip every slice.
 	if err := storage.DeleteCheckpoint(); err != nil {

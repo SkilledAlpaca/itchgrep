@@ -293,7 +293,10 @@ templ ResultsRegion(f Filters, r Results) {
 	@TagSidebar(f, r.Tags)
 	<div class="results-main">
 		<div class="toolbar">
-			<span class="result-count">{ resultSummary(r) }</span>
+			// Announced on change, because applying a filter swaps the results
+			// silently: without this a screen reader user gets no confirmation
+			// that anything happened, let alone how much it narrowed things.
+			<span class="result-count" role="status" aria-live="polite">{ resultSummary(r) }</span>
 			<div class="toolbar-controls">
 				@PriceControl(f, r.HasPriceBands)
 				@SortControl(f, r.HasRecency)

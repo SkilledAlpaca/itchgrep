@@ -92,6 +92,39 @@ a:hover {
   border-radius: 4px;
 }
 
+/* Available to assistive technology, absent from the layout. Used where a
+   rounded figure is shown but the exact one still has to be reachable. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Off-screen until focused, so it costs sighted users nothing and gives
+   keyboard users a way past the masthead on every page. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 0.8rem 1.2rem;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+  border-radius: 0 0 4px 0;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
 /* ---------------------------------------------------------------- header  */
 
 .masthead {
@@ -192,6 +225,11 @@ a:hover {
   cursor: help;
 }
 
+.index-coverage {
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+}
+
 .index-age.is-stale {
   color: var(--warn);
 }
@@ -230,8 +268,15 @@ a:hover {
 }
 
 .searchbar input[type="text"]:focus {
-  outline: none;
   border-color: var(--accent);
+}
+
+/* The border tint alone is a weak focus affordance and disappears entirely for
+   anyone who cannot distinguish it, so the outline is kept for keyboard focus
+   rather than suppressed as it used to be. */
+.searchbar input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .searchbar button {
@@ -809,4 +854,27 @@ a:hover {
   .searchbar button {
     padding: 1.1rem 1.4rem;
   }
+}
+
+/* ----------------------------------------------------------- load more  */
+
+/* Sized as a real target rather than the invisible sentinel this used to be:
+   with scripting off it is the link to the next page, and with scripting on it
+   is the fallback for anyone who cannot fire a scroll event. */
+.load-more {
+  display: block;
+  margin: 1.6rem auto;
+  padding: 0.9rem 1.6rem;
+  max-width: 24rem;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  background: var(--bg-raised);
+}
+
+.load-more:hover,
+.load-more:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
 }

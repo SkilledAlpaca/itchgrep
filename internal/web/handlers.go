@@ -62,6 +62,26 @@ func (h *handler) freshness() templates.Freshness {
 	return templates.NewFreshness(h.cache.DataUpdatedTime(), time.Now())
 }
 
+func (h *handler) coverage() templates.Coverage {
+	return templates.NewCoverage(h.cache.Stats())
+}
+
+// pageParam reads ?page=, defaulting to the first. Unlike the filter
+// parameters a bad page is rejected rather than ignored: it is structural
+// rather than a preference, and quietly serving page 1 for ?page=abc would look
+// like the results had simply run out.
+func pageParam(r *http.Request) (int64, bool) {
+	p := r.URL.Query().Get("page")
+	if p == "" {
+		return 1, true
+	}
+	parsed, err := strconv.ParseInt(p, 10, 64)
+	if err != nil || parsed < 1 {
+		return 0, false
+	}
+	return parsed, true
+}
+
 // Handle404 renders the site's styled 404 page with an HTTP 404 status
 // code. It is exported so cmd/webserver can wire it up as chi's NotFound
 // handler.
@@ -79,7 +99,16 @@ func Handle404(w http.ResponseWriter, r *http.Request) {
 func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	filters := parseFilters(r, h.cache.Rates())
 
-	results, err := h.find(filters, 1)
+	// Honoured here too, not just on the fragment endpoint, so that the
+	// load-more link works with scripting off and so a deep-linked page of
+	// results survives being shared.
+	page, ok := pageParam(r)
+	if !ok {
+		http.Error(w, "Invalid page", http.StatusBadRequest)
+		return
+	}
+
+	results, err := h.find(filters, page)
 	if err != nil {
 		// The page itself still renders - masthead, search box, filters - with
 		// the problem shown where the results would be. A visitor arriving
@@ -87,12 +116,12 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		logging.Error("Error rendering index: %s", err)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(statusFor(err))
-		templates.Layout(pageTitle(filters), templates.Index(filters, templates.Results{Page: 1}, h.freshness())).Render(r.Context(), w)
+		templates.Layout(pageTitle(filters), templates.Index(filters, templates.Results{Page: page}, h.freshness(), h.coverage())).Render(r.Context(), w)
 		return
 	}
 
 	h.cacheable(w)
-	templates.Layout(pageTitle(filters), templates.Index(filters, results, h.freshness())).Render(r.Context(), w)
+	templates.Layout(pageTitle(filters), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
 }
 
 // HandleResults serves one page of results as a fragment.
@@ -105,14 +134,10 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 	filters := parseFilters(r, h.cache.Rates())
 
-	page := int64(1)
-	if p := r.URL.Query().Get("page"); p != "" {
-		parsed, err := strconv.ParseInt(p, 10, 64)
-		if err != nil || parsed < 1 {
-			http.Error(w, "Invalid page", http.StatusBadRequest)
-			return
-		}
-		page = parsed
+	page, ok := pageParam(r)
+	if !ok {
+		http.Error(w, "Invalid page", http.StatusBadRequest)
+		return
 	}
 
 	// Pushed before the lookup, and regardless of how it goes: the address bar
@@ -162,10 +187,10 @@ func (h *handler) find(filters templates.Filters, page int64) (templates.Results
 		return templates.Results{}, err
 	}
 	return templates.Results{
-		Assets:     found.Assets,
-		Total:      found.Total,
-		Tags:       found.Tags,
-		Page:       page,
+		Assets:        found.Assets,
+		Total:         found.Total,
+		Tags:          found.Tags,
+		Page:          page,
 		Rates:         h.cache.Rates(),
 		HasRecency:    h.cache.HasRecency(),
 		HasPriceBands: h.cache.HasPriceBands(),

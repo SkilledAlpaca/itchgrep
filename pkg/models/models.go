@@ -134,6 +134,19 @@ func (a Asset) String() string {
 	return fmt.Sprintf("GameId: %s, Title: %s, Author: %s, Description: %s, Link: %s, ThumbUrl: %s, Price: %s, InvPopularity: %d", a.GameId, a.Title, a.Author, a.Description, a.Link, a.ThumbUrl, a.Price, a.InvPopularity)
 }
 
+// Stats is what a crawl measured about its own completeness.
+//
+// Recorded because the number cannot be recovered afterwards: the webserver can
+// count what it loaded, but only the crawl ever saw how big itch.io said the
+// catalogue was at the time. Without it the site could report "96,903 assets"
+// and leave a visitor to assume that is all of them.
+type Stats struct {
+	// Indexed is how many assets the published index holds.
+	Indexed int64
+	// Catalogue is how many itch.io reported having when the crawl started.
+	Catalogue int64
+}
+
 // Tag is an itch.io asset facet and the number of assets carrying it.
 // It lives here rather than in internal/fetcher because internal/storage
 // caches the discovered tag universe and must not depend on the fetcher.

@@ -56,6 +56,10 @@ type Cache struct {
 	// and a "recently added" control over that data would order by nothing.
 	hasRecency bool
 
+	// stats is how much of itch.io's catalogue the loaded dataset covers, as
+	// measured by the crawl that produced it. Zero when unrecorded.
+	stats models.Stats
+
 	// hasPriceBands records whether the loaded index carries PriceUSD. Unlike
 	// hasRecency this cannot be read off the asset list, because the converted
 	// dollar value exists only in the index - so it is probed at load time by
@@ -118,6 +122,14 @@ func (c *Cache) HasRecency() bool {
 	c.cacheLock.RLock()
 	defer c.cacheLock.RUnlock()
 	return c.hasRecency
+}
+
+// Stats is how complete the served dataset is. The zero value means the crawl
+// that built it did not record the figure, and nothing should be claimed.
+func (c *Cache) Stats() models.Stats {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	return c.stats
 }
 
 // HasPriceBands reports whether the loaded index carries the converted dollar
@@ -280,6 +292,15 @@ func (c *Cache) doRefresh() error {
 		newRates = money.Fallback()
 	}
 
+	// Absent on an index published before crawls recorded their completeness.
+	// The zero value renders no coverage at all, which is the honest reading:
+	// this build does not know what fraction it holds.
+	newStats, err := storage.GetStats()
+	if err != nil {
+		logging.Info("No stored crawl stats (%v); coverage will not be shown", err)
+		newStats = models.Stats{}
+	}
+
 	// swap the new index/data in, holding the write lock only for the swap
 	// itself. The old index is intentionally not closed yet: if anything
 	// above failed we must keep serving it.
@@ -292,6 +313,7 @@ func (c *Cache) doRefresh() error {
 	c.rates = newRates
 	c.hasRecency = hasRecency
 	c.hasPriceBands = hasPriceBands
+	c.stats = newStats
 	c.dataUpdatedTime = newServerUpdateTime
 	c.cacheLock.Unlock()
 

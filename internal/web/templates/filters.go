@@ -101,6 +101,22 @@ func (f Filters) ShareURL() string {
 	return "/?" + v.Encode()
 }
 
+// PageURL is the shareable address of one page of results.
+//
+// It backs the href on the load-more control, so that with scripting off the
+// control is an ordinary link to the next page rather than a dead element. Page
+// 1 is left implicit, keeping the canonical URL of a filter unchanged.
+func (f Filters) PageURL(page int64) string {
+	v := f.Values()
+	if page > 1 {
+		v.Set("page", fmt.Sprint(page))
+	}
+	if len(v) == 0 {
+		return "/"
+	}
+	return "/?" + v.Encode()
+}
+
 // FragmentURL is the endpoint htmx fetches one page of results from.
 func (f Filters) FragmentURL(page int64) string {
 	v := f.Values()

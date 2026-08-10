@@ -191,11 +191,21 @@ templ AssetPage(f Filters, r Results) {
 		@AssetCard(f, asset, r.Rates)
 	}
 	if r.HasMore {
-		<div
+		// A button rather than the bare sentinel div this used to be. "revealed"
+		// only ever fires for someone scrolling a viewport, so keyboard and
+		// screen-reader users reached the bottom of page one and found nothing
+		// at all - the remaining results were unreachable rather than merely
+		// awkward. It still auto-loads on scroll; the click path is the floor.
+		//
+		// With scripting off htmx does nothing, so it degrades to a plain link
+		// to the next page.
+		<a
 			id="asset-load-trigger"
+			class="load-more"
+			href={ templ.SafeURL(f.PageURL(r.Page + 1)) }
 			hx-get={ f.FragmentURL(r.Page + 1) }
-			hx-trigger="revealed"
+			hx-trigger="revealed, click"
 			hx-swap="outerHTML"
-		></div>
+		>Load more results</a>
 	}
 }

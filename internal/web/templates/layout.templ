@@ -59,6 +59,11 @@ templ Layout(title string, content templ.Component) {
 			</script>
 		</head>
 		<body>
+			// Without this, reaching the results by keyboard means tabbing past
+			// the wordmark, four nav links and the search box on every single
+			// page load - and the filter links in the sidebar make that a long
+			// way to travel repeatedly.
+			<a class="skip-link" href="#results-region">Skip to results</a>
 			<main>
 				@content
 			</main>

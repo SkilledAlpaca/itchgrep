@@ -88,6 +88,10 @@ plain GET form for the same reason.
 
 A few behaviours are worth knowing:
 
+- **The masthead states its own coverage.** Alongside the index age, the site
+  reports what fraction of itch.io's catalogue it actually holds. A count with
+  no denominator invites the reading that it is everything, which turns "no
+  results" into false evidence that an asset does not exist.
 - **Tags combine with AND.** The sidebar counts tags carried by the *current*
   results, so it maps where the remaining matches are rather than describing the
   36 on screen. Each row also offers a `−` that excludes the tag instead.

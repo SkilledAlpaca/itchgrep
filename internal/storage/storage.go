@@ -34,6 +34,7 @@ const (
 	TagsFileName       = "tags.json"
 	CheckpointFileName = "checkpoint.json"
 	RatesFileName      = "rates.json"
+	StatsFileName      = "stats.json"
 
 	// IndexDirName is the published bleve index. stagingIndexDirName is where a
 	// new one is built; it lives alongside so that publishing is a rename
@@ -184,6 +185,20 @@ func GetRates() (money.Rates, error) {
 		return money.Rates{}, errors.New("storage: stored rates carry no usable table")
 	}
 	return r, nil
+}
+
+// PutStats records how much of the catalogue a crawl actually collected.
+func PutStats(s models.Stats) error { return writeJSON(StatsFileName, s) }
+
+// GetStats returns the completeness of the published dataset. A missing file is
+// normal on an index published before these were recorded, and the caller shows
+// no coverage at all rather than guessing at one.
+func GetStats() (models.Stats, error) {
+	var s models.Stats
+	if _, err := readJSON(StatsFileName, &s); err != nil {
+		return models.Stats{}, err
+	}
+	return s, nil
 }
 
 // Checkpoint is a partially-complete crawl, written periodically so that a run

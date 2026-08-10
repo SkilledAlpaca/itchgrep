@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
@@ -41,7 +42,7 @@ func TestAttributionSurvivesOnEveryPage(t *testing.T) {
 	// an obligation rather than a courtesy, and it is exactly the sort of thing
 	// a later redesign drops without noticing.
 	for name, html := range map[string]string{
-		"masthead": render(t, Masthead(Freshness{})),
+		"masthead": render(t, Masthead(Freshness{}, Coverage{})),
 		"about":    render(t, About()),
 	} {
 		assert.Contains(t, html, AuthorURL, name+" must credit the original author")
@@ -172,6 +173,48 @@ func TestRecencyIsOnlyOfferedWhenTheDataCarriesIt(t *testing.T) {
 	// support is worse than an ordering that is absent.
 	assert.NotContains(t, render(t, SortControl(Filters{}, false)), "Recently added")
 	assert.Contains(t, render(t, SortControl(Filters{}, true)), "Recently added")
+}
+
+func TestCoverageIsStatedWithItsDenominator(t *testing.T) {
+	// "96,903 assets" with nothing to compare it against reads as the whole
+	// catalogue, and a search that then finds nothing looks like proof the asset
+	// does not exist rather than that it was never indexed.
+	age := NewFreshness(time.Now().Add(-time.Hour), time.Now())
+	html := render(t, IndexAge(age, Coverage{Indexed: 96903, Catalogue: 108808}))
+
+	assert.Contains(t, html, "89% of the catalogue")
+	assert.Contains(t, html, "96,903 of 108,808 assets", "the rounded figure must stay checkable")
+}
+
+func TestCoverageIsSilentWhenItWasNeverMeasured(t *testing.T) {
+	// An index published before crawls recorded their completeness has no
+	// figure. Rendering 0% would report a total failure that did not happen.
+	age := NewFreshness(time.Now().Add(-time.Hour), time.Now())
+	html := render(t, IndexAge(age, Coverage{}))
+
+	assert.Contains(t, html, "index updated")
+	assert.NotContains(t, html, "of the catalogue")
+	assert.NotContains(t, html, "0%")
+}
+
+func TestCoverageNeverExceedsAHundredPercent(t *testing.T) {
+	// The catalogue total is read when a crawl starts and the indexed count when
+	// it ends, so a catalogue that shrinks in between can produce more than
+	// 100%. That is the measurement, not a discovery.
+	assert.Equal(t, 100, Coverage{Indexed: 110, Catalogue: 100}.Percent())
+}
+
+func TestMoreResultsAreReachableWithoutScrolling(t *testing.T) {
+	// "revealed" only fires for someone scrolling a viewport. As a bare sentinel
+	// div this left keyboard and screen-reader users unable to reach anything
+	// past the first page at all.
+	more := sampleResults()
+	more.HasMore = true
+	html := render(t, AssetPage(Filters{}.WithTag("2d"), more))
+
+	assert.Contains(t, html, "Load more results", "it must be operable, not just observable")
+	assert.Contains(t, html, `hx-trigger="revealed, click"`)
+	assert.Contains(t, html, `href="/?page=2&amp;tags=2d"`, "and a real link with scripting off")
 }
 
 func TestBoundedPriceFiltersNeedConvertedPrices(t *testing.T) {
