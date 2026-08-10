@@ -1,16 +1,15 @@
 <!-- LTeX: language=en-US -->
 
-<div align="center">
+# itchgrep
 
-# itchgrep.com
+Full-text search over the itch.io game-asset catalogue, running at
+[itchgrep.com](https://itchgrep.com/).
 
-### _Discover the Perfect Assets for Your Games_
-
-🔍 search through itch.io assets using text queries; find what you need without relying solely on tags.
-
-🌐 Visit [itchgrep.com](https://itchgrep.com/) to start exploring.
-
-</div>
+itch.io offers no text search scoped to assets — you browse by tag, and any one
+view stops at roughly 7,200 results, so whatever ranks below that is unreachable
+however you page. itchgrep indexes the catalogue in full and searches titles,
+descriptions, tags and authors at once, adding tag exclusion, unlimited tag
+combinations, cross-currency price comparison and live facet counts on top.
 
 ![Searching the itch.io asset catalogue by text](.github/screenshot-search.png)
 
@@ -18,7 +17,7 @@
 the asset authors, not to this project. Everything else is the real UI against a
 real index.</sub>
 
-### Credit
+## Credit
 
 itchgrep was created by [winterveil](https://github.com/wintermute-cell); the
 original lives at
@@ -27,10 +26,6 @@ repository is a fork, licensed as the original under GPL-3.0, and is not
 operated by the original author.
 
 ## What you can search
-
-itch.io has no text search scoped to the asset catalogue. `/game-assets` is
-*navigation* — you pick tags and page through what comes back. So this is a
-search against a browse tree, not one search against another.
 
 A query matches four fields at once, weighted by how much a hit in each is
 worth:
