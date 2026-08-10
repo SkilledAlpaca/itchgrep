@@ -8,6 +8,14 @@ package templates
 // someone who does not operate this site, and it points support at a person who
 // cannot answer for it. The credit below is the part worth keeping; the contact
 // details were theirs, not this deployment's.
+// AboutPage is the same prose as a whole document, for a visitor who arrived at
+// /about directly - a shared link, a new tab, or scripting off - rather than by
+// swapping it into a page that already has a masthead.
+templ AboutPage(age Freshness, coverage Coverage) {
+	@Masthead(age, coverage)
+	@About()
+}
+
 templ About() {
 	<div id="page-content" class="prose">
 		<h2>About</h2>
@@ -68,14 +76,14 @@ templ About() {
 			Their own games and assets are at
 			<a href="https://winterveil.itch.io/" target="_blank" rel="noopener">winterveil.itch.io</a>.
 		</p>
-		<h2>How this fork was built</h2>
+		<h2>Disclaimer</h2>
 		<p>
-			Disclosure: the changes in this fork — the crawler that reaches the
-			whole catalogue, the search and filtering, and this page — were
-			written with
+			This fork was created, updated and "enhanced" with
 			<a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a>,
-			Anthropic's coding agent, under human direction and review. The
-			original work it builds on is winterveil's and predates any of that.
+			Anthropic's coding agent. Almost everything added on top of
+			winterveil's original — the crawler that reaches the whole
+			catalogue, the search and filtering, this page — was written by it
+			under human direction and review.
 		</p>
 		<p>
 			It is said here because it is the kind of thing worth knowing

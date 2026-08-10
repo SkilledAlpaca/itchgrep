@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"itchgrep/internal/config"
 	"itchgrep/internal/fetcher"
 	"itchgrep/internal/logging"
 	"itchgrep/internal/storage"
@@ -23,20 +24,10 @@ import (
 // same storage.IndexDirName directory and corrupt the index.
 var scrapeInProgress atomic.Bool
 
-// defaultCrawlInterval is how long a published index is allowed to go without
-// being rebuilt.
-//
-// A week, because the two costs point in opposite directions: a full crawl
-// takes about six hours at the polite default rate, while the catalogue grows
-// by a few dozen assets in that time. Daily would spend a quarter of every day
-// re-fetching assets that have not changed, for a freshness nobody browsing an
-// asset catalogue would notice.
-const defaultCrawlInterval = 168 * time.Hour
-
 func main() {
 	logging.Init("", true)
 
-	go scheduleCrawls(crawlInterval())
+	go scheduleCrawls(config.CrawlInterval())
 
 	http.HandleFunc("/trigger-fetch", handleFetchTrigger)
 	port := fmt.Sprintf(":%s", os.Getenv("PORT")) // as per cloud run standard
@@ -55,19 +46,6 @@ func main() {
 // non-positive values, and zero is the one value that has to survive: it is how
 // an operator asks for the old behaviour, an index that only ever refreshes
 // when something calls /trigger-fetch.
-func crawlInterval() time.Duration {
-	v := os.Getenv("CRAWL_INTERVAL")
-	if v == "" {
-		return defaultCrawlInterval
-	}
-	parsed, err := time.ParseDuration(v)
-	if err != nil || parsed < 0 {
-		logging.Warning("Ignoring invalid CRAWL_INTERVAL=%q, using %v", v, defaultCrawlInterval)
-		return defaultCrawlInterval
-	}
-	return parsed
-}
-
 // scheduleCrawls rebuilds the index whenever the published one is older than
 // interval, and is what stops a long-running deployment freezing at whatever
 // the first crawl produced.
@@ -336,12 +314,12 @@ type crawlConfig struct {
 
 func loadCrawlConfig() crawlConfig {
 	cfg := crawlConfig{
-		coverageTarget:   envFloat("COVERAGE_TARGET", 0.95),
+		coverageTarget: envFloat("COVERAGE_TARGET", 0.95),
 		// Below what a full crawl actually reaches (~89%), or the run that
 		// proves the crawler works is the run that refuses to publish. Above
 		// what a stalled or truncated one produces, so a bad run still cannot
 		// replace a good index.
-		coverageFloor: envFloat("COVERAGE_FLOOR", 0.75),
+		coverageFloor:    envFloat("COVERAGE_FLOOR", 0.75),
 		minYield:         envFloat("SLICE_MIN_YIELD", 0.05),
 		tagCacheMaxAge:   envDuration("TAG_CACHE_MAX_AGE", 168*time.Hour),
 		checkpointMaxAge: envDuration("CHECKPOINT_MAX_AGE", 24*time.Hour),

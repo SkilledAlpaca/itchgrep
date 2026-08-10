@@ -149,6 +149,11 @@ services:
       DATA_DIR: /data
       PAGE_SIZE: "36"
       PORT: "8080"
+      # Read here only to say when the next rebuild is due. It must be the same
+      # value the dataservice schedules from, or the masthead announces a
+      # schedule nothing is running on - hence the shared variable rather than
+      # two literals.
+      CRAWL_INTERVAL: "${CRAWL_INTERVAL:-168h}"
       # Per-client request budget. A search is not cheap - three disjunctions,
       # two of them fuzzy, over ~86,000 documents - and nothing else in the
       # request path pushes back. Set RATE_LIMIT_RPS to 0 to disable.

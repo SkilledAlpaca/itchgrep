@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"itchgrep/internal/cache"
+	"itchgrep/internal/config"
 	"itchgrep/internal/logging"
 	"itchgrep/internal/web"
 	"net/http"
@@ -71,7 +72,11 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(logMiddleware)
 
-	h := web.NewHandler(cache)
+	// The same variable the dataservice schedules from, so the masthead can say
+	// when the next rebuild is due. Read here rather than guessed from the gap
+	// between publications: a hand-triggered crawl would otherwise teach the
+	// page a schedule nothing is running on.
+	h := web.NewHandler(cache, config.CrawlInterval())
 	// The stylesheet and htmx are embedded in the binary rather than pulled
 	// from a CDN, so the page renders with no outbound network access. Mounted
 	// before the rate limiter: these are static, cheap, and cached at the edge,

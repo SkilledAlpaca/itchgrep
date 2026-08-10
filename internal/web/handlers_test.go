@@ -20,7 +20,7 @@ import (
 // routing, parsing, caching and escaping contracts; result correctness belongs
 // to the cache package.
 func newTestRouter() (*chi.Mux, *handler) {
-	h := NewHandler(cache.NewCache(36))
+	h := NewHandler(cache.NewCache(36), 0)
 	r := chi.NewRouter()
 	r.Get("/", h.HandleIndex)
 	r.Get("/results", h.HandleResults)

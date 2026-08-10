@@ -182,22 +182,33 @@ a:hover {
   margin: 0;
 }
 
+/* These were faint uppercase text sitting under two lines of faint prose, which
+   made the only two navigable things in the header the least visible things in
+   it. Bordered targets instead: still quiet enough not to compete with the
+   search box, but unmistakably clickable. */
 .masthead-links {
   display: flex;
-  gap: 1.4rem;
+  gap: 0.8rem;
   justify-content: flex-end;
-  margin-top: 0.6rem;
+  margin-top: 1rem;
   font-size: 1.3rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .masthead-links a {
-  color: var(--text-dim);
+  padding: 0.5rem 1.2rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-weight: 600;
 }
 
-.masthead-links a:hover {
+.masthead-links a:hover,
+.masthead-links a:focus-visible {
+  border-color: var(--accent);
   color: var(--accent);
+  text-decoration: none;
 }
 
 /* The age of the index. Faint by default - it is a caveat, not a headline -
@@ -208,18 +219,17 @@ a:hover {
   color: var(--text-faint);
 }
 
-.index-age time {
+.index-age time,
+.index-coverage span {
   border-bottom: 1px dotted currentColor;
   cursor: help;
 }
 
-/* Its own line under the age, and quieter than it: how complete the index is
-   matters, but it is not the thing a visitor came to read. */
-.index-coverage {
-  margin: 0.2rem 0 0;
-  font-size: 1.2rem;
-  color: var(--text-faint);
-  cursor: help;
+/* Directly under the age and identical to it in every respect but spacing: all
+   three are the same kind of caveat about the same index. */
+.index-coverage,
+.index-next {
+  margin-top: 0.1rem;
 }
 
 .index-age.is-stale {

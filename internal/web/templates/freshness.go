@@ -24,10 +24,22 @@ type Freshness struct {
 	// nothing has loaded yet, which is not the same as "published at the epoch".
 	Updated time.Time
 	Age     time.Duration
+
+	// Due is when the next rebuild is expected, and Until how far off that is.
+	// Both are zero when scheduled rebuilds are switched off, which is a real
+	// configuration and not a failure to know.
+	Due   time.Time
+	Until time.Duration
 }
 
 // NewFreshness measures an index published at updated against the clock now.
-func NewFreshness(updated, now time.Time) Freshness {
+//
+// interval is how often the crawl rebuilds; zero means it only rebuilds when
+// triggered by hand, in which case no due date is claimed. The webserver is
+// told the same interval the dataservice runs on rather than inferring one
+// from the gap between publications, which would be a guess dressed up as a
+// schedule the first time a crawl was triggered manually.
+func NewFreshness(updated, now time.Time, interval time.Duration) Freshness {
 	if updated.IsZero() {
 		return Freshness{}
 	}
@@ -38,7 +50,56 @@ func NewFreshness(updated, now time.Time) Freshness {
 	if age < 0 {
 		age = 0
 	}
-	return Freshness{Updated: updated, Age: age}
+	f := Freshness{Updated: updated, Age: age}
+	if interval > 0 {
+		f.Due = updated.Add(interval)
+		f.Until = f.Due.Sub(now)
+	}
+	return f
+}
+
+// DueKnown reports whether there is a scheduled rebuild to announce.
+func (f Freshness) DueKnown() bool { return f.Known() && !f.Due.IsZero() }
+
+// DueLabel is when the next rebuild is expected, in the same coarse wording the
+// age uses.
+//
+// Hedged deliberately. The scheduler checks every quarter of an hour and a full
+// crawl then takes hours, so the index does not change at the moment this names
+// - it starts being rebuilt somewhere after it.
+func (f Freshness) DueLabel() string {
+	switch {
+	case !f.DueKnown():
+		return ""
+	case f.Until <= 0:
+		return "any time now"
+	case f.Until < time.Hour:
+		return "within the hour"
+	case f.Until < 2*time.Hour:
+		return "in about an hour"
+	case f.Until < 24*time.Hour:
+		return fmt.Sprintf("in about %d hours", int(f.Until.Hours()))
+	case f.Until < 48*time.Hour:
+		return "tomorrow"
+	default:
+		return fmt.Sprintf("in about %d days", int(f.Until.Hours()/24))
+	}
+}
+
+// DueAbsolute is the exact time the rebuild becomes due, shown on hover.
+func (f Freshness) DueAbsolute() string {
+	if !f.DueKnown() {
+		return ""
+	}
+	return f.Due.UTC().Format("2 January 2006, 15:04 UTC")
+}
+
+// DueDateTime is the machine-readable form for the <time> element's attribute.
+func (f Freshness) DueDateTime() string {
+	if !f.DueKnown() {
+		return ""
+	}
+	return f.Due.UTC().Format(time.RFC3339)
 }
 
 // Known reports whether there is a published dataset to describe. False while

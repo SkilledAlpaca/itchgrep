@@ -11,11 +11,13 @@ however you page. itchgrep indexes the catalogue in full and searches titles,
 descriptions, tags and authors at once, adding tag exclusion, unlimited tag
 combinations, cross-currency price comparison and live facet counts on top.
 
-![Searching the itch.io asset catalogue by text](.github/screenshot-search.png)
+![Searching the itch.io asset catalogue by text, shown in the light theme on the
+left of the diagonal and the dark theme on the right](.github/screenshot-search.png)
 
-<sub>Cover art and creator names are blurred in these screenshots; they belong to
-the asset authors, not to this project. Everything else is the real UI against a
-real index.</sub>
+<sub>One page, split down the diagonal: light theme left, dark theme right. The
+site follows whichever your system asks for. Cover art and creator names are
+blurred in these screenshots; they belong to the asset authors, not to this
+project. Everything else is the real UI against a real index.</sub>
 
 ## Credit
 
@@ -100,10 +102,12 @@ plain GET form for the same reason.
 
 A few behaviours are worth knowing:
 
-- **The masthead states its own coverage.** Alongside the index age, the site
-  reports what fraction of itch.io's catalogue it actually holds. A count with
-  no denominator invites the reading that it is everything, which turns "no
-  results" into false evidence that an asset does not exist.
+- **The masthead states its own limits.** Under the wordmark: how old the index
+  is, what fraction of itch.io's catalogue it holds, and when the next rebuild
+  is due. A count with no denominator invites the reading that it is everything,
+  which turns "no results" into false evidence that an asset does not exist; an
+  age with no schedule beside it reads as neglect rather than as routine. Exact
+  times are shown on hover in the reader's own timezone.
 - **Tags combine with AND.** The sidebar counts tags carried by the *current*
   results, so it maps where the remaining matches are rather than describing the
   36 on screen. Each row also offers a `−` that excludes the tag instead.
@@ -192,7 +196,7 @@ cp .env.example .env      # `copy` on Windows
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CRAWL_INTERVAL` | `168h` | Rebuilds the index whenever the published one is older than this. `0` disables it, leaving `/trigger-fetch` as the only way to refresh. |
+| `CRAWL_INTERVAL` | `168h` | Rebuilds the index whenever the published one is older than this. `0` disables it, leaving `/trigger-fetch` as the only way to refresh. Read by both services — the webserver uses it to say when the next update is due. |
 | `SCRAPE_RPS` | `2` | Outbound requests/second, retries included. Fixed — the fetcher never speeds up or slows down on its own. |
 | `SCRAPE_MAX_PAGES` | unset | Caps total pages across every view, for smoke-testing the whole pipeline. Also disarms `COVERAGE_FLOOR`. |
 | `COVERAGE_TARGET` | `0.95` | Stops the crawl once that fraction is collected. Never triggers in practice. |

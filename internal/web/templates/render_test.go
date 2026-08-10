@@ -179,13 +179,14 @@ func TestCoverageIsStatedWithItsDenominator(t *testing.T) {
 	// "96,903 assets" with nothing to compare it against reads as the whole
 	// catalogue, and a search that then finds nothing looks like proof the asset
 	// does not exist rather than that it was never indexed.
-	age := NewFreshness(time.Now().Add(-time.Hour), time.Now())
+	age := NewFreshness(time.Now().Add(-time.Hour), time.Now(), 0)
 	html := render(t, IndexAge(age, Coverage{Indexed: 96903, Catalogue: 108808}))
 
 	assert.Contains(t, html, "89% of catalogue indexable")
 	// On its own line, not trailing the age: the two say different kinds of
-	// thing, and run together they read as one sentence about neither.
-	assert.Contains(t, html, `<p class="index-coverage"`)
+	// thing, and run together they read as one sentence about neither. Styled
+	// as the age is, because they are the same kind of caveat.
+	assert.Contains(t, html, `<p class="index-age index-coverage">`)
 	// The exact counts stay reachable on hover rather than in the line itself.
 	assert.Contains(t, html, "96,903 of 108,808 assets")
 	assert.NotContains(t, html, "visually-hidden", "the detail is not repeated inline")
@@ -194,7 +195,7 @@ func TestCoverageIsStatedWithItsDenominator(t *testing.T) {
 func TestCoverageIsSilentWhenItWasNeverMeasured(t *testing.T) {
 	// An index published before crawls recorded their completeness has no
 	// figure. Rendering 0% would report a total failure that did not happen.
-	age := NewFreshness(time.Now().Add(-time.Hour), time.Now())
+	age := NewFreshness(time.Now().Add(-time.Hour), time.Now(), 0)
 	html := render(t, IndexAge(age, Coverage{}))
 
 	assert.Contains(t, html, "index updated")

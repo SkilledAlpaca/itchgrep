@@ -38,11 +38,17 @@ const maxAuthorLen = 120
 
 type handler struct {
 	cache *cache.Cache
+
+	// crawlInterval is how often the dataservice rebuilds the index, used only
+	// to say when the next rebuild is due. Zero when rebuilds are triggered by
+	// hand, in which case the page says nothing about a next one.
+	crawlInterval time.Duration
 }
 
-func NewHandler(cache *cache.Cache) *handler {
+func NewHandler(cache *cache.Cache, crawlInterval time.Duration) *handler {
 	return &handler{
-		cache: cache,
+		cache:         cache,
+		crawlInterval: crawlInterval,
 	}
 }
 
@@ -59,7 +65,7 @@ func (h *handler) cacheable(w http.ResponseWriter) {
 // line in the masthead. Read per request rather than at startup, so the line
 // updates itself when a crawl publishes underneath a long-running process.
 func (h *handler) freshness() templates.Freshness {
-	return templates.NewFreshness(h.cache.DataUpdatedTime(), time.Now())
+	return templates.NewFreshness(h.cache.DataUpdatedTime(), time.Now(), h.crawlInterval)
 }
 
 func (h *handler) coverage() templates.Coverage {
@@ -350,6 +356,12 @@ func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
 
 func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	h.cacheable(w)
-	component := templates.About()
-	component.Render(r.Context(), w)
+	// htmx swaps this into a page that already has a masthead and a stylesheet.
+	// A direct visit has neither, and would otherwise arrive as unstyled prose
+	// with no way back to the search.
+	if r.Header.Get("HX-Request") == "" {
+		templates.Layout("About — ITCHGREP", templates.AboutPage(h.freshness(), h.coverage())).Render(r.Context(), w)
+		return
+	}
+	templates.About().Render(r.Context(), w)
 }

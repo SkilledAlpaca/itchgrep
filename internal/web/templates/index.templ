@@ -16,13 +16,26 @@ templ IndexAge(f Freshness, c Coverage) {
 			}
 		</p>
 		if c.Known() {
-			// Its own line rather than trailing the age. The two say different
-			// kinds of thing - how recent, and how complete - and running them
-			// together read as one long sentence about neither.
+			// Its own line directly under the age, styled identically to it.
+			// The two say different kinds of thing - how recent, and how
+			// complete - and running them together read as one long sentence
+			// about neither, but they are the same class of caveat and should
+			// not look like two different kinds of remark.
 			//
-			// The exact counts stay on hover, so the rounded figure is
-			// checkable without spending a line on it.
-			<p class="index-coverage" title={ c.Detail() }>{ c.Label() }</p>
+			// The exact counts stay on hover, marked by the same dotted
+			// underline the age uses, so the affordance is learned once.
+			<p class="index-age index-coverage">
+				<span title={ c.Detail() }>{ c.Label() }</span>
+			</p>
+		}
+		if f.DueKnown() {
+			// What the age line leaves open: whether anyone is coming back.
+			// "index updated 6 days ago" reads as neglect on its own, and as
+			// routine next to the schedule that produced it.
+			<p class="index-age index-next">
+				next update
+				<time datetime={ f.DueDateTime() } title={ f.DueAbsolute() }>{ f.DueLabel() }</time>
+			</p>
 		}
 	}
 }
@@ -46,10 +59,13 @@ templ Masthead(age Freshness, coverage Coverage) {
 				originally created by
 				<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }</a>.
 			</p>
+			// Two links, not three. The original author's repository is one
+			// click further in, on the About page beside the credit that
+			// explains what it is - out here it was a third equal-weight
+			// destination competing with the two that concern this site.
 			<nav class="masthead-links">
-				<a href="#" hx-get="/about" hx-swap="outerHTML" hx-target="#page-content">About</a>
+				<a href="/about" hx-get="/about" hx-swap="outerHTML" hx-target="#page-content">About</a>
 				<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">Source</a>
-				<a href={ templ.SafeURL(UpstreamURL) } target="_blank" rel="noopener">Original</a>
 			</nav>
 		</div>
 	</header>
