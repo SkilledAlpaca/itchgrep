@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"itchgrep/internal/logging"
@@ -262,9 +263,11 @@ func (c *Cache) doRefresh() error {
 	fetchTime = time.Since(preFetchTime)
 	logging.Info("Opened index %s in %v", indexPath, fetchTime)
 
-	// sort newData by popularity (smaller numbers first)
+	// sort newData by popularity (smaller numbers first). cmp.Compare rather
+	// than a subtraction cast to int: the difference of two int64s does not fit
+	// an int on a 32-bit build, where it would wrap and scramble the order.
 	slices.SortFunc(newData, func(i, j models.Asset) int {
-		return int(i.InvPopularity - j.InvPopularity)
+		return cmp.Compare(i.InvPopularity, j.InvPopularity)
 	})
 
 	newDataMap := make(map[string]models.Asset, len(newData)) // we also save it as a map, so we can easily match searches from the index

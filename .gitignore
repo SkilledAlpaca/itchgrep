@@ -4,7 +4,11 @@
 # without being silently ignored.
 internal/web/templates/*_templ.go
 
-# this directory is used to persist the data for the local GCS instance
+# Everything a local run writes: the crawl's output directory (DATA_DIR
+# defaults to ./data), the smoke test's scratch copy, and the leftovers of the
+# fake-GCS setup this project used to run on.
+/data/
+/data-smoke/
 local_data/
 
 # local docker compose overrides (SCRAPE_RPS, SCRAPE_MAX_PAGES, ...)

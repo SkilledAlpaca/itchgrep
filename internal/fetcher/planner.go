@@ -356,5 +356,20 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 	// PagesToFetch round down to a single page, which silently reduces the
 	// global popularity ranking to one page's worth and leaves every other
 	// asset ranked only within whichever slice happened to find it first.
-	return append([]Slice{{Count: ceiling}}, out...)
+	//
+	// The untagged newest view follows it, and is the only source of a recency
+	// rank there is: Slice.IsNewestRoot is what makes the crawl record one, and
+	// it is true for this slice and no other. Without it planned, every asset
+	// ends up with InvRecency 0, the webserver reads that as "this dataset
+	// cannot be ordered by recency", and the sort control hides itself - the
+	// whole feature silently absent with nothing anywhere reporting a fault.
+	//
+	// PageInFull because it must not be abandoned early. Its first pages are
+	// the newest assets, which the tag views have already collected, so the
+	// yield heuristic reads near-zero from the start and would kill it before
+	// it ranked anything.
+	return append([]Slice{
+		{Count: ceiling},
+		{Sort: SortNewest, Count: ceiling, PageInFull: true},
+	}, out...)
 }

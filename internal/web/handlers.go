@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // fragmentMaxAge is how long a rendered result page may be reused.
@@ -313,12 +314,21 @@ func normaliseTag(tag string) string {
 
 // clampQuery bounds an incoming query so a pathological one cannot be turned
 // into an expensive index pass.
+//
+// Cut on a rune boundary, not a byte one. itch.io's catalogue is searched in
+// every script there is, and slicing a multi-byte character in half produces
+// invalid UTF-8 that then travels into the query, the page title and the value
+// of the search box.
 func clampQuery(q string) string {
 	q = strings.TrimSpace(q)
-	if len(q) > maxQueryLen {
-		return q[:maxQueryLen]
+	if len(q) <= maxQueryLen {
+		return q
 	}
-	return q
+	cut := maxQueryLen
+	for cut > 0 && !utf8.RuneStart(q[cut]) {
+		cut--
+	}
+	return q[:cut]
 }
 
 func pageTitle(f templates.Filters) string {

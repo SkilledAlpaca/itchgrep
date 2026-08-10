@@ -40,12 +40,6 @@ func main() {
 	}
 }
 
-// crawlInterval reads CRAWL_INTERVAL, where zero means "never on my own".
-//
-// Parsed here rather than through envDuration because that helper rejects
-// non-positive values, and zero is the one value that has to survive: it is how
-// an operator asks for the old behaviour, an index that only ever refreshes
-// when something calls /trigger-fetch.
 // scheduleCrawls rebuilds the index whenever the published one is older than
 // interval, and is what stops a long-running deployment freezing at whatever
 // the first crawl produced.
@@ -244,24 +238,40 @@ func fetchAndStoreAssets() {
 	}
 
 	// indexing the assets in batches
+	//
+	// Every write is checked, including the batch flushes and the close. They
+	// are what actually put documents on disk, so a failure ignored here does
+	// not produce a visible error - it produces a smaller index that publishes
+	// successfully and replaces a complete one, and the only symptom is assets
+	// that stop being findable.
 	b := newIndex.NewBatch()
 	assetsIndexed := 0
 	for i, asset := range smolAssets {
-		assetsIndexed += 1
-		err := b.Index(asset.GameId, asset)
-		if err != nil {
+		if err := b.Index(asset.GameId, asset); err != nil {
 			newIndex.Close() // clean up the failed new index
 			logging.Error("Failed to index asset, cancelling indexing: %v", err)
 			return
 		}
+		assetsIndexed++
 		if i%1500 == 0 && i != 0 { // we index in batches of 1500
 			logging.Info("Batching assets: %d/%d", i, len(smolAssets))
-			newIndex.Batch(b)
+			if err := newIndex.Batch(b); err != nil {
+				newIndex.Close()
+				logging.Error("Failed to write batch at asset %d, cancelling indexing: %v", i, err)
+				return
+			}
 			b.Reset()
 		}
 	}
-	newIndex.Batch(b) // batch the remaining assets into the index
-	newIndex.Close()  // close the index
+	if err := newIndex.Batch(b); err != nil { // the remainder
+		newIndex.Close()
+		logging.Error("Failed to write the final batch, cancelling indexing: %v", err)
+		return
+	}
+	if err := newIndex.Close(); err != nil {
+		logging.Error("Failed to close the new index, refusing to publish it: %v", err)
+		return
+	}
 	logging.Info("Successfully indexed %d assets", assetsIndexed)
 
 	// PUBLISHING

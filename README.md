@@ -117,8 +117,9 @@ A few behaviours are worth knowing:
   separately and shown as "Name your price", because an author asking for a
   voluntary payment is doing something different from giving the asset away.
 - **"Recently added" is not a sort by date.** itch.io's markup carries no
-  publication date; this orders by position in itch.io's newest view, which only
-  reaches ~7,200 assets. The control is hidden when the index carries no ranks.
+  publication date; this orders by position in itch.io's newest view, which the
+  crawl visits for that purpose alone and which only reaches ~7,200 assets. The
+  control is hidden when the index carries no ranks.
 - **Bounded price filters need converted prices.** `under-5` and `under-20` are
   ranges over a dollar value baked in at index time. They are hidden on an index
   built without one, rather than returning an empty page.

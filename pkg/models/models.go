@@ -5,9 +5,8 @@ import (
 	"strings"
 )
 
-// Asset represents a game asset.
-// Assets are serialised to JSON and stored as a single object in the
-// Google Cloud Storage bucket named by storage.BucketName.
+// Asset represents a game asset. The whole collection is serialised to one
+// JSON file in the shared data directory; see internal/storage.
 type Asset struct {
 	GameId      string
 	Title       string

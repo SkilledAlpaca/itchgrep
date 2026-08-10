@@ -172,8 +172,24 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 		Total: int64(searchResult.Total),
 		Tags:  facetTags(searchResult.Facets["tags"], opts.Tags),
 	}
+	// A hit with no asset behind it is dropped rather than rendered. The index
+	// and the asset list are published together and loaded together, but not
+	// atomically with respect to each other: a crawl that publishes between
+	// this refresh reading assets.json and opening the index leaves the two
+	// describing slightly different datasets. The map lookup would then return
+	// a zero Asset, which renders as a card with no title, no link and no
+	// image - worse than one fewer result on the page.
+	missing := 0
 	for _, hit := range searchResult.Hits {
-		results.Assets = append(results.Assets, c.dataMap[hit.ID])
+		asset, ok := c.dataMap[hit.ID]
+		if !ok {
+			missing++
+			continue
+		}
+		results.Assets = append(results.Assets, asset)
+	}
+	if missing > 0 {
+		logging.Warning("Dropped %d hit(s) with no asset behind them; the index and the asset list disagree", missing)
 	}
 
 	logging.Info("Got %d hits for %s", searchResult.Total, describe(opts))

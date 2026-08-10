@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"itchgrep/internal/cache"
 	"itchgrep/pkg/models"
@@ -25,6 +26,8 @@ func newTestRouter() (*chi.Mux, *handler) {
 	r.Get("/", h.HandleIndex)
 	r.Get("/results", h.HandleResults)
 	r.Get("/about", h.HandleAbout)
+	r.Head("/", h.HandleIndex)
+	r.Head("/about", h.HandleAbout)
 	r.NotFound(Handle404)
 	return r, h
 }
@@ -181,4 +184,31 @@ func TestStaticAssetsAreServedAndCached(t *testing.T) {
 		assert.NotEmpty(t, w.Body.Bytes())
 		assert.Contains(t, w.Header().Get("Cache-Control"), "max-age")
 	}
+}
+
+func TestAnOverlongQueryIsCutOnARuneBoundary(t *testing.T) {
+	// itch.io is searched in every script there is. Slicing at byte 200 lands
+	// mid-character for most of them, and the invalid UTF-8 then travels into
+	// the query, the page title and the value of the search box.
+	long := strings.Repeat("あ", 300) // 3 bytes each, so byte 200 is mid-rune
+
+	got := clampQuery(long)
+
+	assert.True(t, utf8.ValidString(got), "clamped query must still be valid UTF-8")
+	assert.LessOrEqual(t, len(got), maxQueryLen)
+	assert.Equal(t, strings.Repeat("あ", 66), got)
+}
+
+func TestHeadIsAnsweredRatherThanRejected(t *testing.T) {
+	// Uptime monitors, link checkers and preview fetchers send HEAD first. chi
+	// routes by method, so a GET-only registration answers them 405 - which
+	// reads as "the site is down" to everything that asks that way.
+	r, _ := newTestRouter()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodHead, "/", nil))
+
+	// The same status a GET gets: this cache has never loaded, so both are 503.
+	// The point is that the method is routed at all, not what it answers.
+	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)
+	assert.Equal(t, get(t, r, "/").Code, w.Code)
 }

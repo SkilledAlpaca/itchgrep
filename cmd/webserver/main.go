@@ -15,10 +15,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// initialCacheLoadRetryInterval is how often we retry the initial cache
-// load in the background if it fails at startup, so a transient/unreachable
-// bucket doesn't permanently degrade the server (it just serves 503 until
-// the load succeeds).
+// initialCacheLoadRetryInterval is how often we retry the initial cache load in
+// the background if it fails at startup. On a first run there is nothing to load
+// until the crawl publishes hours later, so startup must not depend on it: the
+// server comes up, answers 503, and starts serving the moment the data lands.
 const initialCacheLoadRetryInterval = 15 * time.Second
 
 func logMiddleware(next http.Handler) http.Handler {
@@ -88,6 +88,12 @@ func main() {
 		r.Get("/", h.HandleIndex)
 		r.Get("/results", h.HandleResults)
 		r.Get("/about", h.HandleAbout)
+		// chi routes by method, so without this a HEAD is a 405 - and HEAD is
+		// what uptime monitors, link checkers and preview fetchers send first.
+		// net/http discards the body of a HEAD response itself, so the same
+		// handler serves both and the headers stay identical.
+		r.Head("/", h.HandleIndex)
+		r.Head("/about", h.HandleAbout)
 	})
 	r.NotFound(web.Handle404)
 

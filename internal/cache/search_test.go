@@ -400,3 +400,22 @@ func TestAnUnclosedQuoteIsOrdinaryText(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, ids(got))
 }
+
+func TestAHitWithNoAssetBehindItIsDroppedNotRendered(t *testing.T) {
+	// The index and the asset list are published together but loaded
+	// independently, so a crawl publishing between the two reads leaves them
+	// describing slightly different datasets. A zero-value Asset renders as a
+	// card with no title, no link and no thumbnail; one fewer result is better.
+	c := newLoadedCache(t, 36)
+	delete(c.dataMap, "1")
+
+	got, err := c.Find(SearchOptions{Query: "pixel art", Page: 1})
+
+	require.NoError(t, err)
+	assert.NotContains(t, ids(got), "1")
+	for _, a := range got.Assets {
+		assert.NotEmpty(t, a.GameId, "no placeholder card may reach the page")
+	}
+	assert.EqualValues(t, 3, got.Total, "the count still reflects what the index matched")
+	assert.Len(t, got.Assets, 2, "one hit had nothing behind it")
+}

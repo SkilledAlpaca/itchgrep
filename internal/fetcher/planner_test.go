@@ -97,6 +97,26 @@ func TestPlanSlicesLeadsWithTheRootView(t *testing.T) {
 	assert.Equal(t, "root", got[0].Label())
 }
 
+func TestPlanSlicesIncludesTheOnlyViewThatCanRankRecency(t *testing.T) {
+	// Slice.IsNewestRoot is true for exactly one view, and the crawl records a
+	// recency rank only from that view. Unplanned, every asset keeps InvRecency
+	// 0, the webserver reads the dataset as unrankable and hides the "recently
+	// added" ordering - a whole feature absent with nothing reporting a fault.
+	got := PlanSlices([]models.Tag{bigTag("pixel-art"), smallTag("fonts")}, testItemsPerPage)
+
+	newest := 0
+	for _, s := range got {
+		if s.IsNewestRoot() {
+			newest++
+			assert.True(t, s.PageInFull,
+				"its first pages are assets the tag views already hold, so the yield heuristic would abandon it before it ranked anything")
+			assert.EqualValues(t, MaxPagesPerView, s.PagesToFetch(testItemsPerPage),
+				"the whole point is depth: a short count would rank only the first page")
+		}
+	}
+	assert.Equal(t, 1, newest, "exactly one untagged newest view")
+}
+
 func TestPlanSlicesOrdersRemainderLargestFirst(t *testing.T) {
 	tags := []models.Tag{
 		{Slug: "small", Count: 100},
@@ -105,9 +125,9 @@ func TestPlanSlicesOrdersRemainderLargestFirst(t *testing.T) {
 	}
 
 	got := PlanSlices(tags, testItemsPerPage)
-	require.Len(t, got, 1+len(allFilters)+3) // root + filter-only views + three small tags
+	require.Len(t, got, 2+len(allFilters)+3) // root + newest root + filter-only views + three small tags
 
-	rest := got[1:]
+	rest := got[2:]
 	for i := 1; i < len(rest); i++ {
 		assert.GreaterOrEqual(t, rest[i-1].Count, rest[i].Count,
 			"slices must run largest-first so the coverage target is reached soonest")
@@ -122,8 +142,9 @@ func TestPlanSlicesTerminatesWhenEveryTagIsBig(t *testing.T) {
 
 	got := PlanSlices(tags, testItemsPerPage)
 
-	// 5 tags x (4 sorts + every filter) + C(5,2) pairs + filter-only views + root
-	assert.Len(t, got, 5*(4+len(allFilters))+10+len(allFilters)+1)
+	// 5 tags x (4 sorts + every filter) + C(5,2) pairs + filter-only views
+	// + root + newest root
+	assert.Len(t, got, 5*(4+len(allFilters))+10+len(allFilters)+2)
 }
 
 func TestPlanSlicesIgnoresEmptySlugs(t *testing.T) {
@@ -337,6 +358,9 @@ func TestFilteredBigTagViewsArePagedInFull(t *testing.T) {
 		case s.Filter != FilterNone && len(s.Tags) > 0:
 			filtered++
 			assert.True(t, s.PageInFull, "filtered view %q reaches assets nothing else does", s.Label())
+		case s.IsNewestRoot():
+			// Exempt: it is planned to collect recency ranks rather than to
+			// cover assets, and ranking only the first pages would be pointless.
 		case s.Sort != SortDefault:
 			sorted++
 			assert.False(t, s.PageInFull, "sort view %q re-orders a covered set", s.Label())
