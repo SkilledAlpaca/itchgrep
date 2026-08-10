@@ -19,10 +19,41 @@ templ About() {
 		</p>
 		<p>
 			A crawler walks the public browse pages a couple of requests per
-			second, builds a full-text index over roughly 100,000 assets, and
+			second, builds a full-text index over roughly 97,000 assets, and
 			this site queries it. Nothing is mirrored: every result links
 			straight back to the asset's own itch.io page, and every purchase,
 			download and page view still happens there.
+		</p>
+		<h2>What gets searched</h2>
+		<p>
+			A query matches against four things at once, weighted by how much a
+			hit in each is worth: an asset's <strong>tags</strong>, its
+			<strong>title</strong>, its <strong>short description</strong> and
+			its <strong>author</strong>. The description is the interesting one
+			— itch.io shows that line but never searches it.
+		</p>
+		<p>
+			Spelling is forgiven. Every query runs an exact pass and two
+			progressively fuzzier ones, so <em>tilset</em> still finds tilesets,
+			while the correct spelling ranks first. Put quotation marks around
+			something and it is matched as an exact phrase instead.
+		</p>
+		<h2>What itch.io cannot do</h2>
+		<p>
+			itch.io serves at most 200 pages of any one browse view — about
+			7,200 assets — so a popular tag has a floor you cannot page below.
+			It accepts two tags at most, offers no way to <em>exclude</em> a
+			tag, and refuses most combinations of a sort with a filter. Prices
+			are quoted in whichever currency the seller picked, so "under $5"
+			is not a question it can answer.
+		</p>
+		<p>
+			Here, tags combine without limit, any tag can be excluded, every
+			filter stacks with every other, the sidebar counts tags within your
+			current results, and prices are normalised to one currency so they
+			can be compared and bounded. What itch.io has that this does not is
+			authority: it is current to the second, and it knows about
+			everything the last crawl missed.
 		</p>
 		<h2>Credit</h2>
 		<p>

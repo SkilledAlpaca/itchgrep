@@ -12,6 +12,12 @@
 
 </div>
 
+![Searching the itch.io asset catalogue by text](.github/screenshot-search.png)
+
+<sub>Cover art and creator names are blurred in these screenshots; they belong to
+the asset authors, not to this project. Everything else is the real UI against a
+real index.</sub>
+
 <div align="left">
 
 ### Credit
@@ -36,6 +42,69 @@ These tools and technologies were chosen with care to provide a seamless and eff
 
 ## 🗼 Architecture
 ![An architectural diagram of itchgrep.com](.github/itchgrep-architecture-diagram.png)
+
+## What you can search, and why it differs from itch.io
+
+itch.io has no text search scoped to the asset catalogue. `/game-assets` is
+*navigation*: you pick tags and page through what comes back. The site-wide
+search box is a different thing — it spans games, devlogs, collections and
+users, it is not restricted to assets, and it is `Disallowed` in itch.io's
+`robots.txt`, so this project does not touch it.
+
+So the comparison is not "our search versus their search". It is a search
+against a browse tree.
+
+### What the index holds per asset
+
+Four fields carry free text, and a query hits all four at once, weighted by how
+much a match in each is worth:
+
+| Field | Weight | Why |
+| --- | --- | --- |
+| `Tags` | ×4 | Curated classification — a hit here is a deliberate label, not a coincidence of prose |
+| `Title` | ×3 | What the author chose to call it |
+| `Description` | ×2 | itch.io's one-line blurb; **not searchable on itch.io at all** |
+| `Author` | ×1 | So a remembered creator name finds their work |
+
+Every query runs three passes over those fields and unions the results: exact
+(×6), fuzzy with a 4-character prefix (×4), and fuzzy with a 2-character prefix
+(×2). That is what makes `tilset` find tilesets and `paralax` find parallax
+backgrounds, while still ranking the correct spelling first. Quoted text is
+pulled out and matched as an adjacent phrase instead, because someone who typed
+quotation marks has said the word order matters.
+
+Seven more fields exist to filter, sort and count rather than to be searched —
+tag slugs and author keys as indivisible keywords (so `pixel-art` is one term,
+not `pixel` + `art`), a free/paid flag, a dollar-normalised price, itch.io's
+popularity rank, and its newest-view rank.
+
+### What that buys you over browsing itch.io
+
+- **No 200-page wall.** itch.io serves at most 200 pages per browse view — about
+  7,200 assets — so a popular tag has a hard floor you simply cannot page below.
+  Every indexed asset here is reachable by query.
+- **Unlimited tags, combined with AND.** itch.io accepts two; a third is a
+  `403`.
+- **Tag exclusion.** `?not=3d` has no equivalent on itch.io — there is no "NOT
+  tag" facet in its URL grammar at all.
+- **Filters compose.** On itch.io a sort plus two tags is a `403`, and a sort
+  plus a price filter is a `403`. Here sort, tags, exclusions, price, author and
+  currency are independent and stack freely.
+- **Prices compare across currencies.** Sellers price in whatever currency they
+  chose, so itch.io cannot answer "under $5" across them. Each asset carries a
+  dollar value computed at index time, which is what makes `under-5` and
+  cheapest-first mean anything.
+- **Live facet counts.** The sidebar counts tags *within your current results*,
+  so it tells you where the remaining matches are before you click. itch.io
+  shows no counts.
+- **Description text is searchable.** itch.io's browse pages display the blurb
+  but never match against it.
+
+What itch.io does better, and this cannot: it is authoritative and current to
+the second, it knows about assets published since the last crawl, and it can
+show anything the crawl did not reach.
+
+![Tag filters, exclusions and live facet counts](.github/screenshot-filters.png)
 
 ## Searching and filtering
 
@@ -76,6 +145,8 @@ chose, so `under-5` and `sort=price` work on a dollar value converted at index
 time rather than on the raw number. `?cur=XXX` restates the displayed prices in
 one currency, marked `≈` with the source and date on hover — see *Exchange
 rates* below.
+
+![An applied tag, an excluded tag, and prices converted to euros](.github/screenshot-currency.png)
 
 **"Recently added" is not a sort by date.** itch.io's listing markup carries no
 publication date. What it does have is a newest-first browse view, and the crawl
@@ -133,7 +204,7 @@ itch.io, and brings up the `webserver` on
 scrape.
 
 > The first run crawls the whole asset catalogue (~108,000 assets) at a
-> deliberately polite 2 requests/second, so expect an hour or more. Progress is
+> deliberately polite 2 requests/second, so expect around six hours. Progress is
 > visible in the `dataservice` logs. The result is kept in the `itchgrep-data`
 > docker volume, so subsequent `docker compose up` runs skip the crawl and come
 > up immediately.
@@ -217,9 +288,10 @@ own — the only shape that can reach an asset carrying no tag at all.
   deliberately partial, it also disarms `COVERAGE_FLOOR` and shrinks tag
   discovery — otherwise the run would refuse to publish, and would spend longer
   discovering tags than fetching assets.
-- A full crawl reaches about **79.5%** of the catalogue (measured: 86,414 of
-  108,697, over 9,878 pages in ~90 minutes). The remainder is assets no tag view
-  reaches at all, because they carry no tag in the discovered vocabulary.
+- A full crawl reaches about **89%** of the catalogue (measured: 96,903 of
+  108,808, over 40,465 pages in ~6 hours, with zero rate-limit responses). The
+  remainder is assets that rank below the 200-page cutoff in *every* view they
+  appear in, so no reachable URL exposes them.
   Applying `free`/`store` — a *true* partition — to every oversized tag moved
   coverage by 0.2 points, which is what rules out the more obvious explanation
   that the residual is assets whose every tag is too big to page through.
@@ -234,7 +306,7 @@ own — the only shape that can reach an asset carrying no tag at all.
   the run shorter and the index smaller. `COVERAGE_FLOOR` (default `0.70`)
   refuses to publish below that, leaving the previous index in place so a
   stalled run cannot replace a good index with a worse one. Keep the floor
-  below ~79% or it will reject every otherwise-healthy run.
+  below ~89% or it will reject every otherwise-healthy run.
 - `SLICE_MIN_YIELD` (default `0.05`) abandons a view once it stops yielding new
   assets. Assets appear in ~5 views each, so without it the overlap dominates
   the crawl.
@@ -352,8 +424,8 @@ mint a new identity per request.
 
 A Worker is a V8 isolate: no filesystem, ~128 MB of memory, and a bundle
 measured in single-digit megabytes. This webserver is a Go binary that memory
-maps a bleve index — **563 MB at 38% of the catalogue, so roughly 1.2 GB at full
-coverage** — and holds the asset list in RAM besides. Those are not numbers that
+maps a bleve index — **739 MB at 89% of the catalogue** — and holds the asset
+list in RAM besides. Those are not numbers that
 shrink with tuning; they are three orders of magnitude apart, and Go compiled to
 WASM does not change any of it.
 
@@ -385,7 +457,7 @@ by `Referer`, which would break every thumbnail at once.
 
 - The webserver holds the whole dataset in memory and both the old and new
   index are open during a swap, so peak memory is roughly double steady state.
-  With a ~600 MB index, give the container real headroom.
+  With a ~740 MB index, give the container real headroom.
 - You would be republishing scraped itch.io metadata. itchgrep ran publicly for
   years, so there is precedent, but personal use and a public service are
   different postures. Nothing is mirrored — every result links back to itch.io —
