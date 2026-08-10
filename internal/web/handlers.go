@@ -166,8 +166,9 @@ func (h *handler) find(filters templates.Filters, page int64) (templates.Results
 		Total:      found.Total,
 		Tags:       found.Tags,
 		Page:       page,
-		Rates:      h.cache.Rates(),
-		HasRecency: h.cache.HasRecency(),
+		Rates:         h.cache.Rates(),
+		HasRecency:    h.cache.HasRecency(),
+		HasPriceBands: h.cache.HasPriceBands(),
 		// Computed from the totals rather than from whether this page came back
 		// full, so the last page of results does not trigger one more request
 		// that can only return nothing.

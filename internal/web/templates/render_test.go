@@ -174,6 +174,23 @@ func TestRecencyIsOnlyOfferedWhenTheDataCarriesIt(t *testing.T) {
 	assert.Contains(t, render(t, SortControl(Filters{}, true)), "Recently added")
 }
 
+func TestBoundedPriceFiltersNeedConvertedPrices(t *testing.T) {
+	// An index built before PriceUSD existed has no document carrying it, so a
+	// numeric range over it matches nothing. Rendering the buttons anyway gives
+	// two controls that always return an empty page - which reads as "itch.io
+	// has no assets under $5" rather than "this index cannot answer that".
+	// Free and paid come straight off the listing, so they survive either way.
+	without := render(t, PriceControl(Filters{}, false))
+	assert.NotContains(t, without, "Under $5")
+	assert.NotContains(t, without, "Under $20")
+	assert.Contains(t, without, "Free")
+	assert.Contains(t, without, "Paid")
+
+	with := render(t, PriceControl(Filters{}, true))
+	assert.Contains(t, with, "Under $5")
+	assert.Contains(t, with, "Under $20")
+}
+
 func TestExclusionsRenderAsTheirOwnKindOfChip(t *testing.T) {
 	// An exclusion is the opposite of a filter, so it must not look like one -
 	// otherwise "not pixel-art" reads as "pixel-art" at a glance.

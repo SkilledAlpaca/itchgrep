@@ -64,6 +64,10 @@ func newLoadedCache(t *testing.T, pageSize int64) *Cache {
 	c.tagCounts = countTags(assets)
 	c.rates = storedRates
 	c.hasRecency = true
+	// Through the real probe rather than hardcoded, so the fixture also asserts
+	// that an index built the normal way is recognised as carrying PriceUSD.
+	c.hasPriceBands = indexHasPriceUSD(index)
+	require.True(t, c.hasPriceBands)
 	// Ahead of what is on disk, so the cache is never judged stale and never
 	// reloads itself mid-test - which would quietly undo the index a test
 	// deliberately removed.
@@ -327,6 +331,50 @@ func TestRecencyFallsBackWhenTheDataCannotSupportIt(t *testing.T) {
 	got, err := c.Find(SearchOptions{Sort: models.SortRecent, Page: 1})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1", "2", "3", "4", "5"}, ids(got), "popularity order")
+}
+
+func TestBoundedPriceFiltersFallBackWhenTheIndexCannotSupportThem(t *testing.T) {
+	// Against an index with no PriceUSD the range matches nothing, so a stale
+	// bookmark carrying ?price=under-5 would return an empty page. Dropping the
+	// clause answers the rest of the URL instead, which is the reading a visitor
+	// would recognise. Free and paid are unaffected - they need no conversion.
+	c := newLoadedCache(t, 36)
+	c.hasPriceBands = false
+
+	for _, price := range []string{models.PricingUnder5, models.PricingUnder20} {
+		got, err := c.Find(SearchOptions{Price: price, Page: 1})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"1", "2", "3", "4", "5"}, ids(got),
+			"%s degrades to no price filter rather than to nothing", price)
+	}
+
+	free, err := c.Find(SearchOptions{Price: models.PricingFree, Page: 1})
+	require.NoError(t, err)
+	assert.NotEmpty(t, ids(free), "free is read off the listing, not converted")
+	assert.NotEqual(t, 5, len(ids(free)), "and it still actually filters")
+}
+
+func TestAnIndexWithoutConvertedPricesIsDetected(t *testing.T) {
+	// The probe is what decides whether the two bounded controls render at all,
+	// so it has to answer no for an index whose documents never carried the
+	// field - the shape every index published before PriceUSD existed has.
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	index, err := bleve.New(storage.IndexPath(), storage.IndexMapping())
+	require.NoError(t, err)
+	t.Cleanup(func() { index.Close() })
+
+	batch := index.NewBatch()
+	for _, a := range fixtures() {
+		// Deliberately not NewIndexedAsset: this is the old document shape.
+		require.NoError(t, batch.Index(a.GameId, struct {
+			GameId string
+			Title  string
+		}{a.GameId, a.Title}))
+	}
+	require.NoError(t, index.Batch(batch))
+
+	assert.False(t, indexHasPriceUSD(index))
 }
 
 func TestQuotedTermsAreMatchedAsAPhrase(t *testing.T) {

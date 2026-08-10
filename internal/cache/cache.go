@@ -56,6 +56,12 @@ type Cache struct {
 	// and a "recently added" control over that data would order by nothing.
 	hasRecency bool
 
+	// hasPriceBands records whether the loaded index carries PriceUSD. Unlike
+	// hasRecency this cannot be read off the asset list, because the converted
+	// dollar value exists only in the index - so it is probed at load time by
+	// asking the index the same question the filter will ask.
+	hasPriceBands bool
+
 	// the time the data was last updated on the server.
 	// if we check if the current time is greater than this time, we know the
 	// cache is expired
@@ -112,6 +118,20 @@ func (c *Cache) HasRecency() bool {
 	c.cacheLock.RLock()
 	defer c.cacheLock.RUnlock()
 	return c.hasRecency
+}
+
+// HasPriceBands reports whether the loaded index carries the converted dollar
+// value that "under $5" and "under $20" are ranges over.
+//
+// Same rule as HasRecency, and it exists for the same reason: an index built
+// before PriceUSD was introduced has no such field, a numeric range over a field
+// no document has matches nothing, and the two buttons then sit there returning
+// an empty page. Hidden is honest; present-but-always-empty reads as "there are
+// no cheap assets", which is a claim about itch.io rather than about the index.
+func (c *Cache) HasPriceBands() bool {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	return c.hasPriceBands
 }
 
 // PageSize is how many assets one page of results holds. Handlers need it to
@@ -244,6 +264,13 @@ func (c *Cache) doRefresh() error {
 		}
 	}
 
+	// Probed before the swap, and outside the write lock, because it is a search
+	// against the index rather than a field read.
+	hasPriceBands := indexHasPriceUSD(newIndex)
+	if !hasPriceBands {
+		logging.Info("Index carries no PriceUSD; the under-$5 and under-$20 filters will be hidden")
+	}
+
 	// A missing rates file is normal on an index published before rates were
 	// collected, and is not worth failing a refresh over: the built-in snapshot
 	// is stale but dated, and says so wherever it is used.
@@ -264,6 +291,7 @@ func (c *Cache) doRefresh() error {
 	c.tagCounts = countTags(newData)
 	c.rates = newRates
 	c.hasRecency = hasRecency
+	c.hasPriceBands = hasPriceBands
 	c.dataUpdatedTime = newServerUpdateTime
 	c.cacheLock.Unlock()
 

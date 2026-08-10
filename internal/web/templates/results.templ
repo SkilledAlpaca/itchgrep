@@ -23,6 +23,11 @@ type Results struct {
 	// When it cannot, the control is not rendered - an ordering offered over
 	// data that cannot support it is worse than one that is missing.
 	HasRecency bool
+
+	// HasPriceBands reports whether the index carries converted dollar values.
+	// When it does not, the two bounded price filters are not rendered, for the
+	// same reason: they would match nothing and look like an answer.
+	HasPriceBands bool
 }
 
 // priceFilterLabel is the human name of a price filter, for the control and for
@@ -131,11 +136,16 @@ templ priceOption(f Filters, price string) {
 	}
 }
 
-templ PriceControl(f Filters) {
+templ PriceControl(f Filters, hasPriceBands bool) {
 	<div class="segmented" role="group" aria-label="Price">
 		@priceOption(f, models.PricingFree)
-		@priceOption(f, models.PricingUnder5)
-		@priceOption(f, models.PricingUnder20)
+		if hasPriceBands {
+			// Free and paid are read straight off the listing, so they work on
+			// any index. The bounded bands need a converted dollar value, which
+			// only an index built by a dataservice that collects one carries.
+			@priceOption(f, models.PricingUnder5)
+			@priceOption(f, models.PricingUnder20)
+		}
 		@priceOption(f, models.PricingPaid)
 	</div>
 }
@@ -285,7 +295,7 @@ templ ResultsRegion(f Filters, r Results) {
 		<div class="toolbar">
 			<span class="result-count">{ resultSummary(r) }</span>
 			<div class="toolbar-controls">
-				@PriceControl(f)
+				@PriceControl(f, r.HasPriceBands)
 				@SortControl(f, r.HasRecency)
 			</div>
 		</div>

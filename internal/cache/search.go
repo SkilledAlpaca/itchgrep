@@ -106,6 +106,15 @@ func (c *Cache) Find(opts SearchOptions) (Results, error) {
 		opts.Sort = models.SortPopular
 	}
 
+	// Same treatment for the bounded price filters, and for the same reason: a
+	// bookmark carrying ?price=under-5 against an index with no converted prices
+	// would otherwise return an empty page rather than the results the rest of
+	// the URL asks for. Dropping the clause is the reading a visitor would
+	// recognise; an empty page is not.
+	if !c.HasPriceBands() && (opts.Price == models.PricingUnder5 || opts.Price == models.PricingUnder20) {
+		opts.Price = ""
+	}
+
 	if !opts.filtered() && opts.resolvedSort() == models.SortPopular {
 		return c.browse(opts.Page)
 	}
@@ -277,6 +286,28 @@ func priceQuery(price string) query.Query {
 	rq := bleve.NewNumericRangeInclusiveQuery(&min, &max, &inclusive, &inclusive)
 	rq.SetField("PriceUSD")
 	return rq
+}
+
+// indexHasPriceUSD reports whether an index carries the converted dollar value
+// at all, by asking it the widest version of the question the price bands ask.
+//
+// Free assets store 0 and unparseable ones store UnknownPrice, so every document
+// written by a current dataservice falls inside this range; an index built
+// before the field existed has no document in it whatsoever. Errors count as
+// absent, which is the safe direction - it hides two controls rather than
+// offering two that cannot work.
+func indexHasPriceUSD(index bleve.Index) bool {
+	min := 0.0
+	inclusive := true
+	rq := bleve.NewNumericRangeInclusiveQuery(&min, nil, &inclusive, nil)
+	rq.SetField("PriceUSD")
+
+	res, err := index.Search(bleve.NewSearchRequestOptions(rq, 0, 0, false))
+	if err != nil {
+		logging.Error("Could not probe the index for PriceUSD: %v", err)
+		return false
+	}
+	return res.Total > 0
 }
 
 // phraseQuery matches an exact run of words across the fields worth searching,
