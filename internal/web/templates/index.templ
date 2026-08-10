@@ -11,18 +11,19 @@ templ IndexAge(f Freshness, c Coverage) {
 		<p class={ "index-age", templ.KV("is-stale", f.Stale()) }>
 			index updated
 			<time datetime={ f.DateTime() } title={ f.Absolute() }>{ f.Label() }</time>
-			if c.Known() {
-				// The denominator matters as much as the age: an index that is
-				// fresh but partial fails a search in a way that looks like the
-				// asset does not exist.
-				<span aria-hidden="true">·</span>
-				<span class="index-coverage" title={ c.Detail() }>{ c.Label() }</span>
-				<span class="visually-hidden">{ c.Detail() }</span>
-			}
 			if f.Stale() {
 				<span class="index-age-warn">— the crawl may have stopped</span>
 			}
 		</p>
+		if c.Known() {
+			// Its own line rather than trailing the age. The two say different
+			// kinds of thing - how recent, and how complete - and running them
+			// together read as one long sentence about neither.
+			//
+			// The exact counts stay on hover, so the rounded figure is
+			// checkable without spending a line on it.
+			<p class="index-coverage" title={ c.Detail() }>{ c.Label() }</p>
+		}
 	}
 }
 

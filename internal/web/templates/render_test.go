@@ -182,8 +182,13 @@ func TestCoverageIsStatedWithItsDenominator(t *testing.T) {
 	age := NewFreshness(time.Now().Add(-time.Hour), time.Now())
 	html := render(t, IndexAge(age, Coverage{Indexed: 96903, Catalogue: 108808}))
 
-	assert.Contains(t, html, "89% of the catalogue")
-	assert.Contains(t, html, "96,903 of 108,808 assets", "the rounded figure must stay checkable")
+	assert.Contains(t, html, "89% of catalogue indexable")
+	// On its own line, not trailing the age: the two say different kinds of
+	// thing, and run together they read as one sentence about neither.
+	assert.Contains(t, html, `<p class="index-coverage"`)
+	// The exact counts stay reachable on hover rather than in the line itself.
+	assert.Contains(t, html, "96,903 of 108,808 assets")
+	assert.NotContains(t, html, "visually-hidden", "the detail is not repeated inline")
 }
 
 func TestCoverageIsSilentWhenItWasNeverMeasured(t *testing.T) {
@@ -193,7 +198,7 @@ func TestCoverageIsSilentWhenItWasNeverMeasured(t *testing.T) {
 	html := render(t, IndexAge(age, Coverage{}))
 
 	assert.Contains(t, html, "index updated")
-	assert.NotContains(t, html, "of the catalogue")
+	assert.NotContains(t, html, "of catalogue indexable")
 	assert.NotContains(t, html, "0%")
 }
 

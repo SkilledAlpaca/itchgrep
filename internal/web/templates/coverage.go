@@ -47,16 +47,17 @@ func (c Coverage) Percent() int {
 	return pct
 }
 
-// Label is the short form shown in the masthead.
+// Label is the whole of what the masthead says. Deliberately one short clause:
+// this is a caveat sitting under the index age, not a paragraph.
 func (c Coverage) Label() string {
 	if !c.Known() {
 		return ""
 	}
-	return fmt.Sprintf("%d%% of the catalogue", c.Percent())
+	return fmt.Sprintf("%d%% of catalogue indexable", c.Percent())
 }
 
-// Detail spells out the rounded percentage for a tooltip and for screen
-// readers, so the figure is checkable rather than merely asserted.
+// Detail spells the rounded percentage out on hover, so the figure is checkable
+// without spending a line on it.
 func (c Coverage) Detail() string {
 	if !c.Known() {
 		return ""

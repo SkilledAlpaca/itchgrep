@@ -225,8 +225,12 @@ a:hover {
   cursor: help;
 }
 
+/* Its own line under the age, and quieter than it: how complete the index is
+   matters, but it is not the thing a visitor came to read. */
 .index-coverage {
-  border-bottom: 1px dotted currentColor;
+  margin: 0.2rem 0 0;
+  font-size: 1.2rem;
+  color: var(--text-faint);
   cursor: help;
 }
 
