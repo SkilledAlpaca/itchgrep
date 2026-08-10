@@ -8,7 +8,7 @@
 # Brings up:
 #   1. dataservice  - scrapes itch.io, builds the bleve index, publishes both
 #   2. indexer      - one-shot job: triggers the scrape, waits for the result
-#   3. webserver    - http://localhost:8080 (starts immediately; serves 503
+#   3. webserver    - http://localhost:62686 (starts immediately; serves 503
 #                     until an index exists, then picks it up within ~5s)
 #
 # All three share the `itchgrep-data` volume, mounted at /data. That directory
@@ -80,7 +80,7 @@ services:
       # killed part way through resume instead of restarting from zero.
       CHECKPOINT_MAX_AGE: "${CHECKPOINT_MAX_AGE:-24h}"
     ports:
-      - "8081:8080" # GET http://localhost:8081/trigger-fetch to re-scrape
+      - "62685:8080" # GET http://localhost:62685/trigger-fetch to re-scrape
     volumes:
       - "${DATA_PATH:-itchgrep-data}:/data"
 
@@ -168,7 +168,7 @@ services:
       # bucket, because every request arrives from the same address.
       TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
     ports:
-      - "8080:8080"
+      - "62686:8080"
     volumes:
       # Read-write, not read-only: bleve takes a lock file inside the index
       # directory when opening it, even for search-only use.
@@ -199,9 +199,9 @@ services:
   # Route the tunnel's public hostname at http://webserver:8080 - the service
   # name, not localhost, since cloudflared resolves it on the compose network.
   #
-  # NEVER route a hostname at the dataservice on 8080/8081. `/trigger-fetch`
-  # takes no authentication, so a public route to it hands anyone a button that
-  # starts a multi-hour crawl.
+  # NEVER route a hostname at the dataservice. `/trigger-fetch` takes no
+  # authentication, so a public route to it — on any port — hands anyone a
+  # button that starts a multi-hour crawl.
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: [public]

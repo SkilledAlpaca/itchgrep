@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"itchgrep/internal/cache"
+	"itchgrep/internal/metrics"
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
 
@@ -21,13 +22,15 @@ import (
 // routing, parsing, caching and escaping contracts; result correctness belongs
 // to the cache package.
 func newTestRouter() (*chi.Mux, *handler) {
-	h := NewHandler(cache.NewCache(36), 0)
+	h := NewHandler(cache.NewCache(36), 0, nil)
 	r := chi.NewRouter()
 	r.Get("/", h.HandleIndex)
 	r.Get("/results", h.HandleResults)
 	r.Get("/about", h.HandleAbout)
+	r.Get("/stats", h.HandleStats)
 	r.Head("/", h.HandleIndex)
 	r.Head("/about", h.HandleAbout)
+	r.Head("/stats", h.HandleStats)
 	r.NotFound(Handle404)
 	return r, h
 }
@@ -211,4 +214,46 @@ func TestHeadIsAnsweredRatherThanRejected(t *testing.T) {
 	// The point is that the method is routed at all, not what it answers.
 	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)
 	assert.Equal(t, get(t, r, "/").Code, w.Code)
+}
+
+func TestStatsHandlerWorksWithNilMetrics(t *testing.T) {
+	// newTestRouter wires the handler with a nil *metrics.Counters - the same
+	// as any other caller that has no reason to exercise it. HandleStats must
+	// render a page, not panic on the nil.
+	r, _ := newTestRouter()
+	w := get(t, r, "/stats")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "Traffic")
+}
+
+func TestStatsPageCarriesNoPerClientInformation(t *testing.T) {
+	// The counters never store an address, a user agent or a query string
+	// (see internal/metrics), so this asserts the invariant holds all the way
+	// through to the rendered page, not just at the counter.
+	m := metrics.New()
+	h := NewHandler(cache.NewCache(36), 0, m)
+	r := chi.NewRouter()
+	r.Get("/stats", h.HandleStats)
+
+	req := httptest.NewRequest(http.MethodGet, "/results?q=pixel+art", nil)
+	req.RemoteAddr = "203.0.113.7:54321"
+	req.Header.Set("User-Agent", "Mozilla/5.0 (probe)")
+	m.RecordRequest("/results", true, http.StatusOK)
+
+	body := get(t, r, "/stats").Body.String()
+	assert.NotContains(t, body, "203.0.113.7")
+	assert.NotContains(t, body, "Mozilla")
+	assert.NotContains(t, body, "q=pixel")
+	assert.NotContains(t, body, "pixel art")
+
+	lower := strings.ToLower(body)
+	assert.NotContains(t, lower, "probe")
+	assert.NotContains(t, lower, "429")
+	assert.NotContains(t, lower, "5xx")
+}
+
+func TestStatsResponseIsCachedBriefly(t *testing.T) {
+	r, _ := newTestRouter()
+	w := get(t, r, "/stats")
+	assert.Equal(t, "public, max-age=60", w.Header().Get("Cache-Control"))
 }

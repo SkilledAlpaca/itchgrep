@@ -839,6 +839,56 @@ a:hover {
   border: 0;
 }
 
+/* -------------------------------------------------------------- stats  */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1px;
+  margin: 0 0 2rem;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.stats-cell {
+  padding: 1.1rem 1.3rem;
+  background: var(--bg-raised);
+}
+
+.stats-cell dt {
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.stats-cell dd {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.stats-histogram {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 6rem;
+  margin-bottom: 1rem;
+}
+
+/* A <meter> rather than a styled div with a dynamic width: templ restricts
+ * dynamic style attributes, and meter takes plain numbers with no injection
+ * surface. Rotated so its native horizontal fill reads as vertical height. */
+.stats-bar {
+  flex: 1 1 0;
+  height: 6rem;
+  width: 1.6rem;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  accent-color: var(--accent);
+}
+
 @media (max-width: 640px) {
   .masthead {
     align-items: flex-start;

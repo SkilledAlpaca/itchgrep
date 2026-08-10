@@ -1,16 +1,22 @@
 package web
 
 import (
-	"net"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"itchgrep/internal/logging"
 )
+
+// TrustProxyHeaders is read once and shared by everything that needs to agree
+// on where a client's identity comes from - the limiter and the request
+// logger both derive it from the same env var, and a sync.OnceValue is cheaper
+// insurance against them drifting than two independent envBool calls.
+var TrustProxyHeaders = sync.OnceValue(func() bool {
+	return envBool("TRUST_PROXY_HEADERS", false)
+})
 
 // Rate limiting exists because a search is not a cheap request. Each one runs
 // three disjunctions - exact, fuzzy with a 4-character prefix, and fuzzy with a
@@ -55,7 +61,7 @@ func NewLimiter() *Limiter {
 		buckets:    make(map[string]*bucket),
 		rate:       envFloat("RATE_LIMIT_RPS", 5),
 		burst:      envFloat("RATE_LIMIT_BURST", 20),
-		trustProxy: envBool("TRUST_PROXY_HEADERS", false),
+		trustProxy: TrustProxyHeaders(),
 	}
 	if l.rate <= 0 {
 		logging.Warning("RATE_LIMIT_RPS is %v: rate limiting is disabled", l.rate)
@@ -82,23 +88,11 @@ func (l *Limiter) evictLoop() {
 	}
 }
 
-// client identifies the caller for limiting purposes.
+// client identifies the caller for limiting purposes. Kept as a method - the
+// derivation itself lives in ClientIP - so ratelimit_test.go keeps working
+// unchanged.
 func (l *Limiter) client(r *http.Request) string {
-	if l.trustProxy {
-		if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
-			return ip
-		}
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			// Left-most entry is the original client; the rest are hops.
-			first, _, _ := strings.Cut(fwd, ",")
-			return strings.TrimSpace(first)
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return ClientIP(r, l.trustProxy)
 }
 
 // allow reports whether this client may make a request now.

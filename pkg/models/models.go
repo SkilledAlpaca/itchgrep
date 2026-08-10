@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Asset represents a game asset. The whole collection is serialised to one
@@ -225,4 +226,26 @@ func NewIndexedAsset(a Asset, priceUSD float64) IndexedAsset {
 
 func (a IndexedAsset) String() string {
 	return fmt.Sprintf("GameId: %s, Title: %s, Author: %s, Description: %s, Tags: %v, Pricing: %s, InvPopularity: %d", a.GameId, a.Title, a.Author, a.Description, a.Tags, a.Pricing, a.InvPopularity)
+}
+
+// HourBucket is one slot of a 24-hour ring: how many searches landed in a
+// given wall-clock hour. EpochHour, not a time.Time, so a bucket compares
+// with plain integer equality when deciding whether it is stale.
+type HourBucket struct {
+	EpochHour int64
+	Searches  uint64
+}
+
+// Traffic is the persisted form of internal/metrics.Counters: what survives a
+// restart. It carries only aggregate counts - no addresses, no user agents,
+// no query text - because it is read back out onto a public page.
+type Traffic struct {
+	// FirstSeen is when counting began, kept separate from process start so a
+	// restart does not reset "counting since" on the public page.
+	FirstSeen time.Time
+
+	Total, Index, Results, About, Stats, Static uint64
+	Searches                                    uint64
+
+	Hours [24]HourBucket
 }

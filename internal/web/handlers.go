@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"itchgrep/internal/cache"
 	"itchgrep/internal/logging"
+	"itchgrep/internal/metrics"
 	"itchgrep/internal/web/templates"
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
@@ -25,6 +26,11 @@ import (
 // reaches users promptly and long enough to absorb the bursts that matter.
 const fragmentMaxAge = 300
 
+// statsMaxAge is shorter than fragmentMaxAge: a stats page five minutes stale
+// invites "is the site down?" bug reports in a way a five-minute-old result
+// list does not.
+const statsMaxAge = 60
+
 // maxQueryLen bounds what reaches the index. The fuzzy passes cost more the
 // longer the input, and no legitimate search needs more than this.
 const maxQueryLen = 200
@@ -44,12 +50,18 @@ type handler struct {
 	// to say when the next rebuild is due. Zero when rebuilds are triggered by
 	// hand, in which case the page says nothing about a next one.
 	crawlInterval time.Duration
+
+	// metrics backs HandleStats. Nil-tolerant - metrics.Counters' methods are
+	// all no-ops on a nil receiver - so handlers_test.go can build a handler
+	// without wiring up counters it has no reason to exercise.
+	metrics *metrics.Counters
 }
 
-func NewHandler(cache *cache.Cache, crawlInterval time.Duration) *handler {
+func NewHandler(cache *cache.Cache, crawlInterval time.Duration, m *metrics.Counters) *handler {
 	return &handler{
 		cache:         cache,
 		crawlInterval: crawlInterval,
+		metrics:       m,
 	}
 }
 
@@ -374,4 +386,13 @@ func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	templates.About().Render(r.Context(), w)
+}
+
+// HandleStats serves the public traffic page. It renders inside the
+// rate-limited route group like every other page, and it is cached far more
+// briefly than a result fragment - see statsMaxAge.
+func (h *handler) HandleStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", statsMaxAge))
+	traffic := templates.NewTraffic(h.metrics.Snapshot(), time.Now())
+	templates.Layout("Stats — ITCHGREP", templates.StatsPage(h.freshness(), h.coverage(), traffic)).Render(r.Context(), w)
 }

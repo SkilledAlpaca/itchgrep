@@ -35,6 +35,9 @@ const (
 	CheckpointFileName = "checkpoint.json"
 	RatesFileName      = "rates.json"
 	StatsFileName      = "stats.json"
+	// TrafficFileName is deliberately not "stats.json" - that name is already
+	// the crawl-coverage file, and the two mean entirely different things.
+	TrafficFileName = "traffic.json"
 
 	// IndexDirName is the published bleve index. stagingIndexDirName is where a
 	// new one is built; it lives alongside so that publishing is a rename
@@ -199,6 +202,24 @@ func GetStats() (models.Stats, error) {
 		return models.Stats{}, err
 	}
 	return s, nil
+}
+
+// PutTraffic persists the public traffic counters. Called on a timer from
+// internal/metrics rather than on every request, since a rename-into-place
+// write on every hit would put disk I/O in the request path for no benefit -
+// losing a few minutes of counts on a crash is an accepted trade-off, not
+// something worth graceful shutdown for.
+func PutTraffic(t models.Traffic) error { return writeJSON(TrafficFileName, t) }
+
+// GetTraffic returns the counters as of the last snapshot. A missing file is
+// normal on first boot and on any deploy before this existed, and the caller
+// starts counting from zero rather than treating it as an error.
+func GetTraffic() (models.Traffic, error) {
+	var t models.Traffic
+	if _, err := readJSON(TrafficFileName, &t); err != nil {
+		return models.Traffic{}, err
+	}
+	return t, nil
 }
 
 // Checkpoint is a partially-complete crawl, written periodically so that a run

@@ -1,0 +1,67 @@
+package templates
+
+// StatsPage is the public traffic page: aggregate counts only, nothing
+// per-client. See internal/metrics for the counting rules and
+// internal/web/templates/traffic.go for the view model this renders.
+//
+// Deliberately absent: 404s, scanner probes blocked, 429s, 5xx. Those are
+// operator-side signals - a public probe counter is a feedback channel a
+// scanner author could use to tune around the matcher, and the error counters
+// tell an attacker how the origin is reacting. They stay in the log.
+templ StatsPage(age Freshness, coverage Coverage, tr Traffic) {
+	@Masthead(age, coverage)
+	<div id="page-content" class="prose stats-page">
+		<h2>Traffic</h2>
+		<p>Counted in the process, never read back out of a log - see the
+		<a href="/about" hx-get="/about" hx-swap="outerHTML" hx-target="#page-content">About</a>
+		page for how this site is built.</p>
+		<dl class="stats-grid">
+			<div class="stats-cell">
+				<dt>Total requests</dt>
+				<dd>{ HumaneCount(tr.Total()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Searches served</dt>
+				<dd>{ HumaneCount(tr.Searches()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Home page</dt>
+				<dd>{ HumaneCount(tr.Index()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Results fragment</dt>
+				<dd>{ HumaneCount(tr.Results()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>About page</dt>
+				<dd>{ HumaneCount(tr.About()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Static assets</dt>
+				<dd>{ HumaneCount(tr.Static()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Uptime</dt>
+				<dd>{ tr.UptimeLabel() }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Counting since</dt>
+				<dd>{ tr.CountingSince() }</dd>
+			</div>
+		</dl>
+		<h2>Searches, last 24 hours</h2>
+		<div class="stats-histogram">
+			for _, bar := range tr.Bars() {
+				<meter
+					class="stats-bar"
+					min="0"
+					max={ tr.PeakAttr() }
+					value={ bar.CountAttr() }
+					title={ bar.Title() }
+				></meter>
+			}
+		</div>
+		<hr/>
+		<p><a href="/">← Back to search</a></p>
+	</div>
+}

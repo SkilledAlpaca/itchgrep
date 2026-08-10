@@ -148,7 +148,7 @@ docker compose up --build
 ```
 
 This runs the `dataservice`, triggers a full crawl and index of itch.io, and
-brings up the `webserver` on [localhost:8080](http://localhost:8080) straight
+brings up the `webserver` on [localhost:62686](http://localhost:62686) straight
 away — it does not wait for the crawl.
 
 > Use `--build` after any change to the Go source. Plain `docker compose up`
@@ -173,7 +173,7 @@ default). That check runs against the timestamp of the data on disk rather than
 a timer started at boot, so restarts — updates, reboots, a nightly backup — do
 not postpone it.
 
-- Re-crawl now, without waiting: `curl http://localhost:8081/trigger-fetch`
+- Re-crawl now, without waiting: `curl http://localhost:62685/trigger-fetch`
 - Throw away all scraped data: `docker compose down -v`
 - Generate `.go` from `.templ` files: `task templ` (not required to build; it
   just stops the language server complaining)
@@ -251,10 +251,12 @@ reachable URL exposes them.
 ## Hosting it publicly
 
 Both services run on one box behind a reverse proxy. The webserver listens on
-8080 and is the only thing that should ever be exposed.
+8080 inside the container, published on host port 62686, and is the only thing
+that should ever be exposed.
 
-> **Never proxy port 8081.** That is the dataservice, and `/trigger-fetch` takes
-> no authentication. A public route to it lets anyone start a multi-hour crawl.
+> **Never proxy port 62685.** That is the dataservice's published port, and
+> `/trigger-fetch` takes no authentication. A public route to it lets anyone
+> start a multi-hour crawl.
 
 ### Behind Cloudflare
 
@@ -292,6 +294,24 @@ a new identity per request.
 - Thumbnails hotlink `img.itch.zone`, so image bandwidth never crosses your
   connection. The flip side is that itch.io bears that cost and could block by
   `Referer`, which would break every thumbnail at once.
+- Commodity PHP/WordPress scanners sweep any public origin within minutes. A
+  Cloudflare WAF custom rule named `Block PHP/CMS probes` (action **Block**)
+  turns those away at the edge, before they reach the tunnel, matching request
+  paths ending in `.php`, `.phtml`, `.aspx` or `.jsp`, or starting with
+  `/wp-`, `/wordpress`, `/cgi-bin/`, `/vendor/`, `/phpmyadmin`, `/xmlrpc`,
+  `/.env` or `/.git`. None of those can collide with a real route.
+- Every response carries a restrictive `Content-Security-Policy` (same-origin
+  scripts/styles, thumbnails allowed from `img.itch.zone`, no framing) plus
+  `Referrer-Policy`, `X-Content-Type-Options` and `Cross-Origin-Opener-Policy`.
+  HSTS is left to Cloudflare rather than set at the origin, since the same
+  binary also answers on a plain-HTTP LAN port. `/robots.txt` disallows
+  `/results`, the unstyled htmx fragment endpoint, so a crawler cannot index
+  it or walk it into the expensive fuzzy-search path.
+- `/.well-known/security.txt` (RFC 9116) points reporters at the issue tracker
+  rather than an email address, since it is a public file that spam harvesters
+  read too. **Its `Expires` date needs bumping annually** — the constant lives
+  in `internal/web/robots.go`, and `TestSecurityTxtHasNotExpired` fails the
+  build when the date passes, so this cannot rot silently.
 
 ## Testing
 
