@@ -25,6 +25,18 @@ original lives at
 repository is a fork, licensed as the original under GPL-3.0, and is not
 operated by the original author.
 
+## Disclaimer
+
+This fork was created, updated and "enhanced" using
+[Claude Code](https://claude.com/claude-code), Anthropic's coding agent. Almost
+everything added on top of winterveil's original — the crawl planner, the search
+and filtering, the UI, the tests and this README — was written by it under human
+direction and review.
+
+That is stated plainly rather than buried: it is running in production and the
+tests pass, but it is agent-written code, and you should read it before you
+trust it with anything of yours.
+
 ## What you can search
 
 A query matches four fields at once, weighted by how much a hit in each is

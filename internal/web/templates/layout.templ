@@ -44,6 +44,43 @@ templ Layout(title string, content templ.Component) {
 				}
 			});
 
+			// The server renders exact times in UTC because it has no way of
+			// knowing the reader's zone - a visitor comparing "14:30 UTC"
+			// against their own clock has to do the arithmetic themselves.
+			// Where there is a browser to ask, rewrite it to local time. The
+			// UTC form stays in the markup as the no-script fallback.
+			function localiseTimestamps(root) {
+				var nodes = root.querySelectorAll('time[datetime]:not([data-localised])');
+				for (var i = 0; i < nodes.length; i++) {
+					var when = new Date(nodes[i].getAttribute('datetime'));
+					if (isNaN(when.getTime())) continue;
+					nodes[i].setAttribute('data-localised', '');
+					// Spelled out as components rather than as dateStyle plus
+					// timeStyle: the spec forbids combining those with
+					// timeZoneName, and doing it throws rather than degrading.
+					// The zone has to be named, or a local time is
+					// indistinguishable from the UTC one it replaced.
+					nodes[i].title = when.toLocaleString(undefined, {
+						day: 'numeric',
+						month: 'long',
+						year: 'numeric',
+						hour: '2-digit',
+						minute: '2-digit',
+						timeZoneName: 'short'
+					});
+				}
+			}
+
+			document.addEventListener('DOMContentLoaded', function () {
+				localiseTimestamps(document);
+			});
+
+			// htmx events bubble to document, so this covers content swapped in
+			// after load without needing to know which fragment carried a time.
+			document.addEventListener('htmx:afterSwap', function (evt) {
+				localiseTimestamps(evt.target || document);
+			});
+
 			// "/" focuses the search box, as in every other search tool. Ignored
 			// while typing, so it does not swallow the character.
 			document.addEventListener('keydown', function (e) {
@@ -59,11 +96,6 @@ templ Layout(title string, content templ.Component) {
 			</script>
 		</head>
 		<body>
-			// Without this, reaching the results by keyboard means tabbing past
-			// the wordmark, four nav links and the search box on every single
-			// page load - and the filter links in the sidebar make that a long
-			// way to travel repeatedly.
-			<a class="skip-link" href="#results-region">Skip to results</a>
 			<main>
 				@content
 			</main>

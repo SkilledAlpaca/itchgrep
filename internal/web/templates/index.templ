@@ -29,11 +29,17 @@ templ IndexAge(f Freshness, c Coverage) {
 
 templ Masthead(age Freshness, coverage Coverage) {
 	<header class="masthead">
-		<h1 class="wordmark-heading">
-			<a class="wordmark" href="/" aria-label="itchgrep home">
-				<span>ITCH</span><span class="mark-grep">GREP</span><span class="caret" aria-hidden="true"></span>
-			</a>
-		</h1>
+		// The age and coverage sit under the wordmark rather than at the foot
+		// of the meta column: they describe the index the wordmark stands for,
+		// not the links they used to trail.
+		<div class="masthead-brand">
+			<h1 class="wordmark-heading">
+				<a class="wordmark" href="/" aria-label="itchgrep home">
+					<span>ITCH</span><span class="mark-grep">GREP</span><span class="caret" aria-hidden="true"></span>
+				</a>
+			</h1>
+			@IndexAge(age, coverage)
+		</div>
 		<div class="masthead-meta">
 			<p>search itch.io/game-assets by text instead of just tags.</p>
 			<p>
@@ -45,7 +51,6 @@ templ Masthead(age Freshness, coverage Coverage) {
 				<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">Source</a>
 				<a href={ templ.SafeURL(UpstreamURL) } target="_blank" rel="noopener">Original</a>
 			</nav>
-			@IndexAge(age, coverage)
 		</div>
 	</header>
 }

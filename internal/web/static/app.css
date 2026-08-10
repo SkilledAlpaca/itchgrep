@@ -107,24 +107,6 @@ a:hover {
   white-space: nowrap;
 }
 
-/* Off-screen until focused, so it costs sighted users nothing and gives
-   keyboard users a way past the masthead on every page. */
-.skip-link {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  z-index: 100;
-  padding: 0.8rem 1.2rem;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-weight: 600;
-  border-radius: 0 0 4px 0;
-}
-
-.skip-link:focus {
-  left: 0;
-}
-
 /* ---------------------------------------------------------------- header  */
 
 .masthead {
@@ -134,6 +116,12 @@ a:hover {
   justify-content: space-between;
   gap: 1rem 2rem;
   padding: 2.8rem 0 1.8rem;
+}
+
+/* The wordmark and, beneath it, what the index behind it is: how recent, and
+   how complete. */
+.masthead-brand {
+  min-width: 0;
 }
 
 /* The wordmark is the page's h1; the heading element carries the semantics and
@@ -215,7 +203,7 @@ a:hover {
 /* The age of the index. Faint by default - it is a caveat, not a headline -
    and only allowed to compete for attention once it is reporting a problem. */
 .index-age {
-  margin-top: 0.6rem;
+  margin: 0.8rem 0 0;
   font-size: 1.2rem;
   color: var(--text-faint);
 }
