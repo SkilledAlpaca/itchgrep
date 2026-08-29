@@ -1,11 +1,28 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"itchgrep/internal/metrics"
+
+	"itchgrep/internal/logging"
 )
+
+// probeRecord is the JSON shape of one probe line. A value type, not
+// map[string]any, for the same field-order-stability reason as accessRecord.
+// No status or duration: a probe is always answered with a bare 404,
+// immediately, so those fields would be constant.
+type probeRecord struct {
+	Ts     string `json:"ts"`
+	Kind   string `json:"kind"`
+	IP     string `json:"ip"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	UA     string `json:"ua"`
+}
 
 // isProbeSuffixes and isProbePrefixes are what a commodity PHP/WordPress
 // shell scanner asks for - captured from real sweeps against this origin.
@@ -63,14 +80,37 @@ func isProbe(path string) bool {
 // an attacker-controlled FD-exhaustion vector; charging a token means taking
 // the limiter's mutex for a request that now costs nothing to answer.
 //
-// No templ render and no per-request log line - the log would drown in it,
-// which is the problem this exists to solve. m.RecordProbe() feeds the
-// aggregate line the snapshot ticker emits instead.
-func ProbeFilter(m *metrics.Counters) func(http.Handler) http.Handler {
+// No templ render, and it still does get an aggregate count via
+// m.RecordProbe() rather than a per-request one from RecordRequest - the
+// public /stats page must not turn into a scanner-sweep counter. It does now
+// get its own per-request JSON line, on a "probe" kind the host-side splitter
+// routes to a separate file from the access stream, so the access log stays
+// clean while the probe traffic itself remains fully recorded.
+//
+// trustProxy is threaded through to ClientIP for the same reason as
+// RequestLogger: the limiter, the access log, and this filter must all agree
+// on where a client's identity comes from.
+func ProbeFilter(m *metrics.Counters, trustProxy bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isProbe(r.URL.Path) {
 				m.RecordProbe()
+
+				record := probeRecord{
+					Ts:     time.Now().UTC().Format(time.RFC3339Nano),
+					Kind:   "probe",
+					IP:     AnonymizeIP(ClientIP(r, trustProxy)),
+					Method: r.Method,
+					Path:   r.URL.Path,
+					UA:     truncateUA(r.UserAgent()),
+				}
+				line, err := json.Marshal(record)
+				if err != nil {
+					logging.Warning("failed to marshal probe record: %s", err)
+				} else {
+					eventFunc(string(line))
+				}
+
 				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.Header().Set("Cache-Control", "no-store")
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")

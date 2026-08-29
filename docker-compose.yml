@@ -33,9 +33,12 @@
 #
 # Docker's json-file driver keeps every line ever written unless told a limit,
 # so without this the webserver's request log - one line per request, carrying
-# the client IP and the raw query string - accumulates on the host forever.
-# Nothing rotates it and nothing expires it. 30 MB per service is weeks of
-# traffic at this volume, enough to debug against and bounded either way.
+# a network-truncated client IP and a boolean for whether a query was present
+# (never the raw query string) - accumulates on the host forever. 30 MB per
+# service is now a hand-off buffer for scripts/export-logs.sh, the host-side
+# follower that tails it into durable, rotated files - not the last stop for
+# this data, just enough headroom that a follower outage of a few minutes
+# cannot lose lines before it reconnects.
 #
 # Set here rather than in the daemon's config so the bound travels with the
 # stack instead of depending on how the host was set up.
@@ -191,8 +194,13 @@ services:
       # directory when opening it, even for search-only use.
       - "${DATA_PATH:-itchgrep-data}:/data"
     # The service this bound exists for: internal/web/logmiddleware.go writes
-    # the client IP and full request URL on every request, and that is the only
-    # place either is retained past the request.
+    # a network-truncated client IP and a query-present boolean on every
+    # request (internal/web/probes.go does the same, plus the full path, for
+    # blocked scanner probes). This buffer is no longer the only place that
+    # data is retained - scripts/export-logs.sh follows this container's
+    # stdout on the host and appends it to rotated files under
+    # LOG_EXPORT_DIR, so this 30 MB cap only has to survive the gap between a
+    # request and the follower draining it.
     logging: *logging
     # Deliberately NOT gated on the indexer completing. The webserver tolerates
     # having no data - it serves 503 and retries the load in the background -

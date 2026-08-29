@@ -313,6 +313,151 @@ a new identity per request.
   in `internal/web/robots.go`, and `TestSecurityTxtHasNotExpired` fails the
   build when the date passes, so this cannot rot silently.
 
+## Operations
+
+The webserver's only log sink is stdout, captured by Docker's `json-file`
+driver and capped at 10 MB × 3 per service (see `x-logging` in
+`docker-compose.yml`). That cap is a safety valve, not a retention policy —
+left alone, a sustained scanner sweep can roll the buffer and evict real
+traffic before anyone reads it. `scripts/export-logs.sh` is a host-side
+follower that drains stdout continuously into durable, rotated files, so the
+Docker buffer only has to survive the gap between a request and the next
+drain.
+
+### Installing the follower
+
+On the Unraid host:
+
+1. Copy `scripts/export-logs.sh` to the host (or run it straight out of a
+   checkout of this repo).
+2. In the **User Scripts** plugin, add a new script pointing at it, set the
+   schedule to **"At Startup of Array"**, and start it once by hand for the
+   current session.
+3. Copy `scripts/itchgrep-logrotate.conf` to `/etc/logrotate.d/itchgrep` (or
+   wherever the host's logrotate drop-in directory is) so the files it writes
+   get rotated daily, kept for 30 days, and compressed.
+
+The follower reads two environment variables, both optional:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LOG_EXPORT_DIR` | `/mnt/user/appdata/itchgrep/logs` | Where `access.jsonl`, `security.jsonl` and `app.log` are written. |
+| `CONTAINER_NAME` | `itchgrep-webserver-1` | The webserver container to follow. Compose derives this from the project directory name (`itchgrep`) and the service name (`webserver`) when no `container_name:` is set — confirm with `docker ps` if the stack was brought up from a differently-named directory. |
+
+It reconnects on its own — container restart, image rebuild, Docker daemon
+reload — with a short backoff between attempts, logging each reconnect to
+stderr. Lines written while it is down are not replayed; Docker's log driver
+gives no cursor to replay from.
+
+### Record schema
+
+Two machine-readable record kinds are interleaved with the plain `INFO:`/
+`WARN:` startup and crawl lines (which land in `app.log`). Both are single-line
+JSON with a `kind` discriminator, emitted by `internal/web/logmiddleware.go`
+and `internal/web/probes.go` respectively.
+
+**`access.jsonl`** — one line per served request:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `ts` | string | Request start, RFC 3339 with nanoseconds, UTC. |
+| `kind` | string | Always `"access"`. |
+| `ip` | string | Client address truncated to its network (`/24` for IPv4, `/48` for IPv6), or `"unknown"` if it failed to parse. |
+| `method` | string | HTTP method. |
+| `path` | string | Request path only — never the query string. |
+| `query` | bool | Whether a query string was present. The terms themselves are never logged. |
+| `route` | string | The matched route pattern; empty means the request 404'd. |
+| `status` | int | Response status code. |
+| `bytes` | int | Response body size. |
+| `dur_ms` | int | Request duration in milliseconds. |
+| `ua` | string | `User-Agent`, truncated to 256 bytes. |
+
+**`security.jsonl`** — one line per request answered by `ProbeFilter`
+(`internal/web/probes.go`) before it reaches routing — commodity PHP/WordPress
+scanner traffic:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `ts` | string | Same format as above. |
+| `kind` | string | Always `"probe"`. |
+| `ip` | string | Same truncation as above. |
+| `method` | string | HTTP method. |
+| `path` | string | Full request path, untruncated — the entire point of the record is seeing what was asked for. |
+| `ua` | string | `User-Agent`. |
+
+No status or duration on a probe record: it is always a 404, answered
+immediately.
+
+### Privacy posture
+
+- **Identity is network-truncated, not removed.** `ip` identifies the
+  allocation a client sits on (enough to recognize a repeat offender or a
+  sweep from one source), not the individual address. No salt, no hash, no
+  per-visitor value stored anywhere.
+- **Query terms are never logged**, on either stream — `access.jsonl` records
+  only whether a query string was present, as a boolean.
+- **30 days, then gone.** `scripts/itchgrep-logrotate.conf` keeps 30 daily,
+  compressed generations and deletes the rest; there is no separate deletion
+  job to maintain.
+
+### `jq` recipes
+
+Top talkers by (truncated) IP:
+
+```bash
+jq -s -c 'group_by(.ip) | map({ip: .[0].ip, count: length}) | sort_by(-.count)' access.jsonl
+```
+
+Probe paths not already covered by `isProbePrefixes`
+(`internal/web/probes.go`) — useful both for extending that list and for
+authoring Cloudflare WAF rules against what is actually being tried:
+
+Both lists from `probes.go` are mirrored here, suffixes included — a sweep is
+usually caught by the `.php` suffix rather than a prefix, so checking prefixes
+alone would report almost every probe as uncovered. Re-copy both if that file
+changes.
+
+```bash
+jq -s -c '
+  ["/wp-", "/wordpress", "/cgi-bin/", "/vendor/", "/uploads/", "/phpmyadmin",
+   "/phpinfo", "/admin", "/administrator", "/xmlrpc", "/autodiscover",
+   "/.env", "/.git", "/.aws", "/.ssh"] as $prefixes
+  | [".php", ".phtml", ".asp", ".aspx", ".jsp", ".cgi"] as $suffixes
+  | map(.path | ascii_downcase)
+  | unique
+  | map(select(
+      . as $p
+      | (($prefixes | any(. as $k | $p | startswith($k)))
+         or ($suffixes | any(. as $k | $p | endswith($k)))) | not
+    ))
+' security.jsonl
+```
+
+404 clusters on routes that actually exist (a live route 404ing a lot usually
+means a stale link, not a scanner — probes never carry a non-empty `route`):
+
+```bash
+jq -s -c '
+  map(select(.status == 404 and .route != ""))
+  | group_by(.route)
+  | map({route: .[0].route, count: length})
+  | sort_by(-.count)
+' access.jsonl
+```
+
+p95 request duration by route:
+
+```bash
+jq -s -c '
+  group_by(.route)
+  | map({
+      route: .[0].route,
+      p95: ((map(.dur_ms) | sort) as $s | $s[(($s | length - 1) * 0.95 | floor)]),
+      count: length
+    })
+' access.jsonl
+```
+
 ## Testing
 
 ```bash

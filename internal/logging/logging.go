@@ -15,6 +15,7 @@ type Log struct {
 	warningLogger *log.Logger
 	errorLogger   *log.Logger
 	fatalLogger   *log.Logger
+	eventLogger   *log.Logger
 }
 
 // single instance, initialized in Init
@@ -87,6 +88,7 @@ func Init(log_path string, logToStdout bool) {
 	log_instance.fatalLogger = log.New(file, "FATL: ", log.Ldate|log.Ltime)
 	// note: ERRO and FATL sounds dumb, but having the same length for every prefix
 	// improves readability
+	log_instance.eventLogger = log.New(file, "", 0)
 }
 
 // Info writes to the log-file specified in the settings,
@@ -119,6 +121,16 @@ func Error(format string, v ...any) {
 	assertInstanceExists()
 	caller := callerInfo()
 	log_instance.errorLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
+}
+
+// Event writes a single pre-formatted line to the same stream as the other
+// loggers, with no level prefix, date, or caller tag. Callers own the entire
+// line - used for the JSON access and probe records, which carry their own
+// timestamp and must survive `jq` without a log prefix mangling the leading
+// '{'.
+func Event(line string) {
+	assertInstanceExists()
+	log_instance.eventLogger.Print(line)
 }
 
 // Fatal writes to the log-file specified in the settings,

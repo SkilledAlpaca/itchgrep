@@ -17,6 +17,9 @@ func TestHandleRobotsGet(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
 	assert.True(t, strings.Contains(w.Body.String(), "Disallow: /results"))
+	// The query-string disallow is what keeps crawlers out of the infinite
+	// filter-permutation space; losing it re-opens a multi-req/s crawl.
+	assert.True(t, strings.Contains(w.Body.String(), "Disallow: /*?*"))
 }
 
 func TestHandleRobotsHead(t *testing.T) {

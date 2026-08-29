@@ -1,12 +1,14 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"itchgrep/internal/metrics"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -46,7 +48,7 @@ func TestOrdinaryUnknownPathsAreNotProbes(t *testing.T) {
 
 func TestProbeFilterAnswersBareTextPlain404(t *testing.T) {
 	m := metrics.New()
-	handler := ProbeFilter(m)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := ProbeFilter(m, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("must not reach the wrapped handler")
 	}))
 
@@ -65,11 +67,57 @@ func TestProbeFilterAnswersBareTextPlain404(t *testing.T) {
 
 func TestProbeFilterLetsRealRoutesThrough(t *testing.T) {
 	reached := false
-	handler := ProbeFilter(metrics.New())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := ProbeFilter(metrics.New(), false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
 	}))
 
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/results?q=pixel", nil))
 
 	assert.True(t, reached)
+}
+
+// TestProbeFilterEmitsOneProbeRecordAndNoAccessRecord confirms the split
+// promised by the revised ProbeFilter doc comment: a probe gets exactly one
+// "probe" kind line from ProbeFilter itself, and never reaches RequestLogger
+// - which mounts after ProbeFilter in main.go - so it produces no "access"
+// line at all.
+func TestProbeFilterEmitsOneProbeRecordAndNoAccessRecord(t *testing.T) {
+	lines := captureEvents(t)
+	m := metrics.New()
+	r := chi.NewRouter()
+	r.Use(ProbeFilter(m, false))
+	r.Use(RequestLogger(false, m))
+	// chi only builds its middleware chain once a route is registered - see
+	// Mux.ServeHTTP's mx.handler == nil fast path - so a live route must be
+	// present even though this test never requests it.
+	r.Get("/results", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/wp-login.php", nil)
+	req.RemoteAddr = "1.2.3.4:54321"
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	var probeKinds, accessKinds int
+	for _, line := range *lines {
+		var kind struct {
+			Kind string `json:"kind"`
+		}
+		assert.NoError(t, json.Unmarshal([]byte(line), &kind))
+		switch kind.Kind {
+		case "probe":
+			probeKinds++
+			var rec probeRecord
+			assert.NoError(t, json.Unmarshal([]byte(line), &rec))
+			assert.Equal(t, "/wp-login.php", rec.Path)
+			assert.Equal(t, "1.2.3.0", rec.IP)
+		case "access":
+			accessKinds++
+		}
+	}
+	assert.Equal(t, 1, probeKinds, "exactly one probe record")
+	assert.Equal(t, 0, accessKinds, "ProbeFilter must short-circuit before RequestLogger runs")
 }

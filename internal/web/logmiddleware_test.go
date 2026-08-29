@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"itchgrep/internal/metrics"
@@ -10,6 +12,39 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 )
+
+// captureEvents swaps eventFunc for one that appends every line to a slice
+// instead of reaching logging.Event's real file/stdout target, and restores
+// the original on cleanup. Test-only seam - see the eventFunc doc comment.
+func captureEvents(t *testing.T) *[]string {
+	t.Helper()
+	lines := &[]string{}
+	original := eventFunc
+	eventFunc = func(line string) {
+		*lines = append(*lines, line)
+	}
+	t.Cleanup(func() { eventFunc = original })
+	return lines
+}
+
+func TestAnonymizeIP(t *testing.T) {
+	tests := []struct {
+		name string
+		ip   string
+		want string
+	}{
+		{"ipv4", "203.0.113.42", "203.0.113.0"},
+		{"ipv6", "2001:db8:1234:5678::1", "2001:db8:1234::"},
+		{"ipv4-mapped ipv6", "::ffff:203.0.113.42", "203.0.113.0"},
+		{"garbage", "not-an-ip", "unknown"},
+		{"empty", "", "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, AnonymizeIP(tt.ip))
+		})
+	}
+}
 
 func TestStatusZeroIsTreatedAsOK(t *testing.T) {
 	// A handler that never calls WriteHeader still answers 200 once bytes go
@@ -58,4 +93,35 @@ func TestRequestLoggerRecordsAgainstTheSharedCounters(t *testing.T) {
 
 	snap := m.Snapshot()
 	assert.EqualValues(t, 1, snap.Searches, "a query on /results is a search")
+}
+
+// TestRequestLoggerEmitsAccessRecordWithoutTheQueryValue is the point of the
+// whole redesign: query is a boolean, not the raw string, so a search term
+// can never leak into the durable export even though the log still records
+// that a search happened.
+func TestRequestLoggerEmitsAccessRecordWithoutTheQueryValue(t *testing.T) {
+	lines := captureEvents(t)
+	m := metrics.New()
+	r := chi.NewRouter()
+	r.Use(RequestLogger(false, m))
+	r.Get("/results", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/results?q=zebrafish", nil)
+	req.RemoteAddr = "1.2.3.4:54321"
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	if assert.Len(t, *lines, 1) {
+		var rec accessRecord
+		assert.NoError(t, json.Unmarshal([]byte((*lines)[0]), &rec))
+		assert.Equal(t, "access", rec.Kind)
+		assert.True(t, rec.Query, "the query boolean must still be true")
+		assert.Equal(t, "/results", rec.Path)
+		assert.Equal(t, "1.2.3.0", rec.IP, "anonymized to the /24")
+
+		out := (*lines)[0]
+		assert.False(t, strings.Contains(out, "zebrafish"), "the search term must never reach the log")
+		assert.False(t, strings.Contains(out, "1.2.3.4"), "the full client IP must never reach the log")
+	}
 }

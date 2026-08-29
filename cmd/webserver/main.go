@@ -84,7 +84,7 @@ func main() {
 	// table to match against. See internal/web/probes.go for why this exists
 	// alongside the Cloudflare WAF rule rather than instead of it - it is the
 	// backstop for whatever reaches the origin directly.
-	r.Use(web.ProbeFilter(m))
+	r.Use(web.ProbeFilter(m, web.TrustProxyHeaders()))
 	r.Use(web.RequestLogger(web.TrustProxyHeaders(), m))
 
 	// The same variable the dataservice schedules from, so the masthead can say
