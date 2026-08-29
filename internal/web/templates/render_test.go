@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"itchgrep/internal/metrics"
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
 
@@ -49,6 +50,19 @@ func TestAttributionSurvivesOnEveryPage(t *testing.T) {
 		assert.Contains(t, html, SourceURL, name+" must link the source it runs")
 		assert.NotContains(t, html, "buymeacoffee", name+" no longer solicits donations")
 	}
+}
+
+func TestStatsLinksToAboutAsAPlainNavigation(t *testing.T) {
+	// The index page swaps /about into #page-content via htmx to keep the
+	// search form's state alive. The stats page copied that link, but it has
+	// no state to keep - the swap left visitors reading about-content under a
+	// /stats URL, where refresh and share both resurrect the wrong page. Here
+	// the link must be an ordinary navigation.
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now())))
+
+	assert.Contains(t, html, `href="/about"`)
+	assert.NotContains(t, html, `hx-get="/about"`,
+		"stats must navigate to /about, not swap it in place")
 }
 
 func TestAboutDoesNotSpeakAsTheOriginalAuthor(t *testing.T) {

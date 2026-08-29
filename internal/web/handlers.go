@@ -378,14 +378,11 @@ func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
 
 func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	h.cacheable(w)
-	// htmx swaps this into a page that already has a masthead and a stylesheet.
-	// A direct visit has neither, and would otherwise arrive as unstyled prose
-	// with no way back to the search.
-	if r.Header.Get("HX-Request") == "" {
-		templates.Layout("About — ITCHGREP", templates.AboutPage(h.freshness(), h.coverage())).Render(r.Context(), w)
-		return
-	}
-	templates.About().Render(r.Context(), w)
+	// Always the full document. This used to answer HX-Request with a bare
+	// fragment for the masthead links to swap in place, but that left the
+	// visitor on the previous URL reading about-content; the links are plain
+	// navigations now, so nothing sends an HX-Request here any more.
+	templates.Layout("About — ITCHGREP", templates.AboutPage(h.freshness(), h.coverage())).Render(r.Context(), w)
 }
 
 // HandleStats serves the public traffic page. It renders inside the

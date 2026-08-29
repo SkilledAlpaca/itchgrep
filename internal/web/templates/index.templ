@@ -63,8 +63,13 @@ templ Masthead(age Freshness, coverage Coverage) {
 			// click further in, on the About page beside the credit that
 			// explains what it is - out here it was a third equal-weight
 			// destination competing with the two that concern this site.
+			// A plain navigation, not an htmx swap. Swapping /about into
+			// #page-content left the visitor reading about-content under
+			// whatever URL they were already on - refresh and share both
+			// resurrected the wrong page. Search state survives the round
+			// trip anyway: every applied filter lives in the query string.
 			<nav class="masthead-links">
-				<a href="/about" hx-get="/about" hx-swap="outerHTML" hx-target="#page-content">About</a>
+				<a href="/about">About</a>
 				<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">Source</a>
 			</nav>
 		</div>
