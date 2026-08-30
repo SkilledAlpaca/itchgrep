@@ -1,3 +1,10 @@
+// Command webserver is the public-facing binary: it loads the dataset
+// cmd/dataservice publishes (see internal/cache), serves the search UI and
+// its supporting pages over HTTP (see internal/web), and tracks the
+// no-PII traffic counters shown on /stats (see internal/metrics). It never
+// crawls itch.io itself - that is cmd/dataservice's job - and reads and
+// writes only the shared data directory the two binaries agree on (see
+// internal/storage).
 package main
 
 import (
@@ -60,6 +67,12 @@ func checkHealthz(port string, timeout time.Duration) error {
 	return nil
 }
 
+// initializeCache builds the cache and attempts one synchronous load before
+// main starts the router. If that load fails - the normal case on a brand
+// new deployment, where nothing has crawled yet - it does not block startup:
+// it hands back an empty cache and keeps retrying in the background, so the
+// server comes up and answers 503 (cache.ErrNotReady) rather than hanging
+// until the first crawl finishes hours later.
 func initializeCache() *cache.Cache {
 	pageSizeStr := os.Getenv("PAGE_SIZE")
 	pageSize, err := strconv.ParseInt(pageSizeStr, 10, 64)

@@ -1,3 +1,9 @@
+// Package logging is the one place both binaries write log lines through -
+// leveled text lines (Debug/Info/Warning/Error/Fatal) plus a level-free
+// Event line for the JSON access and probe records that must not carry a
+// prefix. It exists mainly to add a caller tag (file:line) to every line
+// without every call site having to know its own position - see
+// callerInfo.
 package logging
 
 import (
@@ -9,6 +15,9 @@ import (
 	"strconv"
 )
 
+// Log holds the level-specific writers Init builds. There is exactly one
+// instance, held in the package-level logInstance below; nothing in this
+// package is safe to use before Init has run at least once.
 type Log struct {
 	debugLogger   *log.Logger
 	infoLogger    *log.Logger
@@ -18,13 +27,15 @@ type Log struct {
 	eventLogger   *log.Logger
 }
 
-// single instance, initialized in Init
-var log_instance Log
+// logInstance is the single, package-wide logger, initialized in Init.
+var logInstance Log
 
-// each time we try to use a logging function, we use this to assert that
-// the logger has already been initialized.
+// assertInstanceExists is called at the top of every logging function to
+// guarantee Init has run. A caller that forgot to call Init gets a
+// default-configured logger (stdout) rather than a nil-pointer panic the
+// first time it tries to log anything.
 func assertInstanceExists() {
-	if (Log{}) == log_instance {
+	if (Log{}) == logInstance {
 		// this error is fatal, as it does not depend on the user system, only
 		// on the program correctness itself.
 		Init("", true)
@@ -56,47 +67,47 @@ func Init(log_path string, logToStdout bool) {
 	} else {
 		// using filepath is important here, since path separators are OS dependant
 		// and we don't know if the log_path ends with a trailing separator.
-		file_path := filepath.Join(filepath.Clean(log_path), "log.txt")
+		filePath := filepath.Join(filepath.Clean(log_path), "log.txt")
 
 		// try to find out if logpath + logfile exist
-		if _, err := os.Stat(file_path); err != nil {
+		if _, err := os.Stat(filePath); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				// file or path does not exists, create it
 				if err := os.MkdirAll(log_path, os.ModePerm); err != nil {
 					log.Printf(
 						"FAILED TO CREATE LOGFILE AT: %s, due to this error: %s",
-						file_path, err)
+						filePath, err)
 				}
 			} else {
 				// os.Stat failed, but not due to the file not existing. Reason unknown.
 				log.Printf(
 					"FAILED TO CHECK IF LOGFILE EXISTS: %s, due to this error: %s",
-					file_path, err)
+					filePath, err)
 			}
 		}
 		var err error
-		file, err = os.OpenFile(file_path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+		file, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {
 			log.Printf("FAILED TO OPEN LOG FILE AT: %s, due to this error: %s", log_path, err)
 		}
 	}
 
-	log_instance.debugLogger = log.New(file, "DEBG: ", log.Ldate|log.Ltime)
-	log_instance.infoLogger = log.New(file, "INFO: ", log.Ldate|log.Ltime)
-	log_instance.warningLogger = log.New(file, "WARN: ", log.Ldate|log.Ltime)
-	log_instance.errorLogger = log.New(file, "ERRO: ", log.Ldate|log.Ltime)
-	log_instance.fatalLogger = log.New(file, "FATL: ", log.Ldate|log.Ltime)
+	logInstance.debugLogger = log.New(file, "DEBG: ", log.Ldate|log.Ltime)
+	logInstance.infoLogger = log.New(file, "INFO: ", log.Ldate|log.Ltime)
+	logInstance.warningLogger = log.New(file, "WARN: ", log.Ldate|log.Ltime)
+	logInstance.errorLogger = log.New(file, "ERRO: ", log.Ldate|log.Ltime)
+	logInstance.fatalLogger = log.New(file, "FATL: ", log.Ldate|log.Ltime)
 	// note: ERRO and FATL sounds dumb, but having the same length for every prefix
 	// improves readability
-	log_instance.eventLogger = log.New(file, "", 0)
+	logInstance.eventLogger = log.New(file, "", 0)
 }
 
-// Info writes to the log-file specified in the settings,
+// Debug writes to the log-file specified in the settings,
 // using the 'DEBG:' specifier.
 func Debug(format string, v ...any) {
 	assertInstanceExists()
 	caller := callerInfo()
-	log_instance.debugLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
+	logInstance.debugLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
 }
 
 // Info writes to the log-file specified in the settings,
@@ -104,7 +115,7 @@ func Debug(format string, v ...any) {
 func Info(format string, v ...any) {
 	assertInstanceExists()
 	caller := callerInfo()
-	log_instance.infoLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
+	logInstance.infoLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
 }
 
 // Warning writes to the log-file specified in the settings,
@@ -112,7 +123,7 @@ func Info(format string, v ...any) {
 func Warning(format string, v ...any) {
 	assertInstanceExists()
 	caller := callerInfo()
-	log_instance.warningLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
+	logInstance.warningLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
 }
 
 // Error writes to the log-file specified in the settings,
@@ -120,7 +131,7 @@ func Warning(format string, v ...any) {
 func Error(format string, v ...any) {
 	assertInstanceExists()
 	caller := callerInfo()
-	log_instance.errorLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
+	logInstance.errorLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
 }
 
 // Event writes a single pre-formatted line to the same stream as the other
@@ -130,7 +141,7 @@ func Error(format string, v ...any) {
 // '{'.
 func Event(line string) {
 	assertInstanceExists()
-	log_instance.eventLogger.Print(line)
+	logInstance.eventLogger.Print(line)
 }
 
 // Fatal writes to the log-file specified in the settings,
@@ -138,6 +149,6 @@ func Event(line string) {
 func Fatal(format string, v ...any) {
 	assertInstanceExists()
 	caller := callerInfo()
-	log_instance.fatalLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
+	logInstance.fatalLogger.Printf("%s: "+format, append([]interface{}{caller}, v...)...)
 	os.Exit(1)
 }

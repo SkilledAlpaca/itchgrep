@@ -1,3 +1,10 @@
+// Package templates is the rendering layer: the templ-generated markup
+// (*_templ.go, built from the .templ sources) plus the plain-Go view models
+// this package hand-writes for it - Filters (this file), Coverage,
+// Freshness, History, Traffic, and the Atom/sitemap/OpenSearch XML
+// documents. Handlers in internal/web build one of these from a request and
+// the loaded cache.Results, and the templates render it; nothing in this
+// package reads a request or the cache directly.
 package templates
 
 import (

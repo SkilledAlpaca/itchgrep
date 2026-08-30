@@ -296,6 +296,16 @@ func buildQuery(opts SearchOptions, likeTags []string) query.Query {
 	}
 
 	if rest != "" {
+		// Three passes over the same text, layered by how literally they read
+		// it, each boosted higher than the last so a better-matching pass
+		// always outranks a looser one when both match the same document.
+		// Both fuzzy passes allow a single-character edit (fuzzyness 1:
+		// one insertion, deletion, substitution or transposition); what
+		// differs between them is the prefix, the number of leading
+		// characters that must match exactly before the edit is allowed -
+		// veryFuzzy requires only the first 2 characters exact, so it drifts
+		// further from what was typed, while fuzzy requires the first 4 and
+		// so stays closer. exact requires the term precisely as typed.
 		veryFuzzyQuery := buildFuzzyQuery(rest, 1, 2)
 		veryFuzzyQuery.SetBoost(2)
 		fuzzyQuery := buildFuzzyQuery(rest, 1, 4)
@@ -441,13 +451,13 @@ func indexHasPriceUSD(index bleve.Index) bool {
 func phraseQuery(phrase string) query.Query {
 	title := bleve.NewMatchPhraseQuery(phrase)
 	title.SetField("Title")
-	title.SetBoost(3)
+	title.SetBoost(titleBoost)
 	description := bleve.NewMatchPhraseQuery(phrase)
 	description.SetField("Description")
-	description.SetBoost(2)
+	description.SetBoost(descriptionBoost)
 	tags := bleve.NewMatchPhraseQuery(phrase)
 	tags.SetField("Tags")
-	tags.SetBoost(4)
+	tags.SetBoost(tagBoost)
 	return bleve.NewDisjunctionQuery(title, description, tags)
 }
 

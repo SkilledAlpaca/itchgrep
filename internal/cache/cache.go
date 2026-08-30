@@ -1,3 +1,9 @@
+// Package cache is the webserver's in-memory view of the published dataset:
+// the asset list, the bleve search index, the tag universe, and the
+// exchange-rate snapshot they were built with. It is the one place that
+// knows how to load that data from internal/storage, keep it fresh as the
+// dataservice republishes, and answer a search or a plain browse against
+// whichever copy is currently loaded (see search.go's Find).
 package cache
 
 import (
@@ -33,6 +39,12 @@ var ErrNotReady = errors.New("cache: not ready")
 // picked up in seconds instead of up to a minute.
 const expiryCheckTTL = 5 * time.Second
 
+// Cache is the webserver's loaded copy of one published dataset: the asset
+// list, the bleve search index, and the metadata (tag universe, exchange
+// rates, coverage stats) they were published alongside. It is safe for
+// concurrent use - every accessor takes cacheLock - and RefreshDataCache
+// swaps a newly loaded dataset in atomically, so a request in flight never
+// sees a mix of old and new data.
 type Cache struct {
 	cacheLock sync.RWMutex
 
@@ -106,6 +118,12 @@ type Cache struct {
 	refreshErr  error
 }
 
+// NewCache builds an empty Cache with no data loaded yet - callers must call
+// RefreshDataCache (directly, or via Find/IsCacheExpired) before it can serve
+// anything. pageSize is how many assets one page of results holds; it is
+// fixed for the life of the Cache rather than reloaded from storage, since
+// changing it mid-run would change what "page 2" means for a URL already
+// shared.
 func NewCache(pageSize int64) *Cache {
 	return &Cache{
 		dataMap:         make(map[string]int),
@@ -201,6 +219,10 @@ func (c *Cache) DataUpdatedTime() time.Time {
 	return c.dataUpdatedTime
 }
 
+// IsCacheExpired reports whether the loaded dataset is older than what
+// storage now holds, throttling the underlying check to at most once per
+// expiryCheckTTL so it costs nothing on the hot request path. A cache that
+// has never loaded anything is always expired.
 func (c *Cache) IsCacheExpired() bool {
 	c.cacheLock.RLock()
 	dataUpdatedTime := c.dataUpdatedTime
@@ -386,20 +408,39 @@ func (c *Cache) doRefresh() error {
 	return nil
 }
 
+// Field weights shared by every text query buildFuzzyQuery, buildExactQuery
+// and phraseQuery (search.go) build. Tags outweigh the rest because they are
+// curated classification rather than prose - a hit there is a stronger
+// signal than one in a description that merely mentions the word - and
+// title beats description beats author because, in that order, that is how
+// specific a match tends to be to what someone actually typed.
+const (
+	titleBoost       = 3
+	descriptionBoost = 2
+	authorBoost      = 1
+	tagBoost         = 4
+)
+
+// buildFuzzyQuery builds a disjunction over Title, Description, Author and
+// Tags that tolerates typos: fuzzyness is the edit distance bleve's
+// MatchQuery allows, and prefixLen is how many leading characters of each
+// term must match exactly before fuzziness applies. buildQuery (search.go)
+// calls this twice, at two different prefix lengths, to layer a tight and a
+// loose fuzzy pass over the same query text.
 func buildFuzzyQuery(queryString string, fuzzyness int, prefixLen int) *query.DisjunctionQuery {
 	titleQuery := bleve.NewMatchQuery(queryString)
 	titleQuery.SetField("Title")
-	titleQuery.SetBoost(3)
+	titleQuery.SetBoost(titleBoost)
 	titleQuery.SetPrefix(prefixLen)
 	titleQuery.SetFuzziness(fuzzyness)
 	descriptionQuery := bleve.NewMatchQuery(queryString)
 	descriptionQuery.SetField("Description")
-	descriptionQuery.SetBoost(2)
+	descriptionQuery.SetBoost(descriptionBoost)
 	descriptionQuery.SetPrefix(prefixLen)
 	descriptionQuery.SetFuzziness(fuzzyness)
 	authorQuery := bleve.NewMatchQuery(queryString)
 	authorQuery.SetField("Author")
-	authorQuery.SetBoost(1)
+	authorQuery.SetBoost(authorBoost)
 	authorQuery.SetPrefix(prefixLen)
 	authorQuery.SetFuzziness(fuzzyness)
 	// Tags are curated classification rather than prose, so a hit here is a
@@ -408,7 +449,7 @@ func buildFuzzyQuery(queryString string, fuzzyness int, prefixLen int) *query.Di
 	// splits into terms, so a "pixel art" query matches without special casing.
 	tagQuery := bleve.NewMatchQuery(queryString)
 	tagQuery.SetField("Tags")
-	tagQuery.SetBoost(4)
+	tagQuery.SetBoost(tagBoost)
 	tagQuery.SetPrefix(prefixLen)
 	tagQuery.SetFuzziness(fuzzyness)
 
@@ -417,19 +458,22 @@ func buildFuzzyQuery(queryString string, fuzzyness int, prefixLen int) *query.Di
 	return query
 }
 
+// buildExactQuery is buildFuzzyQuery without the fuzziness or prefix: an
+// exact-term match over the same four fields, at the same relative weights,
+// for the un-fuzzed disjunct buildQuery scores highest of the three.
 func buildExactQuery(queryString string) *query.DisjunctionQuery {
 	titleQuery := bleve.NewMatchQuery(queryString)
 	titleQuery.SetField("Title")
-	titleQuery.SetBoost(3)
+	titleQuery.SetBoost(titleBoost)
 	descriptionQuery := bleve.NewMatchQuery(queryString)
 	descriptionQuery.SetField("Description")
-	descriptionQuery.SetBoost(2)
+	descriptionQuery.SetBoost(descriptionBoost)
 	authorQuery := bleve.NewMatchQuery(queryString)
 	authorQuery.SetField("Author")
-	authorQuery.SetBoost(1)
+	authorQuery.SetBoost(authorBoost)
 	tagQuery := bleve.NewMatchQuery(queryString)
 	tagQuery.SetField("Tags")
-	tagQuery.SetBoost(4)
+	tagQuery.SetBoost(tagBoost)
 
 	// Combine queries with a disjunction (OR) query
 	query := bleve.NewDisjunctionQuery(titleQuery, descriptionQuery, authorQuery, tagQuery)

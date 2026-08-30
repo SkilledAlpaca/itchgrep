@@ -1,3 +1,9 @@
+// Package fetcher talks to itch.io: it fetches and parses browse pages
+// (this file), plans which views of the catalogue are worth crawling
+// (planner.go), and discovers the tag vocabulary those views are built from
+// (tags.go). Every outbound request in the package goes through doGet, so
+// request pacing and the crawler's identifying User-Agent apply no matter
+// which of those three jobs is asking.
 package fetcher
 
 import (
@@ -20,6 +26,11 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+// itchResponse is the JSON envelope itch.io's browse endpoint returns for
+// one page: NumItems is how many results the whole view holds (used to work
+// out how many items fit per page), Page echoes back the page number
+// requested, and Content is a fragment of HTML holding that page's game
+// cells - see ParseAssetPage.
 type itchResponse struct {
 	NumItems int64  `json:"num_items"`
 	Page     int64  `json:"page"`
@@ -228,6 +239,17 @@ func doGet(url string) (*http.Response, uint64, error) {
 	return resp, epoch, err
 }
 
+// maxFetchAttempts bounds the retry loop in both FetchAssetPage and
+// GetAssetCount. Paired with calculateBackoff's exponential delay (capped at
+// maxBackoff), this lets a fetch keep retrying for roughly ten minutes
+// before giving up - long enough to ride out a transient outage or a run of
+// 429s without letting one stuck page hang the crawl forever.
+const maxFetchAttempts = 21
+
+// ParseAssetPage extracts the asset cards out of one page's HTML fragment
+// (respData.Content), stamping each with pageNum as its InvPopularity - see
+// that field's own doc comment on models.Asset for why the page number
+// doubles as a popularity rank.
 func ParseAssetPage(respData itchResponse, pageNum int64) ([]models.Asset, error) {
 	// parse html
 	queryDoc, err := goquery.NewDocumentFromReader(strings.NewReader(respData.Content))
@@ -281,13 +303,16 @@ func ParseAssetPage(respData itchResponse, pageNum int64) ([]models.Asset, error
 type FetchOutcome int
 
 const (
-	FetchOK FetchOutcome = iota
-	FetchExhausted
-	FetchFailed
+	FetchOK        FetchOutcome = iota // page fetched and decoded successfully
+	FetchExhausted                     // 404: past the last page of this view, not an error
+	FetchFailed                        // network error, unexpected status, or retries exhausted
 )
 
+// FetchAssetPage fetches and decodes one page of a slice, retrying on
+// failure or a 429 up to maxFetchAttempts times. See FetchOutcome for how
+// the three ways this can end are told apart.
 func FetchAssetPage(slice Slice, pageNum int64) (itchResponse, FetchOutcome) {
-	maxAttempts := 21
+	maxAttempts := maxFetchAttempts
 	baseDelay := 1 * time.Second
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -424,8 +449,11 @@ func parseRetryAfter(value string) (time.Duration, bool) {
 // point it at an httptest.Server.
 var assetCountURL = "https://itch.io/game-assets"
 
+// GetAssetCount fetches itch.io's own reported total for the whole asset
+// catalogue, off the "(N results)" figure on the root browse page. It is the
+// denominator crawlAndCollect (cmd/dataservice) measures coverage against.
 func GetAssetCount() (int64, error) {
-	maxAttempts := 21
+	maxAttempts := maxFetchAttempts
 	baseDelay := 1 * time.Second
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {

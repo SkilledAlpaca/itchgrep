@@ -153,6 +153,10 @@ func rebuildIndexFromPublishedData() error {
 // The caller owns storage.PublishIndex(): building and publishing are kept
 // separate so a caller that wants to inspect or discard a build without
 // publishing it - a test, primarily - can.
+// indexBatchSize is how many documents buildIndex accumulates in one
+// bleve.Batch before flushing it to disk.
+const indexBatchSize = 1500
+
 func buildIndex(assets []models.Asset, rates money.Rates) (count int, err error) {
 	// Built at the staging path, which sits beside the published index so
 	// that publishing is a rename rather than a copy. A previous run killed
@@ -228,7 +232,11 @@ func buildIndex(assets []models.Asset, rates money.Rates) (count int, err error)
 			return 0, fmt.Errorf("indexing asset %s: %w", asset.GameId, err)
 		}
 		assetsIndexed++
-		if i%1500 == 0 && i != 0 { // we index in batches of 1500
+		// Flushed in batches rather than one bleve.Batch per document (too
+		// many small writes to be efficient) or one for the whole run (holds
+		// every document in memory at once). indexBatchSize is a round
+		// number chosen as a middle ground between the two, not a tuned one.
+		if i%indexBatchSize == 0 && i != 0 {
 			logging.Info("Batching assets: %d/%d", i, len(smolAssets))
 			if err := newIndex.Batch(b); err != nil {
 				newIndex.Close()

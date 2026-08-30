@@ -1,3 +1,10 @@
+// Package web is the webserver's HTTP surface: the route handlers, the
+// request-scoped middleware (rate limiting, security headers, access
+// logging, scanner filtering), and the small helpers that turn a request's
+// query string into the internal/cache.SearchOptions a search actually
+// runs. It renders through internal/web/templates and reads the loaded
+// dataset through internal/cache; it does not itself know how that dataset
+// gets built or persisted.
 package web
 
 import (
@@ -92,6 +99,8 @@ type handler struct {
 	metrics *metrics.Counters
 }
 
+// NewHandler builds the handler every page route in cmd/webserver/main.go is
+// registered against. m may be nil - see the metrics field's own comment.
 func NewHandler(cache *cache.Cache, crawlInterval time.Duration, m *metrics.Counters) *handler {
 	return &handler{
 		cache:         cache,
@@ -544,12 +553,14 @@ func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
 	templates.SearchFailed().Render(r.Context(), w)
 }
 
+// HandleAbout serves /about: the project's credits and licence page.
+//
+// Always the full document. This used to answer HX-Request with a bare
+// fragment for the masthead links to swap in place, but that left the
+// visitor on the previous URL reading about-content; the links are plain
+// navigations now, so nothing sends an HX-Request here any more.
 func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	h.cacheable(w)
-	// Always the full document. This used to answer HX-Request with a bare
-	// fragment for the masthead links to swap in place, but that left the
-	// visitor on the previous URL reading about-content; the links are plain
-	// navigations now, so nothing sends an HX-Request here any more.
 	templates.Layout("About — ITCHGREP", templates.AboutPage(h.freshness(), h.coverage())).Render(r.Context(), w)
 }
 

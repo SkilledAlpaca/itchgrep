@@ -1,3 +1,9 @@
+// Package models holds the data shapes shared by every part of itchgrep: the
+// asset itself (Asset), its smaller indexed form (IndexedAsset), and the
+// small pieces of crawl bookkeeping (Stats, CrawlRecord, Tag, Traffic) that
+// travel between the dataservice crawler, internal/storage, and the
+// webserver. It depends on nothing else in this module, so any of those can
+// import it without a cycle.
 package models
 
 import (

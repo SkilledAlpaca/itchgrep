@@ -39,6 +39,8 @@ import (
 	"itchgrep/pkg/money"
 )
 
+// File names for the objects this package persists, each written with
+// writeAtomic and living directly under Dir().
 const (
 	DataFileName       = "assets.json"
 	TagsFileName       = "tags.json"
@@ -188,6 +190,10 @@ func readJSON(name string, v any) (time.Time, error) {
 // a new dataset is ready.
 func PutAssets(assets []models.Asset) error { return writeJSON(DataFileName, assets) }
 
+// GetAssets returns the published asset list. A missing file means nothing
+// has ever published on this volume - see the callers in cmd/dataservice and
+// internal/cache, which both treat that as "start from nothing" rather than
+// as a fault.
 func GetAssets() ([]models.Asset, error) {
 	var assets []models.Asset
 	if _, err := readJSON(DataFileName, &assets); err != nil {
@@ -196,6 +202,11 @@ func GetAssets() ([]models.Asset, error) {
 	return assets, nil
 }
 
+// GetAssetsUpdateTime is when the asset list was last written. Since
+// PutAssets is always the last write of a publish (see PutAssets' own doc
+// comment and publishCrawl in cmd/dataservice), this is the moment a
+// complete, self-consistent dataset became available - which is what
+// internal/cache watches to decide a refresh is due.
 func GetAssetsUpdateTime() (time.Time, error) {
 	fi, err := os.Stat(pathTo(DataFileName))
 	if err != nil {
@@ -339,6 +350,8 @@ type Checkpoint struct {
 // 3: added Asset.PayWhatYouWant and Asset.InvRecency.
 const CheckpointVersion = 3
 
+// PutCheckpoint writes cp as the in-progress crawl's resumable state,
+// stamping it with the current CheckpointVersion.
 func PutCheckpoint(cp Checkpoint) error {
 	// Stamped here rather than by the caller, which could forget.
 	cp.Version = CheckpointVersion

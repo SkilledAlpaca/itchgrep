@@ -1,3 +1,10 @@
+// Command dataservice is the crawler binary: it periodically walks itch.io's
+// asset catalogue (see internal/fetcher), builds a fresh search index and
+// asset list from what it finds, and publishes both to the shared data
+// directory cmd/webserver reads from (see internal/storage). It also
+// exposes POST /trigger-fetch to start a crawl on demand, and self-heals an
+// unopenable published index at startup (see selfheal.go) without waiting
+// for the next scheduled crawl.
 package main
 
 import (
@@ -267,6 +274,9 @@ func startScrape(onDone func(error)) bool {
 	return true
 }
 
+// handleFetchTrigger is the /trigger-fetch endpoint: it starts a crawl in
+// the background and returns immediately, without waiting for the crawl
+// itself to finish.
 func handleFetchTrigger(w http.ResponseWriter, r *http.Request) {
 	// POST only. This is a state-changing action - it starts a crawl that can
 	// run for hours - and GET must stay side-effect-free: a GET is what any
