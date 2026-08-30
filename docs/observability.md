@@ -85,6 +85,40 @@ Written by `internal/web/probes.go`'s `ProbeFilter`, which runs ahead of routing
 
 `docker logs -f --tail 0` only replays lines written **after** the follower reconnects — anything logged while it was disconnected is lost, not replayed, because Docker's log stream has no resumable cursor to replay from. These markers exist specifically to make that gap visible in `access.jsonl` rather than silent: if you see a `start`/`reconnect` marker with a suspiciously long gap in timestamps before it, that gap is genuinely missing data, not "no traffic occurred."
 
+## Log analysis recipes
+
+These `jq` queries answer the questions the exported logs exist for. Run them on the Unraid host, in the export directory (`cd /mnt/user/appdata/itchgrep/logs`); `jq` ships with Unraid. The records they read are the [access records](#access-records-kindaccess) described earlier.
+
+Top talkers by (network-truncated) IP:
+
+```bash
+jq -s -c 'group_by(.ip) | map({ip: .[0].ip, count: length}) | sort_by(-.count)' access.jsonl
+```
+
+404 clusters on routes that actually exist (a live route 404ing a lot usually means a stale link, not a scanner — probe records never carry a non-empty `route`):
+
+```bash
+jq -s -c '
+  map(select(.status == 404 and .route != ""))
+  | group_by(.route)
+  | map({route: .[0].route, count: length})
+  | sort_by(-.count)
+' access.jsonl
+```
+
+p95 request duration by route:
+
+```bash
+jq -s -c '
+  group_by(.route)
+  | map({
+      route: .[0].route,
+      p95: ((map(.dur_ms) | sort) as $s | $s[(($s | length - 1) * 0.95 | floor)]),
+      count: length
+    })
+' access.jsonl
+```
+
 ## Metrics
 
 `internal/metrics` is an in-process, no-PII tally — not a log reader. It exists because the request logs live only in Docker's `json-file` buffer inside the container, and the distroless runtime image has no Docker client to read them back even if that were desirable (it isn't — see the package comment: "counters cannot leak what they never store").

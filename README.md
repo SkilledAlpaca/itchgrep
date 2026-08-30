@@ -5,471 +5,137 @@
 Full-text search over the itch.io game-asset catalogue, running at
 [itchgrep.com](https://itchgrep.com/).
 
-itch.io offers no text search scoped to assets — you browse by tag, and any one
-view stops at roughly 7,200 results, so whatever ranks below that is unreachable
-however you page. itchgrep indexes the catalogue in full and searches titles,
-descriptions, tags and authors at once, adding tag exclusion, unlimited tag
-combinations, cross-currency price comparison and live facet counts on top.
+itch.io offers no text search scoped to assets — you browse by tag, and any
+one view stops at roughly 7,200 results, so whatever ranks below that is
+unreachable however you page. itchgrep crawls the catalogue into its own
+search index and searches titles, descriptions, tags, and authors at once,
+adding tag exclusion, unlimited tag combinations, cross-currency price
+comparison, and live facet counts on top.
 
-![Searching the itch.io asset catalogue by text, shown in the light theme on the
-left of the diagonal and the dark theme on the right](.github/screenshot-search.png)
+![Searching the itch.io asset catalogue by text, shown in the light theme on
+the left of the diagonal and the dark theme on the right](.github/screenshot-search.png)
 
-<sub>One page, split down the diagonal: light theme left, dark theme right. The
-site follows whichever your system asks for. Cover art and creator names are
-blurred in these screenshots; they belong to the asset authors, not to this
-project. Everything else is the real UI against a real index.</sub>
+<sub>One page, split down the diagonal: light theme left, dark theme right.
+Cover art and creator names are blurred in these screenshots; they belong to
+the asset authors, not to this project.</sub>
 
-## Credit
+## What it does
+
+- Searches four weighted fields at once (tags, title, description, author),
+  with exact and fuzzy matching, plus exact phrase search for quoted text.
+- Filters by tag (including exclusion), price, author, and currency, with
+  live facet counts as you narrow.
+- Reaches the whole catalogue by crawling many tag-filtered views and
+  deduplicating, rather than the ~7,200-asset ceiling of any single itch.io
+  browse view — itch.io itself also caps a browse view at two combined tags,
+  offers no tag exclusion, and cannot compare prices across currencies.
+- Works with JavaScript disabled — every control is a plain link or GET form,
+  so any search or filter combination is a URL you can share or bookmark:
+
+  ```
+  /?q=pixel+art                                full-text search
+  /?q="pixel art"                              quoted terms match as a phrase
+  /?tags=2d,pixel-art&not=3d                   require tags, exclude one
+  /?author=ana&price=under-5&sort=title&cur=EUR
+  ```
+
+See [docs/architecture.md](docs/architecture.md) for how the search itself is
+built.
+
+## Architecture, in brief
+
+Two Go binaries share one data directory and nothing else:
+
+- **`dataservice`** crawls itch.io on a schedule, builds a search index, and
+  publishes it.
+- **`webserver`** serves the search page from whatever index `dataservice`
+  last published. It never contacts itch.io itself.
+
+In production, a Cloudflare Tunnel sits in front of `webserver` so the origin
+is never directly exposed to the internet. See
+[docs/architecture.md](docs/architecture.md) for the full picture and
+[docs/infrastructure.md](docs/infrastructure.md) for how the pieces are
+hosted.
+
+## Requirements
+
+- [Docker Engine and the Docker Compose plugin](https://docs.docker.com/get-docker/) —
+  the only two things you need to run itchgrep locally.
+- To edit the source: Go 1.27 or later, the `templ` CLI pinned to this
+  repository's `go.mod` version, and (recommended) the [Task](https://taskfile.dev)
+  CLI. [docs/getting-started.md](docs/getting-started.md) covers installing
+  each of these and verifying the install.
+
+## Quick start
+
+```
+git clone https://github.com/SkilledAlpaca/itchgrep.git
+cd itchgrep
+docker compose up --build
+```
+
+This builds both images, starts `dataservice` and `webserver` together, and
+serves the search page at [localhost:62686](http://localhost:62686)
+immediately — it answers `503` until the first crawl publishes, which takes
+about six hours for the full catalogue. Set `SCRAPE_MAX_PAGES` first (see
+[docs/configuration.md](docs/configuration.md#scrape_max_pages)) for a
+small, fast crawl instead.
+
+To edit the source and iterate without a container rebuild each time, see
+[docs/getting-started.md](docs/getting-started.md) — the full walkthrough,
+including generating templates, running the two binaries directly with
+`task`, and what a working page looks like the first time.
+
+## Where everything else lives
+
+| Task | Document |
+| --- | --- |
+| Set up a local dev environment, build, and run | [docs/getting-started.md](docs/getting-started.md) |
+| Understand how the system fits together | [docs/architecture.md](docs/architecture.md) |
+| Look up any environment variable | [docs/configuration.md](docs/configuration.md) |
+| Deploy or update the production host | [docs/deployment.md](docs/deployment.md) |
+| Understand the hosting setup (Unraid, Cloudflare, GitHub) | [docs/infrastructure.md](docs/infrastructure.md) |
+| Diagnose something that isn't working | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Back up or restore data, or recover from a lost host or credential | [docs/disaster-recovery.md](docs/disaster-recovery.md) |
+| Read logs, metrics, and health checks | [docs/observability.md](docs/observability.md) |
+| Check what depends on what, and how to upgrade it | [docs/dependencies.md](docs/dependencies.md) |
+| Understand the CI pipeline | [docs/ci-cd.md](docs/ci-cd.md) |
+| Understand what's tested and how to run it | [docs/testing.md](docs/testing.md) |
+| Find the recipe for a common change | [docs/patterns.md](docs/patterns.md) |
+| Look up a project-specific term | [docs/glossary.md](docs/glossary.md) |
+| See why a specific design decision was made | [docs/architecture/decisions/](docs/architecture/decisions/) |
+| Learn the Go conventions this codebase uses | [docs/languages/go.md](docs/languages/go.md) |
+| See what's still unverified and needs a human | [docs/open-questions.md](docs/open-questions.md) |
+
+[docs/README.md](docs/README.md) indexes the same pages grouped by task, if
+you'd rather browse than search this table.
+
+For maintaining this project day to day, see [MAINTAINER.md](MAINTAINER.md).
+For contributing a change, see [CONTRIBUTING.md](CONTRIBUTING.md). To report
+a security issue, see [SECURITY.md](SECURITY.md).
+
+## Project status
+
+Live at [itchgrep.com](https://itchgrep.com/), maintained by one person. A
+weekly crawl and CI on every push run unattended; see
+[MAINTAINER.md](MAINTAINER.md) for what that maintenance actually involves.
+
+## License and credit
 
 itchgrep was created by [winterveil](https://github.com/wintermute-cell); the
 original lives at
 [wintermute-cell/itchgrep](https://github.com/wintermute-cell/itchgrep). This
-repository is a fork, licensed as the original under GPL-3.0, and is not
-operated by the original author.
-
-## Disclaimer
-
-This fork was created, updated and "enhanced" using
-[Claude Code](https://claude.com/claude-code), Anthropic's coding agent. Almost
-everything added on top of winterveil's original — the crawl planner, the search
-and filtering, the UI, the tests and this README — was written by it under human
-direction and review.
-
-That is stated plainly rather than buried: it is running in production and the
-tests pass, but it is agent-written code, and you should read it before you
-trust it with anything of yours.
-
-## What you can search
-
-A query matches four fields at once, weighted by how much a hit in each is
-worth:
-
-| Field | Weight | |
-| --- | --- | --- |
-| `Tags` | ×4 | A deliberate label, not a coincidence of prose |
-| `Title` | ×3 | |
-| `Description` | ×2 | **itch.io displays this line but never searches it** |
-| `Author` | ×1 | |
-
-Each query runs three passes and unions them: exact (×6), fuzzy at a 4-character
-prefix (×4), and fuzzy at a 2-character prefix (×2). `tilset` finds tilesets
-while the correct spelling still ranks first. Quoted text bypasses all of it and
-matches as an adjacent phrase.
-
-Seven more fields exist to filter, sort and count rather than to be searched:
-tag slugs and author keys as indivisible keywords (so `pixel-art` is one term,
-not `pixel` + `art`), a free/paid flag, a dollar-normalised price, and itch.io's
-own popularity and newest ranks.
-
-### What itch.io cannot do
-
-- **Page past ~7,200 assets in a view.** itch.io serves at most 200 pages of
-  any one browse view, so a popular tag has a floor you cannot page below.
-- **Combine more than two tags.** A third is a `403`.
-- **Exclude a tag.** There is no "NOT tag" facet in its URL grammar at all.
-- **Compose filters.** A sort plus two tags is a `403`; a sort plus a price
-  filter is a `403`.
-- **Compare prices across currencies.** Sellers price in ~24 of them, so
-  "under $5" is not a question itch.io can answer.
-- **Count facets.** No indication of how many results a co-tag would leave.
-
-What itch.io has that this does not is authority: it is current to the second,
-and it knows about everything the last crawl missed.
-
-![Tag filters, exclusions and live facet counts](.github/screenshot-filters.png)
-
-## URL reference
-
-Everything the UI can do is expressed in the URL, so any view is a link you can
-share, bookmark or reload:
-
-```
-/                                   the catalogue, most popular first
-/?q=pixel+art                       full-text search
-/?q="pixel art"                     quoted terms match as a phrase
-/?tags=2d,pixel-art                 require tags  (AND)
-/?not=3d                            exclude tags
-/?author=ana                        one creator
-/?price=free                        free  (or paid, under-5, under-20)
-/?sort=title                        A-Z  (or popular, relevance, price, recent)
-/?cur=EUR                           show prices converted to euros
-/?q=tileset&tags=2d&not=3d&price=under-5    all of it at once
-```
-
-Every control is a plain link with htmx layered on top, so search, filters,
-sorting and paging all work with JavaScript disabled. The currency picker is a
-plain GET form for the same reason.
-
-A few behaviours are worth knowing:
-
-- **The masthead states its own limits.** Under the wordmark: how old the index
-  is, what fraction of itch.io's catalogue it holds, and when the next rebuild
-  is due. A count with no denominator invites the reading that it is everything,
-  which turns "no results" into false evidence that an asset does not exist; an
-  age with no schedule beside it reads as neglect rather than as routine. Exact
-  times are shown on hover in the reader's own timezone.
-- **Tags combine with AND.** The sidebar counts tags carried by the *current*
-  results, so it maps where the remaining matches are rather than describing the
-  36 on screen. Each row also offers a `−` that excludes the tag instead.
-- **Free versus paid is read from the listing, not inferred.** A
-  pay-what-you-want asset with a `$0` minimum carries a price *tag* but no price
-  *value*, and itch.io counts it as free. Pay-what-you-want is recorded
-  separately and shown as "Name your price", because an author asking for a
-  voluntary payment is doing something different from giving the asset away.
-- **"Recently added" is not a sort by date.** itch.io's markup carries no
-  publication date; this orders by position in itch.io's newest view, which the
-  crawl visits for that purpose alone and which only reaches ~7,200 assets. The
-  control is hidden when the index carries no ranks.
-- **Bounded price filters need converted prices.** `under-5` and `under-20` are
-  ranges over a dollar value baked in at index time. They are hidden on an index
-  built without one, rather than returning an empty page.
-
-![An applied tag, an excluded tag, and prices converted to euros](.github/screenshot-currency.png)
-
-### Exchange rates
-
-At the end of every crawl the dataservice fetches the [ECB daily euro reference
-rates](https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml) and stores
-them as `rates.json` beside the index. They are fetched *with* the index because
-the dollar value used for `under-5` and `sort=price` is baked into each
-document, so the rates the index was built with must be the rates the site
-explains itself with. On failure the last snapshot is reused, then a table baked
-into the binary.
-
-Converted figures are approximate and presented that way: `≈` on the badge, the
-original price and rate date on hover, and a link to the source under the picker.
-
-## Running it
-
-`docker` is the only dependency:
-
-```bash
-docker compose up --build
-```
-
-This runs the `dataservice`, triggers a full crawl and index of itch.io, and
-brings up the `webserver` on [localhost:62686](http://localhost:62686) straight
-away — it does not wait for the crawl.
-
-> Use `--build` after any change to the Go source. Plain `docker compose up`
-> reuses the previous image and will silently run stale code.
-
-The first run crawls the whole catalogue (~108,000 assets) at a deliberately
-polite 2 requests/second, so expect around six hours. Progress is in the
-`dataservice` logs. Results live in the `itchgrep-data` volume, so later runs
-come up immediately.
-
-The webserver stays up throughout. On the first run it answers `503` until the
-crawl publishes; on later runs it serves the *previous* index and swaps
-atomically when the new one lands, so there is no downtime.
-
-Both services share one volume at `/data` (`DATA_DIR`), and that directory *is*
-the storage layer: `assets.json`, `tags.json`, `checkpoint.json` and
-`index.bleve/`. Writes land in a temporary file and are renamed into place, so a
-reader never sees a half-written file.
-
-The index rebuilds itself once it is older than `CRAWL_INTERVAL` (a week by
-default). That check runs against the timestamp of the data on disk rather than
-a timer started at boot, so restarts — updates, reboots, a nightly backup — do
-not postpone it.
-
-- Re-crawl now, without waiting: `curl http://localhost:62685/trigger-fetch`
-- Throw away all scraped data: `docker compose down -v`
-- Generate `.go` from `.templ` files: `task templ` (not required to build; it
-  just stops the language server complaining)
-
-To run the services directly instead of via Compose:
-
-```bash
-DATA_DIR=./data go run ./cmd/dataservice   # then curl localhost:8080/trigger-fetch
-DATA_DIR=./data PAGE_SIZE=36 go run ./cmd/webserver
-```
-
-### Configuration
-
-Settings are environment variables. The portable way — identical in bash,
-PowerShell and cmd — is a `.env` file next to `docker-compose.yml`, which
-Compose reads automatically:
-
-```
-cp .env.example .env      # `copy` on Windows
-```
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CRAWL_INTERVAL` | `168h` | Rebuilds the index whenever the published one is older than this. `0` disables it, leaving `/trigger-fetch` as the only way to refresh. Read by both services — the webserver uses it to say when the next update is due. |
-| `SCRAPE_RPS` | `2` | Outbound requests/second, retries included. Fixed — the fetcher never speeds up or slows down on its own. |
-| `SCRAPE_MAX_PAGES` | unset | Caps total pages across every view, for smoke-testing the whole pipeline. Also disarms `COVERAGE_FLOOR`. |
-| `COVERAGE_TARGET` | `0.95` | Stops the crawl once that fraction is collected. Never triggers in practice. |
-| `COVERAGE_FLOOR` | `0.75` | Refuses to publish below this, leaving the previous index in place. **Keep it below ~0.89** or it rejects every healthy run. |
-| `INDEXER_TIMEOUT_SECONDS` | `43200` | How long the bootstrap container waits for the first crawl before reporting failure. |
-| `SLICE_MIN_YIELD` | `0.05` | Abandons a view once it stops yielding new assets. Assets appear in ~5 views each, so without it overlap dominates. |
-| `CHECKPOINT_MAX_AGE` | `24h` | How stale a checkpoint may be before it is ignored. Crawls checkpoint every 3 minutes and resume rather than restart. |
-| `TAG_CACHE_MAX_AGE` | `168h` | How long `tags.json` is reused before tags are rediscovered. |
-| `MAX_TAGS` | `1000` | Upper bound on the discovered tag vocabulary. |
-| `PAGE_SIZE` | `36` | Assets per page of results. |
-| `RATE_LIMIT_RPS` | `5` | Per-client limit on the webserver; `0` disables. |
-| `TRUST_PROXY_HEADERS` | `false` | Read `CF-Connecting-IP` for rate limiting. See below. |
-
-> **If you see a flood of 429s, check the cookie jar before touching
-> `SCRAPE_RPS`.** itch.io sets an `itchio_token` cookie and refuses cookieless
-> clients about half the time no matter how slowly they ask — measured at 8/16
-> requests refused without the jar versus 0/16 with it. That failure looks
-> exactly like an aggressive rate limit and cannot be fixed by slowing down. The
-> `429s:` counter in the progress log makes it visible.
-
-### How the crawl reaches the whole catalogue
-
-itch.io serves at most 200 pages per browse view (~7,200 assets) while the
-catalogue holds ~108,000, so paging `/game-assets` alone reaches under 7% of it.
-The crawl gets past that by fetching many *filtered* views and deduplicating by
-`GameId`. The URL grammar it accepts is narrow, and violating it fails loudly:
-
-```
-/game-assets                    root
-/game-assets/<sort>             newest | new-and-popular | top-rated
-/game-assets/tag-A              any single tag
-/game-assets/<sort>/tag-A       sort plus one tag
-/game-assets/tag-A/tag-B        two tags, default sort only, A < B
-/game-assets/<filter>           free | store | last-30-days | genre-*
-/game-assets/<filter>/tag-A     filter plus one tag
-```
-
-Anything else is a `403` or a `301`, so views cannot be subdivided arbitrarily
-and coverage is the *union* of views — which is why it is measured rather than
-assumed. The plan rests on one observation: an asset is fully reachable if it
-carries at least one tag small enough to page through. Assets carry ~5 tags each
-and most tags are small, so a view per small tag covers the majority; big tags
-are taken under every ordering and filter, and the remainder is reached by
-pairing big tags with each other.
-
-**A full crawl reaches about 89%** — measured at 96,903 of 108,808, over 40,465
-pages in ~6 hours, with zero rate-limit responses. The remainder is assets
-ranking below the 200-page cutoff in *every* view they appear in, so no
-reachable URL exposes them.
-
-## Hosting it publicly
-
-Both services run on one box behind a reverse proxy. The webserver listens on
-8080 inside the container, published on host port 62686, and is the only thing
-that should ever be exposed.
-
-> **Never proxy port 62685.** That is the dataservice's published port, and
-> `/trigger-fetch` takes no authentication. A public route to it lets anyone
-> start a multi-hour crawl.
-
-### Behind Cloudflare
-
-Use a Tunnel (`cloudflared`) rather than opening a port: the connection is
-outbound, so there is no port forward, no static IP, and your origin address
-never appears in DNS. `docker-compose.yml` carries it as an opt-in `public`
-profile, so a local run never needs a Cloudflare account.
-
-1. In the Cloudflare dashboard, add the domain and let it serve DNS (nameserver
-   change at the registrar; propagation is usually under an hour).
-2. Zero Trust → Networks → Tunnels → create a tunnel, and copy its token.
-3. Put it in `.env` as `CLOUDFLARE_TUNNEL_TOKEN=…`, and set
-   `TRUST_PROXY_HEADERS=true` in the same file.
-4. Add a public hostname: `itchgrep.com` → `HTTP` → `webserver:8080`. The
-   **service name**, not `localhost` — cloudflared resolves it over the compose
-   network. Add `www` as a second hostname or a redirect rule.
-5. `docker compose --profile public up -d`
-
-`TRUST_PROXY_HEADERS` makes the rate limiter read `CF-Connecting-IP`. Behind a
-tunnel every request arrives from the same address, so without it the whole
-internet is one client. Leave it **off** if the server is directly exposed — the
-header is attacker-controlled there, and honouring it would let any client mint
-a new identity per request.
-
-### Before going public
-
-- Search and browse are `GET`s sending `Cache-Control: public, max-age=300`, so
-  a proxy serves repeats of a popular query without touching the origin. This is
-  why search is not a `POST`: no shared cache stores those.
-- The webserver holds the whole dataset in memory, and both the old and new
-  index are open during a swap, so peak memory is roughly double steady state.
-  With a ~740 MB index, give the container real headroom.
-- You would be republishing scraped itch.io metadata. Nothing is mirrored —
-  every result links back to itch.io — which is what makes the case defensible.
-- Thumbnails hotlink `img.itch.zone`, so image bandwidth never crosses your
-  connection. The flip side is that itch.io bears that cost and could block by
-  `Referer`, which would break every thumbnail at once.
-- Commodity PHP/WordPress scanners sweep any public origin within minutes. A
-  Cloudflare WAF custom rule named `Block PHP/CMS probes` (action **Block**)
-  turns those away at the edge, before they reach the tunnel, matching request
-  paths ending in `.php`, `.phtml`, `.aspx` or `.jsp`, or starting with
-  `/wp-`, `/wordpress`, `/cgi-bin/`, `/vendor/`, `/phpmyadmin`, `/xmlrpc`,
-  `/.env` or `/.git`. None of those can collide with a real route.
-- Every response carries a restrictive `Content-Security-Policy` (same-origin
-  scripts/styles, thumbnails allowed from `img.itch.zone`, no framing) plus
-  `Referrer-Policy`, `X-Content-Type-Options` and `Cross-Origin-Opener-Policy`.
-  HSTS is left to Cloudflare rather than set at the origin, since the same
-  binary also answers on a plain-HTTP LAN port. `/robots.txt` disallows
-  `/results`, the unstyled htmx fragment endpoint, so a crawler cannot index
-  it or walk it into the expensive fuzzy-search path.
-- `/.well-known/security.txt` (RFC 9116) points reporters at the issue tracker
-  rather than an email address, since it is a public file that spam harvesters
-  read too. **Its `Expires` date needs bumping annually** — the constant lives
-  in `internal/web/robots.go`, and `TestSecurityTxtHasNotExpired` fails the
-  build when the date passes, so this cannot rot silently.
-
-## Operations
-
-The webserver's only log sink is stdout, captured by Docker's `json-file`
-driver and capped at 10 MB × 3 per service (see `x-logging` in
-`docker-compose.yml`). That cap is a safety valve, not a retention policy —
-left alone, a sustained scanner sweep can roll the buffer and evict real
-traffic before anyone reads it. `scripts/export-logs.sh` is a host-side
-follower that drains stdout continuously into durable, rotated files, so the
-Docker buffer only has to survive the gap between a request and the next
-drain.
-
-### Installing the follower
-
-On the Unraid host:
-
-1. Copy `scripts/export-logs.sh` to the host (or run it straight out of a
-   checkout of this repo).
-2. In the **User Scripts** plugin, add a new script pointing at it, set the
-   schedule to **"At Startup of Array"**, and start it once by hand for the
-   current session.
-3. Copy `scripts/itchgrep-logrotate.conf` to `/etc/logrotate.d/itchgrep` (or
-   wherever the host's logrotate drop-in directory is) so the files it writes
-   get rotated daily, kept for 30 days, and compressed.
-
-The follower reads two environment variables, both optional:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `LOG_EXPORT_DIR` | `/mnt/user/appdata/itchgrep/logs` | Where `access.jsonl`, `security.jsonl` and `app.log` are written. |
-| `CONTAINER_NAME` | `itchgrep-webserver-1` | The webserver container to follow. Compose derives this from the project directory name (`itchgrep`) and the service name (`webserver`) when no `container_name:` is set — confirm with `docker ps` if the stack was brought up from a differently-named directory. |
-
-It reconnects on its own — container restart, image rebuild, Docker daemon
-reload — with a short backoff between attempts, logging each reconnect to
-stderr. Lines written while it is down are not replayed; Docker's log driver
-gives no cursor to replay from.
-
-### Record schema
-
-Two machine-readable record kinds are interleaved with the plain `INFO:`/
-`WARN:` startup and crawl lines (which land in `app.log`). Both are single-line
-JSON with a `kind` discriminator, emitted by `internal/web/logmiddleware.go`
-and `internal/web/probes.go` respectively.
-
-**`access.jsonl`** — one line per served request:
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `ts` | string | Request start, RFC 3339 with nanoseconds, UTC. |
-| `kind` | string | Always `"access"`. |
-| `ip` | string | Client address truncated to its network (`/24` for IPv4, `/48` for IPv6), or `"unknown"` if it failed to parse. |
-| `method` | string | HTTP method. |
-| `path` | string | Request path only — never the query string. |
-| `query` | bool | Whether a query string was present. The terms themselves are never logged. |
-| `route` | string | The matched route pattern; empty means the request 404'd. |
-| `status` | int | Response status code. |
-| `bytes` | int | Response body size. |
-| `dur_ms` | int | Request duration in milliseconds. |
-| `ua` | string | `User-Agent`, truncated to 256 bytes. |
-
-**`security.jsonl`** — one line per request answered by `ProbeFilter`
-(`internal/web/probes.go`) before it reaches routing — commodity PHP/WordPress
-scanner traffic:
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `ts` | string | Same format as above. |
-| `kind` | string | Always `"probe"`. |
-| `ip` | string | Same truncation as above. |
-| `method` | string | HTTP method. |
-| `path` | string | Full request path, untruncated — the entire point of the record is seeing what was asked for. |
-| `ua` | string | `User-Agent`. |
-
-No status or duration on a probe record: it is always a 404, answered
-immediately.
-
-### Privacy posture
-
-- **Identity is network-truncated, not removed.** `ip` identifies the
-  allocation a client sits on (enough to recognize a repeat offender or a
-  sweep from one source), not the individual address. No salt, no hash, no
-  per-visitor value stored anywhere.
-- **Query terms are never logged**, on either stream — `access.jsonl` records
-  only whether a query string was present, as a boolean.
-- **30 days, then gone.** `scripts/itchgrep-logrotate.conf` keeps 30 daily,
-  compressed generations and deletes the rest; there is no separate deletion
-  job to maintain.
-
-### `jq` recipes
-
-Top talkers by (truncated) IP:
-
-```bash
-jq -s -c 'group_by(.ip) | map({ip: .[0].ip, count: length}) | sort_by(-.count)' access.jsonl
-```
-
-Probe paths not already covered by `isProbePrefixes`
-(`internal/web/probes.go`) — useful both for extending that list and for
-authoring Cloudflare WAF rules against what is actually being tried:
-
-Both lists from `probes.go` are mirrored here, suffixes included — a sweep is
-usually caught by the `.php` suffix rather than a prefix, so checking prefixes
-alone would report almost every probe as uncovered. Re-copy both if that file
-changes.
-
-```bash
-jq -s -c '
-  ["/wp-", "/wordpress", "/cgi-bin/", "/vendor/", "/uploads/", "/phpmyadmin",
-   "/phpinfo", "/admin", "/administrator", "/xmlrpc", "/autodiscover",
-   "/.env", "/.git", "/.aws", "/.ssh"] as $prefixes
-  | [".php", ".phtml", ".asp", ".aspx", ".jsp", ".cgi"] as $suffixes
-  | map(.path | ascii_downcase)
-  | unique
-  | map(select(
-      . as $p
-      | (($prefixes | any(. as $k | $p | startswith($k)))
-         or ($suffixes | any(. as $k | $p | endswith($k)))) | not
-    ))
-' security.jsonl
-```
-
-404 clusters on routes that actually exist (a live route 404ing a lot usually
-means a stale link, not a scanner — probes never carry a non-empty `route`):
-
-```bash
-jq -s -c '
-  map(select(.status == 404 and .route != ""))
-  | group_by(.route)
-  | map({route: .[0].route, count: length})
-  | sort_by(-.count)
-' access.jsonl
-```
-
-p95 request duration by route:
-
-```bash
-jq -s -c '
-  group_by(.route)
-  | map({
-      route: .[0].route,
-      p95: ((map(.dur_ms) | sort) as $s | $s[(($s | length - 1) * 0.95 | floor)]),
-      count: length
-    })
-' access.jsonl
-```
-
-## Testing
-
-```bash
-go test ./...
-```
-
-No external services required.
-
-## Contributing
-
-- Please run [`go fmt`](https://go.dev/blog/gofmt) before opening a pull request.
-- Beginners to open source are welcome; if something is unclear, ask in an issue.
-- One issue per feature request.
-- Before a larger contribution, open an issue to ask whether it would be welcome.
-- Keep discussion in GitHub issues rather than other channels.
+repository is a fork, licensed as the original under
+[GPL-3.0](LICENSE), and is not operated by the original author. This fork
+rebuilt the search index and its scoring, the crawl planner that reaches the
+whole catalogue rather than one browse view's page limit, cross-currency
+price comparison, and most of the operational tooling (rate limiting,
+security headers, structured logging, container hardening, this
+documentation set) on top of winterveil's original interface and crawler
+design.
+
+This fork was created, updated, and "enhanced" using
+[Claude Code](https://claude.com/claude-code), Anthropic's coding agent,
+under human direction and review. That is stated plainly rather than buried:
+it is running in production and the tests pass, but it is agent-written
+code, and you should read it before you trust it with anything of yours.

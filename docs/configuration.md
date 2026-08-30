@@ -555,15 +555,11 @@ Read only by `scripts/bootstrap-host.sh`. The parent directory under which
   each of them explicitly to match. This script is normally run once, at
   first setup; see [docs/deployment.md](deployment.md).
 
-## A stale reference worth knowing about
+## A variable you might find in old notes
 
-`README.md`'s configuration table currently lists `INDEXER_TIMEOUT_SECONDS`
-("How long the bootstrap container waits for the first crawl before
-reporting failure"). Searching the codebase for it turns up nothing — no Go
-source, script, or `docker-compose.yml` reads this variable. It's a leftover
-from a one-shot "indexer" bootstrap sidecar container that used to trigger
-the first crawl and has since been removed (`docker-compose.yml`'s own
-header comment describes the removal); `scheduleCrawls` in
-`cmd/dataservice/main.go` now starts the first crawl on its own, with no
-sidecar or timeout involved. This table deliberately excludes it. Whoever
-maintains `README.md` should drop that row.
+If you find `INDEXER_TIMEOUT_SECONDS` in old notes or shell history, it's
+dead: no Go source, script, or `docker-compose.yml` reads it. It belonged to
+a one-shot "indexer" bootstrap sidecar container that has since been removed
+(`docker-compose.yml`'s own header comment describes the removal);
+`scheduleCrawls` in `cmd/dataservice/main.go` now starts the first crawl on
+its own, with no sidecar or timeout involved.
