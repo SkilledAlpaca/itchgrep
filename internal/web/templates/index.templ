@@ -49,6 +49,16 @@ templ FeedLink(f Filters) {
 	<link rel="alternate" type="application/atom+xml" title={ feedTitle(f) } href={ f.FeedURL() }/>
 }
 
+// CanonicalLink states the one address a page should be indexed under, for
+// content reachable more than one way - today just /tag/{slug}, which the
+// index page also serves at /?tags={slug} for anyone who arrives by clicking
+// a filter chip rather than a crawler-facing link. Absolute, unlike every
+// other internal link this package writes, because a canonical link is a
+// statement about the resource's identity, not a relative navigation.
+templ CanonicalLink(url string) {
+	<link rel="canonical" href={ url }/>
+}
+
 templ Masthead(age Freshness, coverage Coverage) {
 	<header class="masthead">
 		// The age and coverage sit under the wordmark rather than at the foot

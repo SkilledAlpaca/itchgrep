@@ -1,6 +1,9 @@
 package web
 
-import "net/http"
+import (
+	"itchgrep/internal/web/templates"
+	"net/http"
+)
 
 // robotsTxt disallows /results: that endpoint renders an htmx fragment with
 // no layout around it, so a crawler indexing it would show a page fragment
@@ -15,10 +18,15 @@ import "net/http"
 // those URLs is a filtered rearrangement of the same catalogue, worthless to
 // index; the clean pages below carry everything a search engine needs.
 // Everything else is a normal page and stays allowed.
+//
+// The Sitemap line points a crawler at every clean URL worth indexing in one
+// request, rather than leaving it to discover /tag/{slug} pages by following
+// links. templates.BaseURL, not a literal, so the two can never drift apart.
 const robotsTxt = `User-agent: *
 Disallow: /results
 Disallow: /*?*
 Allow: /
+Sitemap: ` + templates.BaseURL + `/sitemap.xml
 `
 
 // HandleRobots serves the crawl policy above. Registered for both GET and

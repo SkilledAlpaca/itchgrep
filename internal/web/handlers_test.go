@@ -35,10 +35,14 @@ func newTestRouter() (*chi.Mux, *handler) {
 	r.Get("/stats", h.HandleStats)
 	r.Get("/new", h.HandleNew)
 	r.Get("/feed", h.HandleFeed)
+	r.Get("/tag/{slug}", h.HandleTag)
+	r.Get("/sitemap.xml", h.HandleSitemap)
+	r.Get("/opensearch.xml", HandleOpenSearch)
 	r.Head("/", h.HandleIndex)
 	r.Head("/about", h.HandleAbout)
 	r.Head("/stats", h.HandleStats)
 	r.Head("/new", h.HandleNew)
+	r.Head("/tag/{slug}", h.HandleTag)
 	r.NotFound(Handle404)
 	return r, h
 }

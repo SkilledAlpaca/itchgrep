@@ -14,8 +14,13 @@ import (
 
 func TestLiveRoutesAreNeverProbes(t *testing.T) {
 	for _, path := range []string{
-		"/", "/results", "/about", "/stats", "/robots.txt", "/favicon.ico",
+		"/", "/results", "/about", "/stats", "/new", "/feed",
+		"/sitemap.xml", "/opensearch.xml", "/robots.txt", "/favicon.ico",
 		"/static/app.css",
+		// Tag pages are a prefix, not one path, so they cannot sit in
+		// liveRoutes - this asserts the pattern lists never grow something
+		// that would swallow them.
+		"/tag/pixel-art",
 	} {
 		assert.False(t, isProbe(path), "%s must never be filtered", path)
 	}

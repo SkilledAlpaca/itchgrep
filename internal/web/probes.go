@@ -45,12 +45,16 @@ var (
 // below can match these anyway, but the guard makes that a guarantee instead
 // of an inference.
 var liveRoutes = map[string]bool{
-	"/":            true,
-	"/results":     true,
-	"/about":       true,
-	"/stats":       true,
-	"/robots.txt":  true,
-	"/favicon.ico": true,
+	"/":               true,
+	"/results":        true,
+	"/about":          true,
+	"/stats":          true,
+	"/new":            true,
+	"/feed":           true,
+	"/sitemap.xml":    true,
+	"/opensearch.xml": true,
+	"/robots.txt":     true,
+	"/favicon.ico":    true,
 }
 
 // isProbe reports whether path matches the shape of the scanner sweep.

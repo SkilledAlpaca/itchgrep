@@ -106,6 +106,14 @@ func main() {
 	r.Head("/robots.txt", web.HandleRobots)
 	r.Get("/.well-known/security.txt", web.HandleSecurityTxt)
 	r.Head("/.well-known/security.txt", web.HandleSecurityTxt)
+	// Outside the rate-limited group for the same reason as robots.txt above:
+	// both are crawler infrastructure, built from the cache's bounded tag list
+	// or not at all rather than from a bleve query, so neither is the traffic
+	// the limiter exists to shed.
+	r.Get("/sitemap.xml", h.HandleSitemap)
+	r.Head("/sitemap.xml", h.HandleSitemap)
+	r.Get("/opensearch.xml", web.HandleOpenSearch)
+	r.Head("/opensearch.xml", web.HandleOpenSearch)
 
 	r.Group(func(r chi.Router) {
 		r.Use(web.NewLimiter().Middleware)
@@ -115,6 +123,7 @@ func main() {
 		r.Get("/stats", h.HandleStats)
 		r.Get("/new", h.HandleNew)
 		r.Get("/feed", h.HandleFeed)
+		r.Get("/tag/{slug}", h.HandleTag)
 		// chi routes by method, so without this a HEAD is a 405 - and HEAD is
 		// what uptime monitors, link checkers and preview fetchers send first.
 		// net/http discards the body of a HEAD response itself, so the same
@@ -124,6 +133,7 @@ func main() {
 		r.Head("/stats", h.HandleStats)
 		r.Head("/new", h.HandleNew)
 		r.Head("/feed", h.HandleFeed)
+		r.Head("/tag/{slug}", h.HandleTag)
 	})
 	r.NotFound(web.Handle404)
 

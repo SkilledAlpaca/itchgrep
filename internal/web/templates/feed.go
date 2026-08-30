@@ -9,18 +9,20 @@ import (
 	"itchgrep/pkg/money"
 )
 
-// FeedBaseURL is the site's public origin. Atom ids and self links must be
-// absolute - a feed reader has no notion of "relative to wherever it fetched
-// this from" the way a browser does - so this cannot be derived from the
-// incoming request the way every other link in the templates package is.
+// BaseURL is the site's public origin. Atom ids/self links, sitemap
+// locations and the OpenSearch descriptor's URLs must all be absolute - none
+// of them are read by something that has "relative to wherever this was
+// fetched from" the way a browser does - so none of them can be derived from
+// the incoming request the way every other link in the templates package is.
 //
 // A plain const rather than something read from the environment: nothing else
 // in this codebase parameterises the public origin (see internal/config,
 // which only holds settings the two binaries must agree on), and a
-// self-referential feed id is wrong precisely when this drifts from where the
-// site is actually reachable, which argues for it being visible in source
-// rather than configurable per deployment.
-const FeedBaseURL = "https://itchgrep.com"
+// self-referential feed id, sitemap entry or search descriptor is wrong
+// precisely when this drifts from where the site is actually reachable,
+// which argues for it being visible in source rather than configurable per
+// deployment.
+const BaseURL = "https://itchgrep.com"
 
 // atomFeed is the document encoding/xml renders. Typed structs rather than a
 // hand-built string: a feed reader is somebody else's XML parser, and the
@@ -64,14 +66,14 @@ type atomSummary struct {
 // re-filter or re-sort.
 func NewFeed(f Filters, assets []models.Asset, rates money.Rates, newestCrawl time.Time) atomFeed {
 	feed := atomFeed{
-		ID:    FeedBaseURL + f.FeedURL(),
+		ID:    BaseURL + f.FeedURL(),
 		Title: feedTitle(f),
 		Links: []atomLink{
 			// self: what a reader re-fetches on its own schedule. alternate:
 			// the human-readable page the same filters describe, so a client
 			// that shows "view on site" has somewhere to send a click.
-			{Rel: "self", Type: "application/atom+xml", Href: FeedBaseURL + f.FeedURL()},
-			{Rel: "alternate", Type: "text/html", Href: FeedBaseURL + f.ShareURL()},
+			{Rel: "self", Type: "application/atom+xml", Href: BaseURL + f.FeedURL()},
+			{Rel: "alternate", Type: "text/html", Href: BaseURL + f.ShareURL()},
 		},
 	}
 

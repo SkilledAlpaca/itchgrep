@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"itchgrep/internal/web/templates"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,6 +22,9 @@ func TestHandleRobotsGet(t *testing.T) {
 	// The query-string disallow is what keeps crawlers out of the infinite
 	// filter-permutation space; losing it re-opens a multi-req/s crawl.
 	assert.True(t, strings.Contains(w.Body.String(), "Disallow: /*?*"))
+	// Points a crawler at the sitemap instead of leaving it to find /tag/{slug}
+	// pages by following links.
+	assert.True(t, strings.Contains(w.Body.String(), "Sitemap: "+templates.BaseURL+"/sitemap.xml"))
 }
 
 func TestHandleRobotsHead(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
 	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -60,6 +61,15 @@ type Cache struct {
 	// stats is how much of itch.io's catalogue the loaded dataset covers, as
 	// measured by the crawl that produced it. Zero when unrecorded.
 	stats models.Stats
+
+	// tagUniverse is the site-wide tag vocabulary the dataservice crawl
+	// discovered (storage.GetTags/tags.json), not just the ones the current
+	// publish happens to have an asset for. tagCounts above is capped to
+	// maxFacetTags and only reflects this publish's assets - the sidebar's
+	// job. /tag/{slug} validation and the sitemap need the fuller,
+	// independently-bounded list instead, so a tag with no matching asset in
+	// today's index still gets a page rather than a 404.
+	tagUniverse []models.Tag
 
 	// hasPriceBands records whether the loaded index carries PriceUSD. Unlike
 	// hasRecency this cannot be read off the asset list, because the converted
@@ -150,6 +160,35 @@ func (c *Cache) HasPriceBands() bool {
 // PageSize is how many assets one page of results holds. Handlers need it to
 // work out whether a further page exists.
 func (c *Cache) PageSize() int64 { return c.pageSize }
+
+// TagSlugs is every slug in the discovered tag universe, alphabetised so the
+// sitemap it feeds is stable across requests rather than following whatever
+// order tags.json happened to store. See tagUniverse for why this is not
+// tagCounts.
+func (c *Cache) TagSlugs() []string {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	slugs := make([]string, len(c.tagUniverse))
+	for i, t := range c.tagUniverse {
+		slugs[i] = t.Slug
+	}
+	sort.Strings(slugs)
+	return slugs
+}
+
+// HasTag reports whether slug names a tag in the discovered universe. It is
+// how /tag/{slug} tells a real tag - possibly one with nothing matching it in
+// today's publish - from a typo or a probe, which get a 404 instead of a page.
+func (c *Cache) HasTag(slug string) bool {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	for _, t := range c.tagUniverse {
+		if t.Slug == slug {
+			return true
+		}
+	}
+	return false
+}
 
 // DataUpdatedTime is when the currently-loaded dataset was published. Handlers
 // use it as Last-Modified so a shared cache can revalidate rather than refetch,
@@ -304,6 +343,16 @@ func (c *Cache) doRefresh() error {
 		newStats = models.Stats{}
 	}
 
+	// Absent on an index published before discovery ever ran, or if tags.json
+	// failed to write. Not fatal, for the same reason a missing rates file
+	// isn't: /tag/{slug} and the sitemap just have nothing beyond the fixed
+	// pages to enumerate until a crawl produces one.
+	newTagUniverse, _, err := storage.GetTags()
+	if err != nil {
+		logging.Info("No cached tag universe (%v); /tag pages and the sitemap will list none", err)
+		newTagUniverse = nil
+	}
+
 	// swap the new index/data in, holding the write lock only for the swap
 	// itself. The old index is intentionally not closed yet: if anything
 	// above failed we must keep serving it.
@@ -317,6 +366,7 @@ func (c *Cache) doRefresh() error {
 	c.hasRecency = hasRecency
 	c.hasPriceBands = hasPriceBands
 	c.stats = newStats
+	c.tagUniverse = newTagUniverse
 	c.dataUpdatedTime = newServerUpdateTime
 	c.cacheLock.Unlock()
 
