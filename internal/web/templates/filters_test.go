@@ -172,3 +172,54 @@ func TestSelectingTheSameAuthorAgainClearsIt(t *testing.T) {
 	assert.Equal(t, "ana", f.Author)
 	assert.Empty(t, f.WithAuthor("ana").Author, "the control is a toggle, not a one-way door")
 }
+
+func TestLikeJoinsTheCanonicalParameterOrder(t *testing.T) {
+	// like has to round-trip through ShareURL exactly like every other
+	// filter. url.Values.Encode() sorts keys alphabetically, so the same
+	// state always produces the same address regardless of which order the
+	// fields were set in.
+	f := Filters{Query: "tiles"}.WithTag("2d").WithLike("42")
+	assert.Equal(t, "/?like=42&q=tiles&tags=2d", f.ShareURL())
+}
+
+func TestSelectingTheSameLikeAgainClearsIt(t *testing.T) {
+	f := Filters{}.WithLike("42")
+	assert.Equal(t, "42", f.Like)
+	assert.Empty(t, f.WithLike("42").Like, "the control is a toggle, not a one-way door")
+	assert.Equal(t, "7", f.WithLike("7").Like, "liking a different asset replaces the old one")
+}
+
+func TestWithoutLikeDropsOnlyLike(t *testing.T) {
+	f := Filters{Query: "tiles"}.WithTag("2d").WithLike("42")
+	cleared := f.WithoutLike()
+
+	assert.Empty(t, cleared.Like)
+	assert.Equal(t, "tiles", cleared.Query)
+	assert.Equal(t, []string{"2d"}, cleared.Tags)
+}
+
+func TestLikeCountsAsAFilter(t *testing.T) {
+	assert.True(t, Filters{Like: "42"}.Any())
+}
+
+func TestClearedDropsLike(t *testing.T) {
+	f := Filters{Query: "tiles"}.WithLike("42")
+	assert.Empty(t, f.Cleared().Like)
+	assert.Equal(t, "tiles", f.Cleared().Query)
+}
+
+func TestFeedURLKeepsLikeUnlikeSort(t *testing.T) {
+	// A "new arrivals similar to X" feed is as coherent as a tag-filtered one,
+	// so unlike sort, like has to survive onto the feed address.
+	f := Filters{Sort: models.SortTitle}.WithLike("42")
+	assert.Equal(t, "/feed?like=42", f.FeedURL())
+}
+
+func TestEveryFilterSurvivesTheUrlRoundTripIncludingLike(t *testing.T) {
+	f := Filters{Query: "tiles", Author: "ana", Price: models.PricingUnder5,
+		Sort: models.SortPrice, Currency: "EUR"}.WithTag("2d").WithNotTag("3d").WithLike("42")
+
+	v := f.Values()
+	assert.Equal(t, "42", v.Get("like"))
+	assert.Equal(t, "/?author=ana&cur=EUR&like=42&not=3d&price=under-5&q=tiles&sort=price&tags=2d", f.ShareURL())
+}

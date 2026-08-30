@@ -29,6 +29,12 @@ type Filters struct {
 	Author  string
 	Price   string
 	Sort    string
+	// Like, when set, is the GameId of an asset the results should resemble:
+	// the search layer disjuncts its tag slugs and excludes it from the
+	// result set. It sits alongside the other filters rather than off to one
+	// side, so a "similar to X" page is exactly as shareable, cacheable and
+	// combinable with a tag or price filter as any other search.
+	Like string
 	// Currency, when set, is the currency prices are converted into for
 	// display. It changes nothing about which assets match - only how their
 	// prices are written - but it belongs in the URL all the same, so that a
@@ -58,6 +64,9 @@ func (f Filters) Values() url.Values {
 	}
 	if len(f.NotTags) > 0 {
 		v.Set("not", strings.Join(f.NotTags, ","))
+	}
+	if f.Like != "" {
+		v.Set("like", f.Like)
 	}
 	if f.Author != "" {
 		v.Set("author", f.Author)
@@ -128,6 +137,10 @@ func (f Filters) FragmentURL(page int64) string {
 // parameter order ShareURL uses. Sort is never carried onto it even when set:
 // the feed's ordering is always newest-arrival-first, so encoding a sort that
 // the feed itself ignores would only make two URLs cache-key the same feed.
+//
+// Like, unlike sort, is kept: "new arrivals similar to X" is exactly as
+// coherent a feed as "new arrivals tagged pixel-art" - both are the same
+// FirstSeen-stamped ordering, just narrowed differently.
 func (f Filters) FeedURL() string {
 	v := f.Values()
 	v.Del("sort")
@@ -145,7 +158,7 @@ func (f Filters) FeedURL() string {
 // would be describing a display preference as a constraint.
 func (f Filters) Any() bool {
 	return f.Query != "" || len(f.Tags) > 0 || len(f.NotTags) > 0 ||
-		f.Price != "" || f.Author != ""
+		f.Price != "" || f.Author != "" || f.Like != ""
 }
 
 // HasTag reports whether a tag is already applied.
@@ -218,6 +231,28 @@ func (f Filters) WithAuthor(author string) Filters {
 	} else {
 		next.Author = author
 	}
+	return next
+}
+
+// WithLike returns these filters narrowed to items similar to one asset, or
+// unrestricted again if that asset was already the one selected - the same
+// toggle WithAuthor and WithPrice use, so clicking "similar" twice on the
+// same card returns to the unfiltered view rather than being a one-way door.
+func (f Filters) WithLike(gameId string) Filters {
+	next := f
+	if f.Like == gameId {
+		next.Like = ""
+	} else {
+		next.Like = gameId
+	}
+	return next
+}
+
+// WithoutLike returns these filters with the similarity filter removed, for
+// the chip's remove control.
+func (f Filters) WithoutLike() Filters {
+	next := f
+	next.Like = ""
 	return next
 }
 

@@ -62,6 +62,13 @@ const feedMaxAge = 3600
 // term lookup.
 const maxAuthorLen = 120
 
+// maxGameIdLen bounds a like= parameter. itch.io's ids are unpadded decimal
+// numbers well under this (see internal/fetcher.ParseAssetPage, which reads
+// data-game_id straight off the listing markup); this exists to keep a
+// hand-written URL from turning into a pathologically long dataMap key
+// rather than to restrain any real id.
+const maxGameIdLen = 32
+
 type handler struct {
 	cache *cache.Cache
 
@@ -168,7 +175,10 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		logging.Error("Error rendering index: %s", err)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(statusFor(err))
-		templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters), templates.Index(filters, templates.Results{Page: page}, h.freshness(), h.coverage())).Render(r.Context(), w)
+		// No results reached, so nothing is known about the ?like= source's
+		// title yet - the feed link falls back to describing the filter by
+		// id alone, the same way it would for an unknown one.
+		templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters, ""), templates.Index(filters, templates.Results{Page: page}, h.freshness(), h.coverage())).Render(r.Context(), w)
 		return
 	}
 
@@ -176,7 +186,7 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	// LayoutHead, not Layout: this is the one page a feed for the current
 	// filters makes sense on, so it carries the auto-discovery link every
 	// other page has no reason to.
-	templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
+	templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters, results.LikeTitle), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
 }
 
 // HandleResults serves one page of results as a fragment.
@@ -236,6 +246,7 @@ func (h *handler) find(filters templates.Filters, page int64) (templates.Results
 		Author:      filters.Author,
 		Price:       filters.Price,
 		Sort:        filters.Sort,
+		Like:        filters.Like,
 		Page:        page,
 	})
 	if err != nil {
@@ -253,6 +264,9 @@ func (h *handler) find(filters templates.Filters, page int64) (templates.Results
 		// full, so the last page of results does not trigger one more request
 		// that can only return nothing.
 		HasMore: page*h.cache.PageSize() < found.Total,
+		// LikeTitle threads the ?like= source asset's title from the search
+		// layer through to the chip row - see cache.Results.LikeTitle.
+		LikeTitle: found.LikeTitle,
 	}, nil
 }
 
@@ -298,6 +312,7 @@ func (h *handler) HandleFeed(w http.ResponseWriter, r *http.Request) {
 		ExcludeTags:  filters.NotTags,
 		Author:       filters.Author,
 		Price:        filters.Price,
+		Like:         filters.Like,
 		MinFirstSeen: 1,
 		Sort:         models.SortNew,
 		Limit:        maxFeedEntries,
@@ -310,7 +325,7 @@ func (h *handler) HandleFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := templates.NewFeed(filters, found.Assets, h.cache.Rates(), h.cache.DataUpdatedTime()).Render()
+	body, err := templates.NewFeed(filters, found.Assets, h.cache.Rates(), h.cache.DataUpdatedTime(), found.LikeTitle).Render()
 	if err != nil {
 		// xml.Marshal on this struct only fails on a value it cannot encode,
 		// which nothing here supplies - but the response has already
@@ -358,6 +373,8 @@ func parseFilters(r *http.Request, rates money.Rates) templates.Filters {
 			}
 		}
 	}
+
+	f.Like = normaliseGameId(q.Get("like"))
 
 	f.Author = clampAuthor(q.Get("author"))
 
@@ -429,6 +446,24 @@ func normaliseTag(tag string) string {
 		}
 	}
 	return tag
+}
+
+// normaliseGameId reduces a like= parameter to a GameId, or to "" if it is
+// not shaped like one. itch.io ids are decimal digits only, so anything else
+// cannot match a real asset and is dropped the same way an out-of-alphabet
+// tag is - the search layer then treats an empty Like exactly like the
+// parameter being absent.
+func normaliseGameId(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxGameIdLen {
+		return ""
+	}
+	for _, c := range id {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return id
 }
 
 // clampQuery bounds an incoming query so a pathological one cannot be turned

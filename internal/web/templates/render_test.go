@@ -411,6 +411,46 @@ func TestSavedPageShellHasAnEmptyGridAndACardTemplate(t *testing.T) {
 		"the grid must be empty of cards; the template lives outside it")
 }
 
+func TestEveryCardOffersASimilarLink(t *testing.T) {
+	// "Similar" has to be reachable from any card, in the same visual family
+	// as the tag chips it sits beside.
+	html := render(t, AssetPage(Filters{}, sampleResults()))
+
+	assert.Contains(t, html, `class="tag is-similar"`)
+	assert.Contains(t, html, `href="/?like=1"`)
+	assert.Contains(t, html, `href="/?like=2"`)
+}
+
+func TestSimilarLinkPreservesTheRestOfTheFilterState(t *testing.T) {
+	// Clicking "similar" while browsing a tag keeps that tag applied - the
+	// same "current state plus this change" behaviour every other card
+	// control uses.
+	f := Filters{}.WithTag("2d")
+	html := render(t, AssetPage(f, sampleResults()))
+
+	assert.Contains(t, html, `href="/?like=1&amp;tags=2d"`)
+}
+
+func TestLikeChipNamesTheSourceAssetAndIsRemovable(t *testing.T) {
+	f := Filters{}.WithLike("1")
+	r := sampleResults()
+	r.LikeTitle = "Pixel Tileset"
+	html := render(t, ResultsRegion(f, r))
+
+	assert.Contains(t, html, "similar to Pixel Tileset")
+	assert.Contains(t, html, `href="/"`, "removing the only filter returns to the front page")
+}
+
+func TestLikeChipIsSilentWhenTheIdMatchedNothing(t *testing.T) {
+	// An unknown or stale ?like= id has no title to name. The empty-result
+	// page already explains the miss; a chip reading "similar to  x" would
+	// only confuse it further.
+	f := Filters{}.WithLike("999")
+	html := render(t, ResultsRegion(f, sampleResults()))
+
+	assert.NotContains(t, html, "similar to")
+}
+
 func TestChangingCurrencyKeepsEveryOtherFilter(t *testing.T) {
 	// The currency picker is a form, so anything it does not carry as a hidden
 	// field is discarded the moment somebody uses it.

@@ -809,6 +809,13 @@ a:hover {
   border-color: var(--accent);
 }
 
+/* Dashed rather than solid: "similar" navigates to a different search built
+   from this card, not a tag already carried by it, so it reads as a related
+   but distinct control from the chips beside it. */
+.tag.is-similar {
+  border-style: dashed;
+}
+
 /* ---------------------------------------------------------------- states  */
 
 .notice {

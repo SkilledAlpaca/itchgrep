@@ -28,6 +28,11 @@ type Results struct {
 	// When it does not, the two bounded price filters are not rendered, for the
 	// same reason: they would match nothing and look like an answer.
 	HasPriceBands bool
+
+	// LikeTitle is the title of the ?like= source asset, carried alongside the
+	// results rather than looked up again by the template - see
+	// cache.Results.LikeTitle. Empty when Like is unset or matched nothing.
+	LikeTitle string
 }
 
 // priceFilterLabel is the human name of a price filter, for the control and for
@@ -191,6 +196,9 @@ templ hiddenFilters(f Filters) {
 	for _, tag := range f.NotTags {
 		<input type="hidden" name="not" value={ tag }/>
 	}
+	if f.Like != "" {
+		<input type="hidden" name="like" value={ f.Like }/>
+	}
 	if f.Author != "" {
 		<input type="hidden" name="author" value={ f.Author }/>
 	}
@@ -206,7 +214,7 @@ templ hiddenFilters(f Filters) {
 // Without it a tag applied from the sidebar, then scrolled past, is invisible -
 // and an empty result set looks like a broken search rather than an
 // over-constrained one.
-templ ActiveFilters(f Filters) {
+templ ActiveFilters(f Filters, likeTitle string) {
 	if f.Any() {
 		<div class="active-filters">
 			<span class="active-label">Filtering by</span>
@@ -219,13 +227,20 @@ templ ActiveFilters(f Filters) {
 			for _, tag := range f.NotTags {
 				@control("chip is-removable is-excluded", f.WithoutNotTag(tag), "not "+tag+" ✕")
 			}
+			if f.Like != "" && likeTitle != "" {
+				// Guarded on likeTitle rather than just f.Like: an id that
+				// matched nothing has no title to name, and a chip reading
+				// "similar to  ✕" would be worse than no chip at all - the
+				// empty-result page below already explains the miss.
+				@control("chip is-removable", f.WithoutLike(), "similar to "+likeTitle+" ✕")
+			}
 			if f.Author != "" {
 				@control("chip is-removable is-author", f.WithAuthor(f.Author), "by "+f.Author+" ✕")
 			}
 			if f.Price != "" {
 				@control("chip is-removable", f.WithPrice(f.Price), priceFilterLabel(f.Price)+" ✕")
 			}
-			if len(f.Tags) > 0 || len(f.NotTags) > 0 || f.Price != "" || f.Author != "" {
+			if len(f.Tags) > 0 || len(f.NotTags) > 0 || f.Price != "" || f.Author != "" || f.Like != "" {
 				@control("clear-filters", f.Cleared(), "Clear filters")
 			}
 		</div>
@@ -303,7 +318,7 @@ templ ResultsRegion(f Filters, r Results) {
 			</div>
 		</div>
 		@CurrencyControl(f, r.Rates)
-		@ActiveFilters(f)
+		@ActiveFilters(f, r.LikeTitle)
 		<div id="asset-list">
 			@AssetPage(f, r)
 		</div>

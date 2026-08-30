@@ -49,6 +49,13 @@ type SearchOptions struct {
 	// for /new, which shows a fixed-size page with no "next" to ask for -
 	// every other caller pages through pageSize and leaves this zero.
 	Limit int64
+
+	// Like, when set, is the GameId of an asset to find similar items to. The
+	// query narrows to a disjunction over that asset's own tags and excludes
+	// the asset itself; an unknown id yields an empty result set rather than
+	// an error, so a stale or hand-edited link degrades the same way an
+	// unknown tag does.
+	Like string
 }
 
 // Results is one page of assets plus the context the UI needs around them: how
@@ -60,6 +67,11 @@ type Results struct {
 	// page, so the sidebar is a map of where the rest of the results are rather
 	// than a description of the 36 on screen.
 	Tags []models.Tag
+
+	// LikeTitle is the title of the ?like= source asset, threaded through so
+	// the caller can render "similar to X" without a second lookup. Empty
+	// when Like was not set, or was set to an id nothing was found for.
+	LikeTitle string
 }
 
 // resolvedSort is the ordering to apply, filling in the default. Relevance is
@@ -87,7 +99,7 @@ func (o SearchOptions) resolvedSort() string {
 // answer than a search.
 func (o SearchOptions) filtered() bool {
 	return o.Query != "" || len(o.Tags) > 0 || len(o.ExcludeTags) > 0 ||
-		o.Price != "" || o.Author != "" || o.MinFirstSeen > 0
+		o.Price != "" || o.Author != "" || o.MinFirstSeen > 0 || o.Like != ""
 }
 
 // Find answers a search, a filtered browse, or the plain front page.
@@ -170,12 +182,31 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 		return Results{}, ErrNotReady
 	}
 
+	// The source asset's tags come from dataMap rather than a bleve lookup:
+	// dataMap already holds every asset in memory keyed by GameId (see
+	// doRefresh), which is exactly what search() below resolves each hit
+	// against - so this reuses that lookup instead of adding a second, index-
+	// side way of reading the same document.
+	var likeTitle string
+	var likeTags []string
+	if opts.Like != "" {
+		source, ok := c.dataMap[opts.Like]
+		if !ok {
+			// Unknown id: nothing to be similar to. Answered as a normal
+			// empty result rather than an error, the same way an unknown tag
+			// or author matches nothing instead of failing the request.
+			return Results{}, nil
+		}
+		likeTitle = source.Title
+		likeTags = source.Tags
+	}
+
 	from := int((opts.Page - 1) * c.pageSize)
 	size := int(c.pageSize)
 	if opts.Limit > 0 {
 		size = int(opts.Limit)
 	}
-	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts), size, from, false)
+	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts, likeTags), size, from, false)
 	searchRequest.SortBy(sortOrder(opts.resolvedSort()))
 	searchRequest.AddFacet("tags", bleve.NewFacetRequest("TagSlugs", maxFacetTags))
 
@@ -185,8 +216,9 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	}
 
 	results := Results{
-		Total: int64(searchResult.Total),
-		Tags:  facetTags(searchResult.Facets["tags"], opts.Tags),
+		Total:     int64(searchResult.Total),
+		Tags:      facetTags(searchResult.Facets["tags"], opts.Tags),
+		LikeTitle: likeTitle,
 	}
 	// A hit with no asset behind it is dropped rather than rendered. The index
 	// and the asset list are published together and loaded together, but not
@@ -213,13 +245,16 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 }
 
 // buildQuery assembles the text query and the filters into one bleve query.
+// likeTags is the ?like= source asset's own tags, already resolved by the
+// caller - buildQuery has no dataMap access of its own, and takes them as
+// input the same way it takes every other filter value.
 //
 // The filters are separate conjuncts rather than extra clauses on the fuzzy
 // disjunction, and that separation is the point: a filter must decide whether a
 // document is in the result set at all, whereas the text query decides where in
 // it the document ranks. Folding "free" into the disjunction would merely make
 // free assets score higher, which is not what a toggle labelled Free means.
-func buildQuery(opts SearchOptions) query.Query {
+func buildQuery(opts SearchOptions, likeTags []string) query.Query {
 	var conjuncts []query.Query
 
 	// Quoted runs are pulled out first and matched as phrases, which is the one
@@ -265,12 +300,35 @@ func buildQuery(opts SearchOptions) query.Query {
 		rq.SetField("FirstSeenUnix")
 		conjuncts = append(conjuncts, rq)
 	}
+	if opts.Like != "" {
+		if len(likeTags) == 0 {
+			// A source asset with no tags at all has nothing to be similar
+			// by. Matching nothing here, rather than falling through to an
+			// unfiltered search, keeps this the same reading an unknown id
+			// gets: "similar to X" with no basis for "similar" is not "show
+			// everything".
+			conjuncts = append(conjuncts, bleve.NewMatchNoneQuery())
+		} else {
+			var likeDisjuncts []query.Query
+			for _, tag := range likeTags {
+				tq := bleve.NewTermQuery(tag)
+				tq.SetField("TagSlugs")
+				likeDisjuncts = append(likeDisjuncts, tq)
+			}
+			conjuncts = append(conjuncts, bleve.NewDisjunctionQuery(likeDisjuncts...))
+		}
+	}
 
 	var exclusions []query.Query
 	for _, tag := range opts.ExcludeTags {
 		tq := bleve.NewTermQuery(tag)
 		tq.SetField("TagSlugs")
 		exclusions = append(exclusions, tq)
+	}
+	if opts.Like != "" {
+		// Without this the source asset would appear in its own "similar"
+		// list - it necessarily shares every one of its own tags.
+		exclusions = append(exclusions, bleve.NewDocIDQuery([]string{opts.Like}))
 	}
 
 	if len(exclusions) > 0 {
@@ -496,6 +554,9 @@ func describe(opts SearchOptions) string {
 	}
 	if opts.MinFirstSeen > 0 {
 		parts = append(parts, fmt.Sprintf("first seen >= %d", opts.MinFirstSeen))
+	}
+	if opts.Like != "" {
+		parts = append(parts, "like "+opts.Like)
 	}
 	parts = append(parts, "sorted by "+opts.resolvedSort())
 	return strings.Join(parts, ", ")

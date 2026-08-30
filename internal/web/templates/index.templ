@@ -45,8 +45,10 @@ templ IndexAge(f Freshness, c Coverage) {
 // Relative like every other internal link the templates package writes - the
 // browser resolves it against the page it is embedded in - unlike the feed
 // document's own self-referential id and links, which must be absolute.
-templ FeedLink(f Filters) {
-	<link rel="alternate" type="application/atom+xml" title={ feedTitle(f) } href={ f.FeedURL() }/>
+// likeTitle is passed straight through to feedTitle - see NewFeed for why the
+// results page's own ?like= lookup is what supplies it.
+templ FeedLink(f Filters, likeTitle string) {
+	<link rel="alternate" type="application/atom+xml" title={ feedTitle(f, likeTitle) } href={ f.FeedURL() }/>
 }
 
 // CanonicalLink states the one address a page should be indexed under, for

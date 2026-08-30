@@ -113,6 +113,91 @@ func TestTagsAreNormalisedAndDeduped(t *testing.T) {
 	assert.Equal(t, []string{"2d", "pixel-art"}, f.Tags)
 }
 
+func TestLikeAcceptsOnlyDigits(t *testing.T) {
+	// itch.io ids are decimal digits only (internal/fetcher.ParseAssetPage
+	// reads data-game_id straight off the listing markup); anything else
+	// cannot match a real asset and is a typo or a probe either way.
+	valid := parseFilters(httptest.NewRequest(http.MethodGet, "/?like=2476825", nil), money.Fallback())
+	assert.Equal(t, "2476825", valid.Like)
+
+	for _, bad := range []string{"../etc", "1;drop", "12a", "-1", "1%202", ""} {
+		f := parseFilters(httptest.NewRequest(http.MethodGet, "/?like="+bad, nil), money.Fallback())
+		assert.Empty(t, f.Like, "%q must not be accepted as a GameId", bad)
+	}
+}
+
+func TestLikeIsBoundedInLength(t *testing.T) {
+	// Keeps a hand-written URL from turning into a pathologically long dataMap
+	// key rather than restraining any real id - itch.io's are far shorter.
+	tooLong := strings.Repeat("1", maxGameIdLen+1)
+	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?like="+tooLong, nil), money.Fallback())
+	assert.Empty(t, f.Like)
+
+	atLimit := strings.Repeat("1", maxGameIdLen)
+	f = parseFilters(httptest.NewRequest(http.MethodGet, "/?like="+atLimit, nil), money.Fallback())
+	assert.Equal(t, atLimit, f.Like)
+}
+
+// loadedLikeCache builds a cache with real, itch.io-shaped (numeric) GameIds,
+// since ?like= is parsed off the URL and normaliseGameId only accepts
+// digits - unlike most fixtures elsewhere in this file, which use readable
+// ids that would never survive that parse.
+func loadedLikeCache(t *testing.T) *cache.Cache {
+	t.Helper()
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	assets := []models.Asset{
+		{GameId: "1", Title: "Pixel Tileset", Author: "ana", Link: "https://ana.itch.io/t",
+			Tags: []string{"2d", "pixel-art"}, InvPopularity: 1},
+		{GameId: "2", Title: "Pixel Icon Pack", Author: "bo", Link: "https://bo.itch.io/i",
+			Tags: []string{"2d", "icons"}, InvPopularity: 2},
+		{GameId: "3", Title: "Ambient Loops", Author: "cy", Link: "https://cy.itch.io/a",
+			Tags: []string{"music"}, InvPopularity: 3},
+	}
+	require.NoError(t, storage.PutAssets(assets))
+
+	index, err := bleve.New(storage.IndexPath(), storage.IndexMapping())
+	require.NoError(t, err)
+	for _, a := range assets {
+		require.NoError(t, index.Index(a.GameId, models.NewIndexedAsset(a, 0)))
+	}
+	require.NoError(t, index.Close())
+
+	c := cache.NewCache(36)
+	require.NoError(t, c.RefreshDataCache())
+	return c
+}
+
+func TestLikeFlowsThroughTheIndexHandler(t *testing.T) {
+	// End-to-end through the router: ?like= narrows to the tag overlap with
+	// the source asset, excludes the source itself, and the chip names it.
+	c := loadedLikeCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/", h.HandleIndex)
+
+	w := get(t, r, "/?like=1")
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+
+	assert.Contains(t, body, ">Pixel Icon Pack<", "shares the 2d tag with the source")
+	assert.NotContains(t, body, ">Pixel Tileset<", "the source asset must exclude itself")
+	assert.NotContains(t, body, "Ambient Loops", "no tag overlap with the source")
+	assert.Contains(t, body, "similar to Pixel Tileset", "the chip names the source asset")
+}
+
+func TestLikeOnAnUnknownIdRendersAnOrdinaryEmptyPage(t *testing.T) {
+	// Never an error page - the same degradation a stale tag or author gets.
+	c := loadedLikeCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/", h.HandleIndex)
+
+	w := get(t, r, "/?like=999999")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "No assets match")
+}
+
 func TestValidFilterValuesAreKept(t *testing.T) {
 	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?price=paid&sort=title", nil), money.Fallback())
 	assert.Equal(t, models.PricingPaid, f.Price)

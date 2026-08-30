@@ -63,11 +63,13 @@ type atomSummary struct {
 // NewFeed builds the Atom document for one filtered search. assets is
 // expected to already be the bounded, newest-first, FirstSeen-stamped set
 // HandleFeed asked the cache for - this only shapes it into XML, it does not
-// re-filter or re-sort.
-func NewFeed(f Filters, assets []models.Asset, rates money.Rates, newestCrawl time.Time) atomFeed {
+// re-filter or re-sort. likeTitle is the ?like= source asset's title, the
+// same way cache.Results.LikeTitle threads it to the results page - empty
+// when f.Like is unset or matched nothing.
+func NewFeed(f Filters, assets []models.Asset, rates money.Rates, newestCrawl time.Time, likeTitle string) atomFeed {
 	feed := atomFeed{
 		ID:    BaseURL + f.FeedURL(),
-		Title: feedTitle(f),
+		Title: feedTitle(f, likeTitle),
 		Links: []atomLink{
 			// self: what a reader re-fetches on its own schedule. alternate:
 			// the human-readable page the same filters describe, so a client
@@ -123,13 +125,23 @@ func formatAtomTime(t time.Time) string {
 
 // feedTitle describes the filters a feed was built from, so a subscriber with
 // several itchgrep feeds in a reader can tell them apart without opening one.
-func feedTitle(f Filters) string {
+func feedTitle(f Filters, likeTitle string) string {
 	var parts []string
 	if f.Query != "" {
 		parts = append(parts, `"`+f.Query+`"`)
 	}
 	if len(f.Tags) > 0 {
 		parts = append(parts, strings.Join(f.Tags, " + "))
+	}
+	if f.Like != "" {
+		if likeTitle != "" {
+			parts = append(parts, "similar to "+likeTitle)
+		} else {
+			// An id that matched nothing - a stale or hand-edited link -
+			// still needs a title; naming the id keeps it distinguishable
+			// without claiming a source asset this feed could not find.
+			parts = append(parts, "similar to game "+f.Like)
+		}
 	}
 	if f.Author != "" {
 		parts = append(parts, "by "+f.Author)

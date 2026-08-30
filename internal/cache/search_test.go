@@ -39,9 +39,20 @@ func fixtures() []models.Asset {
 // returns a cache serving it, in the same shape RefreshDataCache would leave.
 func newLoadedCache(t *testing.T, pageSize int64) *Cache {
 	t.Helper()
+	c := newLoadedCacheFromAssets(t, pageSize, fixtures())
+	// Through the real probe rather than hardcoded, so the fixture also asserts
+	// that an index built the normal way is recognised as carrying PriceUSD.
+	require.True(t, c.hasPriceBands)
+	return c
+}
+
+// newLoadedCacheFromAssets is newLoadedCache generalised over the asset list,
+// for the handful of tests that need a fixture newLoadedCache's fixed set
+// cannot express (e.g. an asset with no tags at all).
+func newLoadedCacheFromAssets(t *testing.T, pageSize int64, assets []models.Asset) *Cache {
+	t.Helper()
 	t.Setenv("DATA_DIR", t.TempDir())
 
-	assets := fixtures()
 	// Written so the staleness check has a real timestamp to read rather than
 	// logging a failed stat on every call.
 	require.NoError(t, storage.PutAssets(assets))
@@ -66,10 +77,7 @@ func newLoadedCache(t *testing.T, pageSize int64) *Cache {
 	c.tagCounts = countTags(assets)
 	c.rates = storedRates
 	c.hasRecency = true
-	// Through the real probe rather than hardcoded, so the fixture also asserts
-	// that an index built the normal way is recognised as carrying PriceUSD.
 	c.hasPriceBands = indexHasPriceUSD(index)
-	require.True(t, c.hasPriceBands)
 	// Ahead of what is on disk, so the cache is never judged stale and never
 	// reloads itself mid-test - which would quietly undo the index a test
 	// deliberately removed.
@@ -457,4 +465,70 @@ func TestAHitWithNoAssetBehindItIsDroppedNotRendered(t *testing.T) {
 	}
 	assert.EqualValues(t, 3, got.Total, "the count still reflects what the index matched")
 	assert.Len(t, got.Assets, 2, "one hit had nothing behind it")
+}
+
+func TestLikeFindsTagOverlapAndExcludesTheSource(t *testing.T) {
+	// Asset 1 is tagged {2d, pixel-art, tileset}. 4 shares two of those, 2
+	// shares one; 3 and 5 share none. The source itself must never appear,
+	// even though it necessarily overlaps its own tags completely.
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{Like: "1", Page: 1})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"2", "4"}, ids(got))
+	assert.NotContains(t, ids(got), "1", "the source asset must exclude itself")
+}
+
+func TestLikeCarriesTheSourceTitleForTheChip(t *testing.T) {
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{Like: "1", Page: 1})
+	require.NoError(t, err)
+	assert.Equal(t, "Pixel Art Tileset", got.LikeTitle)
+}
+
+func TestLikeDefaultsToPopularity(t *testing.T) {
+	// No query alongside it, so the existing "no query -> popular" default
+	// applies: 2 (InvPopularity 2) before 4 (InvPopularity 4).
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{Like: "1", Page: 1})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2", "4"}, ids(got))
+}
+
+func TestLikeOnAnUnknownIdIsEmptyNotAnError(t *testing.T) {
+	// A stale or hand-edited link must degrade the same way an unknown tag
+	// does: nothing matches, nothing fails.
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{Like: "does-not-exist", Page: 1})
+	require.NoError(t, err)
+	assert.Empty(t, got.Assets)
+	assert.Empty(t, got.LikeTitle)
+}
+
+func TestLikeCombinesWithOtherFiltersAsAConjunct(t *testing.T) {
+	// Of the two assets similar to 1 (2 and 4), only 2 also carries "sprites".
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{Like: "1", Tags: []string{"sprites"}, Page: 1})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2"}, ids(got))
+}
+
+func TestLikeOnASourceWithNoTagsMatchesNothing(t *testing.T) {
+	// Nothing to be "similar" by. This must not silently fall back to an
+	// unfiltered browse - that would show the whole catalogue under a control
+	// promising a narrowed one.
+	assets := []models.Asset{
+		{GameId: "bare", Title: "No Tags At All", InvPopularity: 1},
+		{GameId: "other", Title: "Has Tags", Tags: []string{"2d"}, InvPopularity: 2},
+	}
+	c := newLoadedCacheFromAssets(t, 36, assets)
+
+	got, err := c.Find(SearchOptions{Like: "bare", Page: 1})
+	require.NoError(t, err)
+	assert.Empty(t, got.Assets)
+	assert.Equal(t, "No Tags At All", got.LikeTitle, "the title is still known even though nothing matched")
 }
