@@ -1,0 +1,45 @@
+# Guards main and every pull request: the module must build, generated
+# templ code must match its source and stay gofmt-clean, go vet and the
+# test suite must pass, and govulncheck must find no reachable
+# vulnerabilities. The templ CLI version is read from go.mod so it can
+# never drift from the version the repo actually builds with.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install templ (pinned to go.mod's version)
+        run: |
+          templ_version="$(go list -m -f '{{.Version}}' github.com/a-h/templ)"
+          go install "github.com/a-h/templ/cmd/templ@${templ_version}"
+
+      - name: Generate templates
+        run: templ generate
+
+      - name: Check formatting (excludes generated *_templ.go files)
+        run: |
+          unformatted="$(gofmt -l . | grep -v '_templ\.go$' || true)"
+          echo "$unformatted"
+          test -z "$unformatted"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
