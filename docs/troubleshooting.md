@@ -313,14 +313,28 @@ isn't actually taking effect — see
 for the specific diagnostic (`df -h`, confirming the logrotate reinstall is
 actually running).
 
-## Compose says port already in use
+## Compose says port already in use, or the network pool overlaps
+
+The duplicate-stack failure described in this section surfaces as one of two
+errors, depending on which step fails first. Because `docker-compose.yml`
+pins a fixed subnet (`172.30.99.0/24` — see
+[docs/infrastructure.md](infrastructure.md)), the second stack usually fails
+at network creation, before it ever tries to bind a port:
+
+```
+Error response from daemon: invalid pool request: Pool overlaps with other one on this address space
+failed to create network src_default
+```
+
+If the network step is somehow passed, the port bind fails instead:
 
 ```
 Bind for 127.0.0.1:62685 failed: port is already allocated
 ```
 
-(or the equivalent for `62686`). **The most common cause on this project's
-production host specifically:** `docker compose` was run from a directory
+(or the equivalent for `62686`). Both errors have the same cause and the
+same fix. **The most common cause on this project's production host
+specifically:** `docker compose` was run from a directory
 without `COMPOSE_PROJECT_NAME` set (or set inconsistently), so Compose
 derived the project name from the checkout directory instead — `src`, for
 the production checkout at `/mnt/user/appdata/itchgrep/src`. That creates a

@@ -71,7 +71,10 @@ tasks:
   test:
     desc: Run every test. Needs no running services.
     cmds:
-      - go test ./...
+      # -count=1 defeats Go's test cache: the pre-push check in
+      # CONTRIBUTING.md requires a fresh run, and a cached "ok" from an
+      # earlier tree would report a stale pass here.
+      - go test ./... -count=1
 
   fmt:
     cmds:
