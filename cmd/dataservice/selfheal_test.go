@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
@@ -52,6 +53,41 @@ func TestIndexNeedsRebuildOnAValidScorchIndex(t *testing.T) {
 
 	needsRebuild, reason := indexNeedsRebuild(dir)
 	assert.False(t, needsRebuild, "reason: %s", reason)
+}
+
+// TestIndexNeedsRebuildDoesNotDeadlockWhenAnotherProcessHoldsTheLock is the
+// regression test for the P0 startup deadlock: the webserver holds the
+// published index open for its entire process lifetime, and the old
+// indexNeedsRebuild called plain bleve.Open on that same directory, which
+// blocks forever on scorch's bbolt lock rather than erroring. This opens the
+// index itself first - simulating the webserver's permanent handle - then
+// asserts indexNeedsRebuild returns promptly (well under the 5s bolt_timeout
+// plus slack) and says "no rebuild needed", rather than hanging or wrongly
+// concluding the index is broken just because it is in use.
+func TestIndexNeedsRebuildDoesNotDeadlockWhenAnotherProcessHoldsTheLock(t *testing.T) {
+	dir := t.TempDir() + "/idx"
+	idx, err := bleve.New(dir, storage.IndexMapping())
+	require.NoError(t, err)
+	defer idx.Close() // held open for the whole test, like the webserver holds it in production
+
+	done := make(chan struct {
+		needsRebuild bool
+		reason       string
+	}, 1)
+	go func() {
+		needsRebuild, reason := indexNeedsRebuild(dir)
+		done <- struct {
+			needsRebuild bool
+			reason       string
+		}{needsRebuild, reason}
+	}()
+
+	select {
+	case result := <-done:
+		assert.False(t, result.needsRebuild, "reason: %s", result.reason)
+	case <-time.After(8 * time.Second):
+		t.Fatal("indexNeedsRebuild hung while another process held the index open - the deadlock this test guards against")
+	}
 }
 
 // TestSelfHealDoesNothingOnAFreshVolume covers the case that must NOT trigger

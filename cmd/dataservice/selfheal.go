@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,7 +13,15 @@ import (
 	"itchgrep/pkg/money"
 
 	"github.com/blevesearch/bleve/v2"
+	bolt "go.etcd.io/bbolt"
 )
+
+// indexOpenLockTimeout bounds how long indexNeedsRebuild waits for the
+// published index's bbolt lock before concluding someone else already holds
+// it. Long enough that a slow disk does not misread as "in use"; short
+// enough that a genuinely wedged open still returns well inside a human's
+// patience for a startup log to say something.
+const indexOpenLockTimeout = "5s"
 
 // selfHealIndexFormat is run once at startup, before scheduleCrawls starts
 // its own loop. It exists for one deploy in particular: the move from bleve
@@ -55,20 +64,26 @@ func selfHealIndexFormat() error {
 // acts on, pulled out so it can be tested against a handful of directory
 // fixtures without running bleve.New over real data.
 //
-// bleve.Open is tried first because it is authoritative - the same open the
-// webserver performs - and already covers every failure this needs to catch:
-// a missing directory, a v1 upsidedown/boltdb index (no reader registered in
-// this binary at all), or a corrupted one. The index_meta.json check below it
-// is defence in depth for the one case a successful Open cannot rule out on
-// its own: a future index type this binary's registry does understand, but
-// which is not the scorch this mapping and query layer are built for.
+// This must NEVER do a plain bleve.Open(dir) on the published index: the
+// webserver holds it open for the life of its process (internal/cache/cache.go),
+// and scorch's bbolt lock defaults to an indefinite wait - a second opener
+// with no timeout blocks forever, taking scheduleCrawls and /trigger-fetch
+// down with it. See idx 0/1 in the adversarial review that caught this.
+//
+// index_meta.json is checked first, off disk with no lock involved at all: a
+// missing directory, an unreadable or unparseable meta file, or a
+// non-"scorch" index_type all decide "rebuild" without ever touching bbolt -
+// this alone covers a v1 upsidedown/boltdb index (which has no matching
+// index_type this binary's registry understands the same way) and a
+// half-written index directory.
+//
+// Only once the meta file itself claims to be a healthy scorch index is an
+// actual open attempted, and even then with bolt_timeout set rather than
+// bleve.Open's indefinite default. A timeout error means exactly one thing on
+// this stack: the webserver already has the index open, which proves it is
+// openable and therefore fine - never "needs rebuild". Any other open error
+// (corruption, a mapping mismatch) does mean rebuild.
 func indexNeedsRebuild(dir string) (needsRebuild bool, reason string) {
-	idx, err := bleve.Open(dir)
-	if err != nil {
-		return true, fmt.Sprintf("bleve.Open %s: %v", dir, err)
-	}
-	defer idx.Close()
-
 	indexType, err := readIndexMetaType(dir)
 	if err != nil {
 		return true, fmt.Sprintf("reading %s/index_meta.json: %v", dir, err)
@@ -76,6 +91,18 @@ func indexNeedsRebuild(dir string) (needsRebuild bool, reason string) {
 	if indexType != "scorch" {
 		return true, fmt.Sprintf("index_meta.json reports index_type=%q, not scorch", indexType)
 	}
+
+	idx, err := bleve.OpenUsing(dir, map[string]interface{}{"bolt_timeout": indexOpenLockTimeout})
+	if err != nil {
+		if errors.Is(err, bolt.ErrTimeout) {
+			// Someone else holds the lock - on this stack that can only be
+			// the webserver's own permanent open - so the index itself is
+			// fine and there is nothing to rebuild.
+			return false, ""
+		}
+		return true, fmt.Sprintf("bleve.OpenUsing %s: %v", dir, err)
+	}
+	defer idx.Close()
 	return false, ""
 }
 
@@ -141,6 +168,10 @@ func rebuildIndexFromPublishedData() error {
 	return nil
 }
 
+// indexBatchSize is how many documents buildIndex accumulates in one
+// bleve.Batch before flushing it to disk.
+const indexBatchSize = 1500
+
 // buildIndex builds a fresh index at storage.StagingIndexPath from assets and
 // rates and returns how many documents it wrote. Shared by
 // fetchAndStoreAssets (assets fresh off a crawl) and
@@ -153,10 +184,6 @@ func rebuildIndexFromPublishedData() error {
 // The caller owns storage.PublishIndex(): building and publishing are kept
 // separate so a caller that wants to inspect or discard a build without
 // publishing it - a test, primarily - can.
-// indexBatchSize is how many documents buildIndex accumulates in one
-// bleve.Batch before flushing it to disk.
-const indexBatchSize = 1500
-
 func buildIndex(assets []models.Asset, rates money.Rates) (count int, err error) {
 	// Built at the staging path, which sits beside the published index so
 	// that publishing is a rename rather than a copy. A previous run killed

@@ -85,6 +85,38 @@ func TestClientIPPrefersCFConnectingIPOverXForwardedFor(t *testing.T) {
 	assert.Equal(t, "9.9.9.9", got)
 }
 
+func TestClientIPFallsBackToTheSocketAddressWhenCFConnectingIPDoesNotParse(t *testing.T) {
+	// A trusted peer sending a header that is not an IP address at all - not
+	// merely a spoofed one, since the peer check already ruled that out -
+	// must not be trusted either: it becomes the rate limiter's map key and
+	// the access log's recorded IP, and only a real address belongs there.
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:5000"
+	r.Header.Set("CF-Connecting-IP", "not-an-ip; drop table users;")
+
+	got := ClientIP(r, true, cidrs(t, "10.0.0.0/24"))
+	assert.Equal(t, "10.0.0.1", got)
+}
+
+func TestClientIPFallsBackToTheSocketAddressWhenXForwardedForDoesNotParse(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:5000"
+	r.Header.Set("X-Forwarded-For", "definitely-not-an-ip")
+
+	got := ClientIP(r, true, cidrs(t, "10.0.0.0/24"))
+	assert.Equal(t, "10.0.0.1", got)
+}
+
+func TestClientIPFallsBackToXForwardedForWhenCFConnectingIPDoesNotParse(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:5000"
+	r.Header.Set("CF-Connecting-IP", "garbage")
+	r.Header.Set("X-Forwarded-For", "8.8.8.8")
+
+	got := ClientIP(r, true, cidrs(t, "10.0.0.0/24"))
+	assert.Equal(t, "8.8.8.8", got, "an invalid CF-Connecting-IP must not block a still-usable X-Forwarded-For")
+}
+
 func TestParseTrustedCIDRsSkipsMalformedEntries(t *testing.T) {
 	// One typo in the list must not take down every entry beside it - the
 	// same tolerance config.EnvBool and config.EnvFloat give a bad env var

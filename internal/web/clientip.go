@@ -68,15 +68,28 @@ func parseTrustedCIDRs(raw string) []*net.IPNet {
 // and bypass the limit entirely. Behind Cloudflare the opposite is true -
 // every request arrives from the tunnel, so without this the whole internet
 // shares one bucket.
+//
+// A trusted header's value is validated with net.ParseIP before it is
+// returned. This is the rate limiter's own map key (see Limiter.allow) as
+// well as what the access log records, so a value that is not an address at
+// all - not merely a spoofed one, since the peer check above already rules
+// that out - must not be trusted either; it falls back to the socket address
+// the same as a missing header would.
 func ClientIP(r *http.Request, trustProxy bool, trustedCIDRs []*net.IPNet) string {
 	if trustProxy && fromTrustedPeer(r, trustedCIDRs) {
-		if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
+		if ip := r.Header.Get("CF-Connecting-IP"); ip != "" && net.ParseIP(ip) != nil {
 			return ip
 		}
 		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 			// Left-most entry is the original client; the rest are hops.
 			first, _, _ := strings.Cut(fwd, ",")
-			return strings.TrimSpace(first)
+			first = strings.TrimSpace(first)
+			// A value that does not parse as an address cannot be a client -
+			// falling through to the socket address below is what a trusted
+			// proxy sending a malformed or absent header degrades to anyway.
+			if net.ParseIP(first) != nil {
+				return first
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

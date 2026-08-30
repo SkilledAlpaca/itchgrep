@@ -135,6 +135,26 @@ func TestEcbSnapshotIsReadWithItsDate(t *testing.T) {
 	assert.True(t, r.Valid())
 }
 
+func TestEcbSingleQuotedAttributesAreParsedToo(t *testing.T) {
+	// The ECB switched its attribute quoting from double to single quotes in
+	// August 2026; the parser broke and every conversion silently ran on the
+	// fallback snapshot. Both styles must parse.
+	singleQuoted := `<?xml version="1.0" encoding="UTF-8"?>
+<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01">
+ <Cube>
+  <Cube time='2026-08-28'>
+   <Cube currency='USD' rate='1.1643'/>
+   <Cube currency='GBP' rate='0.85720'/>
+  </Cube>
+ </Cube>
+</gesmes:Envelope>`
+	r, err := ParseECB([]byte(singleQuoted))
+	require.NoError(t, err)
+	assert.Equal(t, "2026-08-28", r.Date)
+	assert.InDelta(t, 1.1643, r.PerEUR["USD"], 0.0001)
+	assert.True(t, r.Valid())
+}
+
 func TestAGarbledSnapshotIsRejectedNotHalfUsed(t *testing.T) {
 	// Half a rates table converts some prices and silently mangles others.
 	_, err := ParseECB([]byte(`<Envelope><Cube time="2026-08-07"/></Envelope>`))

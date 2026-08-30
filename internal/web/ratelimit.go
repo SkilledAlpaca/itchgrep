@@ -32,6 +32,25 @@ type bucket struct {
 	last   time.Time
 }
 
+// maxBuckets caps how many distinct identities Limiter tracks at once.
+// evictLoop already reaps quiet buckets every 5 minutes, but that is not
+// enough on its own against a caller minting a fresh identity every request -
+// a spoofed header (before ClientIP validated one), a large IPv6 allocation,
+// or simply many distinct real visitors within one eviction window can all
+// grow the map faster than eviction shrinks it. 50,000 entries is comfortably
+// above any real traffic this site has ever seen and small in memory (a
+// *bucket plus a string key, well under a few MB total) - the ceiling exists
+// to bound an attacker, not to constrain legitimate use.
+const maxBuckets = 50_000
+
+// overflowBucketKey is the single shared bucket every identity past
+// maxBuckets draws from once the map is full. Sharing one bucket rather than
+// rejecting outright means the map still cannot grow further, and every
+// identity past the cap is limited together - more aggressively than any one
+// of them would be alone, which is the correct direction to fail in when the
+// map is this close to capacity.
+const overflowBucketKey = "\x00overflow"
+
 // Limiter allows burst requests immediately and rate per second thereafter,
 // counted per client.
 type Limiter struct {
@@ -112,8 +131,21 @@ func (l *Limiter) allow(key string) bool {
 
 	b := l.buckets[key]
 	if b == nil {
-		l.buckets[key] = &bucket{tokens: l.burst - 1, last: now}
-		return true
+		if len(l.buckets) >= maxBuckets {
+			// The map is already at its ceiling: rather than let one more
+			// identity grow it further (or reject the request outright, which
+			// would turn hitting the cap into its own denial of service), this
+			// identity shares the single overflow bucket every other identity
+			// past the cap also shares - see overflowBucketKey.
+			key = overflowBucketKey
+			if ob := l.buckets[key]; ob != nil {
+				b = ob
+			}
+		}
+		if b == nil {
+			l.buckets[key] = &bucket{tokens: l.burst - 1, last: now}
+			return true
+		}
 	}
 
 	b.tokens += now.Sub(b.last).Seconds() * l.rate
@@ -127,6 +159,20 @@ func (l *Limiter) allow(key string) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// RateLimitedGroupMarker is a no-op middleware - it changes nothing about
+// how a request is handled. Its only purpose is to sit alongside
+// Limiter.Middleware in cmd/webserver's rate-limited route group, as a
+// landmark a test can look for: chi.Walk exposes each route's middleware
+// chain, but a *Limiter.Middleware method value is a closure with no
+// pointer identity reliable enough to compare across two otherwise-equal
+// receivers, whereas a plain top-level function like this one has exactly
+// one address for the whole program. See cmd/webserver's router_test.go,
+// which walks the real router built by newRouter and uses this marker to
+// find every route that must carry a metrics classification.
+func RateLimitedGroupMarker(next http.Handler) http.Handler {
+	return next
 }
 
 // Middleware rejects requests over the limit with 429 and a Retry-After.

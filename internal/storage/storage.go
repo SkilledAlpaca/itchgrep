@@ -32,6 +32,7 @@ import (
 	"itchgrep/pkg/models"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,6 +76,37 @@ func Dir() string {
 
 func pathTo(name string) string { return filepath.Join(Dir(), name) }
 
+// EnsureWritable verifies this process can actually write to Dir(), by
+// creating and removing a small probe file. Meant to be called before any
+// expensive work starts - a crawl that discovers an unwritable /data only at
+// buildIndex, after fetching for six hours, has wasted the entire run on a
+// fault that a one-file probe would have caught in milliseconds. See
+// cmd/dataservice's fetchAndStoreAssets, which calls this first.
+//
+// The error names the uid this process is actually running as, since the
+// most likely cause in production is exactly that: a bind-mounted DATA_PATH
+// that was never chown'd to the nonroot uid both images run as (see
+// docker-compose.yml's volumes: comments).
+func EnsureWritable() error {
+	dir := Dir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("data directory %s not writable by this process (uid %d): os.MkdirAll: %w", dir, os.Getuid(), err)
+	}
+	probe, err := os.CreateTemp(dir, ".write-probe-*")
+	if err != nil {
+		return fmt.Errorf("data directory %s not writable by this process (uid %d): %w", dir, os.Getuid(), err)
+	}
+	name := probe.Name()
+	if err := probe.Close(); err != nil {
+		os.Remove(name)
+		return fmt.Errorf("data directory %s not writable by this process (uid %d): closing probe file: %w", dir, os.Getuid(), err)
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("data directory %s not writable by this process (uid %d): removing probe file %s: %w", dir, os.Getuid(), name, err)
+	}
+	return nil
+}
+
 // IndexPath is the published search index. The webserver opens this directly;
 // there is no download step.
 func IndexPath() string { return pathTo(IndexDirName) }
@@ -84,9 +116,67 @@ func IndexPath() string { return pathTo(IndexDirName) }
 // into place, and rename only works within one filesystem.
 func StagingIndexPath() string { return pathTo(stagingIndexDirName) }
 
+// orphanTempFileAge is how old one of writeAtomic's own *.tmp-* files has to
+// be before cleanupOrphanedTempFiles treats it as abandoned rather than a
+// write genuinely still in flight.
+const orphanTempFileAge = time.Hour
+
+// cleanupOrphanedTempFilesOnce makes the sweep below run at most once per
+// process - it exists to catch what a previous, differently-killed process
+// left behind, not to re-scan Dir() on every single write.
+var cleanupOrphanedTempFilesOnce sync.Once
+
+// cleanupOrphanedTempFiles removes writeAtomic's own leftover "*.tmp-*"
+// files from Dir(), the ones older than orphanTempFileAge. A process killed
+// between os.CreateTemp and the os.Rename below leaves one behind
+// permanently - nothing else in this codebase ever globs for that pattern -
+// and on the crawl checkpoint in particular, at up to ~26 MB per write,
+// those accumulate on the same filesystem the search index lives on. Age is
+// what tells an orphan apart from a write genuinely in progress right now,
+// whose rename has simply not landed yet.
+//
+// Best-effort throughout: a directory that cannot be listed or a file that
+// cannot be removed is logged and skipped, never returned as an error - this
+// is tidying up, not a precondition for the write that triggered it.
+func cleanupOrphanedTempFiles() {
+	dir := Dir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// Nothing to sweep if the directory does not exist yet or cannot be
+		// read - the write this is running ahead of will surface that on its
+		// own, with a clearer error than this function could add.
+		return
+	}
+
+	cutoff := time.Now().Add(-orphanTempFileAge)
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.Contains(entry.Name(), ".tmp-") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := os.Remove(path); err != nil {
+			logging.Warning("Failed to remove orphaned temp file %s: %v", path, err)
+			continue
+		}
+		logging.Info("Removed orphaned temp file %s (%s old, left behind by a process that never renamed it into place)",
+			path, time.Since(info.ModTime()).Round(time.Minute))
+		removed++
+	}
+	if removed > 0 {
+		logging.Info("Cleaned up %d orphaned temp file(s) in %s", removed, dir)
+	}
+}
+
 // writeAtomic writes data to name in Dir() such that a concurrent reader sees
 // either the old contents or the new ones, never a partial write.
 func writeAtomic(name string, data []byte) error {
+	cleanupOrphanedTempFilesOnce.Do(cleanupOrphanedTempFiles)
+
 	dir := Dir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("os.MkdirAll %s: %w", dir, err)
@@ -185,6 +275,25 @@ func readJSON(name string, v any) (time.Time, error) {
 	return fi.ModTime(), nil
 }
 
+// renameCorruptAside moves a file that exists but failed to parse out of the
+// way, tagged with the moment it was noticed, and logs loudly that it did -
+// see GetHistory and GetTraffic, the two callers. Neither permanent failure
+// (refusing every future write, which PutHistory used to do once
+// history.json turned unreadable) nor silent zeroing (what a corrupt
+// traffic.json used to do, with nothing in any log to explain why /stats
+// reset to zero) is an acceptable response to data that is already lost -
+// this preserves the evidence for a curious operator and lets the caller
+// start fresh rather than staying wedged.
+func renameCorruptAside(name string) {
+	src := pathTo(name)
+	dst := fmt.Sprintf("%s.corrupt-%d", src, time.Now().Unix())
+	if err := os.Rename(src, dst); err != nil {
+		logging.Error("%s exists but did not parse, and could not be moved aside to %s: %v - starting fresh anyway", src, dst, err)
+		return
+	}
+	logging.Error("%s exists but did not parse; moved aside to %s for inspection and starting fresh", src, dst)
+}
+
 // PutAssets writes the asset list. The dataservice writes this last, after the
 // index is published, so its timestamp is what the webserver watches to decide
 // a new dataset is ready.
@@ -266,17 +375,27 @@ func GetStats() (models.Stats, error) {
 
 // PutTraffic persists the public traffic counters. Called on a timer from
 // internal/metrics rather than on every request, since a rename-into-place
-// write on every hit would put disk I/O in the request path for no benefit -
-// losing a few minutes of counts on a crash is an accepted trade-off, not
-// something worth graceful shutdown for.
+// write on every hit would put disk I/O in the request path for no benefit.
+// A clean stop now also calls this directly, once, on the way out - see
+// metrics.Counters.PersistNow and cmd/webserver/main.go's SIGTERM path - so
+// a graceful shutdown loses nothing; only a hard kill (docker kill -9, an
+// OOM) still loses up to the interval between two timer ticks.
 func PutTraffic(t models.Traffic) error { return writeJSON(TrafficFileName, t) }
 
 // GetTraffic returns the counters as of the last snapshot. A missing file is
 // normal on first boot and on any deploy before this existed, and the caller
-// starts counting from zero rather than treating it as an error.
+// (metrics.Restore) starts counting from zero rather than treating it as an
+// error. A file that exists but fails to parse is moved aside - see
+// renameCorruptAside - so that same zero-and-continue outcome is logged
+// loudly instead of happening in total silence, which is what let a
+// corrupted traffic.json reset the public /stats page to zero with nothing
+// in any log to explain why.
 func GetTraffic() (models.Traffic, error) {
 	var t models.Traffic
 	if _, err := readJSON(TrafficFileName, &t); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			renameCorruptAside(TrafficFileName)
+		}
 		return models.Traffic{}, err
 	}
 	return t, nil
@@ -306,15 +425,21 @@ func PutHistory(rec models.CrawlRecord) error {
 // GetHistory returns the published crawl history, oldest first. A missing
 // file is normal on any deploy before this existed, or before the first crawl
 // since - the caller shows no history at all rather than treating it as an
-// error. A file that exists but fails to parse is a real error and is
-// returned as one.
+// error. A file that exists but fails to parse is moved aside - see
+// renameCorruptAside - and also treated as empty, rather than returned as an
+// error: PutHistory calls GetHistory before every write (see its own doc
+// comment), so returning an error here used to mean a corrupted
+// history.json permanently refused every future crawl's history entry too -
+// the original corruption was already unrecoverable, and refusing to record
+// anything new on top of it only compounded the loss.
 func GetHistory() ([]models.CrawlRecord, error) {
 	var history []models.CrawlRecord
 	if _, err := readJSON(HistoryFileName, &history); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, err
+		renameCorruptAside(HistoryFileName)
+		return nil, nil
 	}
 	return history, nil
 }
@@ -402,6 +527,26 @@ func PublishIndex() error {
 
 	published := IndexPath()
 	previous := published + previousIndexSuffix
+
+	// Recover a crash between the two renames below, from a previous
+	// PublishIndex call: published moved to previous, but staging never made
+	// it into published's place before the process died (OOM, host power
+	// loss). Left alone, that state is indistinguishable from a corrupt or
+	// missing index to anything that only inspects published -
+	// selfHealIndexFormat's indexNeedsRebuild would see "unopenable" and
+	// spend minutes rebuilding from scratch, with the site fully down the
+	// whole time, when the complete previous index is sitting right there
+	// under a different name. A single rename restores service immediately;
+	// only after that does this function go on to publish what it was
+	// actually called to publish.
+	if _, err := os.Stat(published); os.IsNotExist(err) {
+		if _, perr := os.Stat(previous); perr == nil {
+			logging.Info("Recovering an interrupted publish: %s is missing but %s exists; restoring it before proceeding", published, previous)
+			if rerr := os.Rename(previous, published); rerr != nil {
+				return fmt.Errorf("recovering interrupted publish: os.Rename %s -> %s: %w", previous, published, rerr)
+			}
+		}
+	}
 
 	// A leftover from a run that died mid-publish would block the rename below.
 	if err := os.RemoveAll(previous); err != nil {

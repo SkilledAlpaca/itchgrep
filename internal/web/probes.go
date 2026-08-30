@@ -58,6 +58,7 @@ var liveRoutes = map[string]bool{
 	"/robots.txt":     true,
 	"/favicon.ico":    true,
 	"/healthz":        true,
+	"/readyz":         true,
 }
 
 // isProbe reports whether path matches the shape of the scanner sweep.
@@ -79,43 +80,57 @@ func isProbe(path string) bool {
 	return false
 }
 
-// ProbeFilter answers a probe with a bare 404 before it reaches routing, the
-// logger, or the rate limiter.
+// ProbeFilter answers a probe with a bare 404 before it reaches routing or
+// the access logger.
 //
-// Deliberately not a tarpit and does not charge a rate-limiter token. A
-// tarpit inverts the server's own WriteTimeout/IdleTimeout protections into
-// an attacker-controlled FD-exhaustion vector; charging a token means taking
-// the limiter's mutex for a request that now costs nothing to answer.
+// Deliberately not a tarpit: a tarpit inverts the server's own
+// WriteTimeout/IdleTimeout protections into an attacker-controlled
+// FD-exhaustion vector. It DOES now charge the same per-client rate-limiter
+// token every real request pays (see limiter below) - now that a probe emits
+// its own JSON record and a disk write per hit, answering it is no longer
+// free, and an unlimited scanner sweep must not be able to write to the host
+// disk faster than the limiter would ever let a legitimate client. Charging
+// the token here, ahead of the JSON marshal, also means a client whose
+// budget is exhausted stops paying for the write at all - see limiter.allow
+// below.
 //
 // No templ render, and it still does get an aggregate count via
 // m.RecordProbe() rather than a per-request one from RecordRequest - the
 // public /stats page must not turn into a scanner-sweep counter. It does now
 // get its own per-request JSON line, on a "probe" kind the host-side splitter
 // routes to a separate file from the access stream, so the access log stays
-// clean while the probe traffic itself remains fully recorded.
+// clean while the probe traffic itself remains fully recorded (budget
+// permitting).
 //
 // trustProxy and trustedCIDRs are threaded through to ClientIP for the same
 // reason as RequestLogger: the limiter, the access log, and this filter must
-// all agree on where a client's identity comes from.
-func ProbeFilter(m *metrics.Counters, trustProxy bool, trustedCIDRs []*net.IPNet) func(http.Handler) http.Handler {
+// all agree on where a client's identity comes from. limiter is the same
+// *Limiter instance the rate-limited route group uses, shared rather than a
+// second one, so a client sweeping probe paths and a client hammering real
+// routes draw from one budget instead of two. nil (test-only) allows every
+// probe unconditionally.
+func ProbeFilter(m *metrics.Counters, trustProxy bool, trustedCIDRs []*net.IPNet, limiter *Limiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isProbe(r.URL.Path) {
 				m.RecordProbe()
 
-				record := probeRecord{
-					Ts:     time.Now().UTC().Format(time.RFC3339Nano),
-					Kind:   "probe",
-					IP:     AnonymizeIP(ClientIP(r, trustProxy, trustedCIDRs)),
-					Method: r.Method,
-					Path:   truncate(r.URL.Path, maxLoggedPath),
-					UA:     truncateUA(r.UserAgent()),
-				}
-				line, err := json.Marshal(record)
-				if err != nil {
-					logging.Warning("failed to marshal probe record: %s", err)
-				} else {
-					eventFunc(string(line))
+				ip := ClientIP(r, trustProxy, trustedCIDRs)
+				if limiter == nil || limiter.allow(ip) {
+					record := probeRecord{
+						Ts:     time.Now().UTC().Format(time.RFC3339Nano),
+						Kind:   "probe",
+						IP:     AnonymizeIP(ip),
+						Method: r.Method,
+						Path:   truncate(r.URL.Path, maxLoggedPath),
+						UA:     truncateUA(r.UserAgent()),
+					}
+					line, err := json.Marshal(record)
+					if err != nil {
+						logging.Warning("failed to marshal probe record: %s", err)
+					} else {
+						eventFunc(string(line))
+					}
 				}
 
 				w.Header().Set("X-Content-Type-Options", "nosniff")

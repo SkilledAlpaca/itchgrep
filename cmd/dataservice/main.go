@@ -39,7 +39,7 @@ var scrapeInProgress atomic.Bool
 var activeCrawler atomic.Pointer[crawler]
 
 func main() {
-	logging.Init("", true)
+	logging.Init()
 
 	// Runs synchronously, before scheduleCrawls: a rebuild here takes minutes,
 	// and scheduleCrawls would otherwise see a fresh assets.json and wait up to
@@ -311,6 +311,19 @@ func handleFetchTrigger(w http.ResponseWriter, r *http.Request) {
 // index published, then assets.json written - before recordCrawlCompletion's
 // bookkeeping describes a dataset that is actually live.
 func fetchAndStoreAssets() error {
+	// Checked before anything else, including cfg or the crawl itself: an
+	// unwritable data directory (the classic cause is a bind-mounted
+	// DATA_PATH never chown'd to the nonroot uid both images run as - see
+	// docker-compose.yml's volumes: comments) previously surfaced only after
+	// ~17 minutes of tag discovery and then a full ~6-hour crawl, at
+	// buildIndex's own bleve.New call. This probe costs milliseconds and
+	// fails the same way scheduleCrawls' normal backoff already handles, so
+	// the operator sees the real cause immediately instead of last.
+	if err := storage.EnsureWritable(); err != nil {
+		logging.Error("Refusing to start a crawl: %v", err)
+		return fmt.Errorf("storage.EnsureWritable: %w", err)
+	}
+
 	cfg := loadCrawlConfig()
 
 	// activeCrawler is set inside crawlAndCollect, as soon as the crawler

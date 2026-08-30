@@ -88,6 +88,11 @@ services:
       context: .
       dockerfile: Dockerfile.dataservice
     restart: unless-stopped
+    # Pinned for the same reason as the webserver's container_name below:
+    # scripts/export-logs.sh follows this container's logs by name too (into
+    # crawler.log), and a project-name-derived default is one
+    # COMPOSE_PROJECT_NAME rename away from breaking that follower silently.
+    container_name: itchgrep-dataservice
     environment:
       # The storage directory. Everything the crawl produces lands here.
       DATA_DIR: /data
@@ -160,8 +165,9 @@ services:
       # image - see the comment above FROM in Dockerfile.dataservice), not
       # root, so this mount must be writable by 65532 or every crawl fails
       # before it can write assets.json/tags.json/checkpoint.json or
-      # index.bleve/. Docker seeds a *named* volume's ownership from the
-      # image's own mount point on first use, which already works here. A
+      # index.bleve/. The images ship an empty /data owned by 65532 exactly
+      # so that Docker seeds a fresh *named* volume with that ownership on
+      # first use (see the COPY --chown in either Dockerfile). A
       # bind-mounted DATA_PATH (set as an env var - see .env.example) is
       # never chown'd automatically - on the host, once, before first `up`
       # with that path and again after upgrading an existing deployment onto
@@ -214,11 +220,16 @@ services:
       # Peers CF-Connecting-IP / X-Forwarded-For are honoured from. Empty
       # means trust nobody, which is the only safe default for a stack that
       # can also be reached with no Cloudflare in front of it at all - the
-      # local-only `docker compose up`. The default here names the compose
-      # network's own pinned subnet (see the `networks:` block at the end of
-      # this file), since that is exactly where cloudflared connects from
-      # when the `public` profile is in use.
-      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-172.30.99.0/24}"
+      # local-only `docker compose up`. The default here names cloudflared's
+      # own pinned address on the compose network (see its `networks:` entry
+      # below) as a single /32, not the whole subnet: the webserver's port is
+      # published on 0.0.0.0 (see `ports:` below), and Docker's userland proxy
+      # can deliver that traffic with the bridge gateway as RemoteAddr - which
+      # sits inside the /24 - so trusting the whole subnet would let anything
+      # that can reach the published port at all impersonate a Cloudflare hop.
+      # A single address only ever matches the one peer that is actually
+      # cloudflared.
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-172.30.99.10/32}"
     ports:
       - "62686:8080"
     volumes:
@@ -316,12 +327,23 @@ services:
       webserver:
         condition: service_healthy
     logging: *logging
+    # Fixed rather than left to Docker's DHCP-like allocation, so
+    # TRUSTED_PROXY_CIDRS above can name this one address instead of the
+    # whole /24: with a whole-subnet default, the bridge gateway (which
+    # traffic through Docker's userland proxy can arrive from - see the
+    # webserver's ports: comment) and every other container on this network
+    # would also be trusted to impersonate a Cloudflare hop. A /32 pointed at
+    # this address is the actual "one peer cloudflared connects from" the ADR
+    # describes.
+    networks:
+      default:
+        ipv4_address: 172.30.99.10
 
 volumes:
   itchgrep-data:
 
 # Pinned instead of left to Docker's automatic allocation, so TRUSTED_PROXY_CIDRS
-# above can name the exact subnet cloudflared connects from - the compose
+# above can name the exact address cloudflared connects from - the compose
 # network's peer address is how the webserver decides whether to believe
 # CF-Connecting-IP at all - rather than trusting whatever subnet Docker
 # happened to hand out on this host, which can shift across a daemon restart

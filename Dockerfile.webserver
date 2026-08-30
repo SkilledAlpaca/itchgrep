@@ -10,14 +10,23 @@
 #   docker buildx imagetools inspect golang:1.27
 FROM golang:1.27@sha256:0ecdc2a9f6156af6451080bfe3d8382a662fcc4e209608c6f919e643453514c1 AS builder
 
-# Install templ to generate the templates
-RUN go install github.com/a-h/templ/cmd/templ@v0.3.1020
-
 # Create and change to the app directory.
 WORKDIR /app
 
-# Copy go/templ source files.
+# go.mod/go.sum copied first, before templ is installed, so its version can
+# be derived from the same file the build compiles against - the same
+# derivation .github/workflows/ci.yml uses, and for the same reason its own
+# comment gives: "so it can never drift from the version the repo actually
+# builds with." A hand-pinned `@vX.Y.Z` literal here was a second copy of
+# that version that had to be bumped by hand in lockstep with go.mod, and
+# could (and did) drift from it silently - see docs/dependencies.md.
 COPY go.mod go.sum ./
+
+# Install templ pinned to go.mod's version, never to @latest.
+RUN templ_version="$(go list -m -f '{{.Version}}' github.com/a-h/templ)" && \
+	go install "github.com/a-h/templ/cmd/templ@${templ_version}"
+
+# Copy the rest of the source.
 COPY cmd/webserver/ cmd/webserver/
 COPY internal/ internal/
 COPY pkg/ pkg/
@@ -31,6 +40,16 @@ RUN templ generate
 # pure Go. -s -w strips the symbol table and DWARF data to shrink the image.
 RUN CGO_ENABLED=0 go build -v -ldflags="-s -w" -o server ./cmd/webserver
 
+# A /data seed for the runtime stage: distroless has no shell to
+# mkdir/chown with, so the directory is created here and COPY --chown'd
+# below. Shipping /data in the image, owned by 65532, is what lets Docker
+# seed a fresh *named* volume with the right ownership on first use -
+# without it the volume materialises owned by root and every write from
+# the nonroot process fails. The placeholder file is load-bearing:
+# measured on Docker 27, copy-up applies the image directory's ownership
+# to the volume root only when the directory is non-empty.
+RUN mkdir /data-seed && touch /data-seed/.docker-volume-seed
+
 # Use a Docker multi-stage build to create a lean production image.
 # https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds
 #
@@ -42,10 +61,11 @@ RUN CGO_ENABLED=0 go build -v -ldflags="-s -w" -o server ./cmd/webserver
 # CONSEQUENCE FOR THE /data VOLUME: uid 65532 must be able to write /data, or
 # this container cannot create/open index.bleve/ and fails outright (the
 # webserver takes a bleve lock even for search-only use - see the volumes:
-# comment in docker-compose.yml). Docker only seeds a *named* volume's
-# ownership from the image on its first use; a bind-mounted DATA_PATH is
-# never chown'd automatically. See docker-compose.yml's volumes: comment for
-# the required one-time `chown -R 65532:65532` step.
+# comment in docker-compose.yml). The image ships an empty /data owned by
+# 65532 (the COPY --chown below) so a fresh *named* volume is seeded with
+# that ownership on first use; a bind-mounted DATA_PATH is never chown'd
+# automatically by Docker. See docker-compose.yml's volumes: comment for the
+# required one-time `chown -R 65532:65532` step on bind mounts.
 #
 # Pinned by digest for the same reproducibility reason as the builder stage
 # above - refresh deliberately:
@@ -54,6 +74,9 @@ FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b
 
 # Copy the compiled application from the builder stage.
 COPY --from=builder /app/server /
+# The empty, correctly-owned /data mount point - see the builder-stage
+# comment at RUN mkdir /data-seed.
+COPY --from=builder --chown=65532:65532 /data-seed /data
 
 # Your application listens on port 8080.
 EXPOSE 8080

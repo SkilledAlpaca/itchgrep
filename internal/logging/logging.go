@@ -7,7 +7,6 @@
 package logging
 
 import (
-	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -36,9 +35,7 @@ var logInstance Log
 // first time it tries to log anything.
 func assertInstanceExists() {
 	if (Log{}) == logInstance {
-		// this error is fatal, as it does not depend on the user system, only
-		// on the program correctness itself.
-		Init("", true)
+		Init()
 		log.Printf("Logging instance not initialized, initializing with defaults.")
 	}
 }
@@ -56,41 +53,18 @@ func callerInfo() string {
 	return shortFile + ":" + strconv.Itoa(line)
 }
 
-// Init initializes a globally usable, custom log instance. It expects a path
-// where the log file should be placed. The path will be ignored if logToStdout
-// is set to true.
-func Init(log_path string, logToStdout bool) {
-	var file *os.File
-
-	if logToStdout {
-		file = os.Stdout
-	} else {
-		// using filepath is important here, since path separators are OS dependant
-		// and we don't know if the log_path ends with a trailing separator.
-		filePath := filepath.Join(filepath.Clean(log_path), "log.txt")
-
-		// try to find out if logpath + logfile exist
-		if _, err := os.Stat(filePath); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				// file or path does not exists, create it
-				if err := os.MkdirAll(log_path, os.ModePerm); err != nil {
-					log.Printf(
-						"FAILED TO CREATE LOGFILE AT: %s, due to this error: %s",
-						filePath, err)
-				}
-			} else {
-				// os.Stat failed, but not due to the file not existing. Reason unknown.
-				log.Printf(
-					"FAILED TO CHECK IF LOGFILE EXISTS: %s, due to this error: %s",
-					filePath, err)
-			}
-		}
-		var err error
-		file, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-		if err != nil {
-			log.Printf("FAILED TO OPEN LOG FILE AT: %s, due to this error: %s", log_path, err)
-		}
-	}
+// Init initializes a globally usable, custom log instance, writing to
+// stdout. Both binaries run in a container under a process supervisor that
+// already captures stdout (see docker-compose.yml's logging: block and
+// scripts/export-logs.sh), so there has never been anywhere else for this to
+// write to - an earlier version of this function also supported writing to a
+// log file on disk, but nothing ever called it that way: both call sites
+// (cmd/dataservice/main.go, cmd/webserver/main.go) always chose stdout, and
+// internal/metrics' own package doc already reasons from that fact. That
+// file-writing path is gone; Init takes no arguments because there is now
+// only one way to configure it.
+func Init() {
+	file := os.Stdout
 
 	logInstance.debugLogger = log.New(file, "DEBG: ", log.Ldate|log.Ltime)
 	logInstance.infoLogger = log.New(file, "INFO: ", log.Ldate|log.Ltime)

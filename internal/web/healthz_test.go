@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"itchgrep/internal/cache"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,4 +31,40 @@ func TestHandleHealthzHead(t *testing.T) {
 
 func TestHealthzIsNeverAProbe(t *testing.T) {
 	assert.False(t, isProbe("/healthz"))
+}
+
+// TestHandleReadyzAnswersNoDataBeforeTheCacheHasLoaded is idx 10's core
+// case: unlike /healthz, /readyz must actually reflect whether a dataset has
+// ever loaded, so an operator (or an external monitor) can tell "the process
+// is up" apart from "there is something to serve".
+func TestHandleReadyzAnswersNoDataBeforeTheCacheHasLoaded(t *testing.T) {
+	h := NewHandler(cache.NewCache(36), 0, nil)
+	w := httptest.NewRecorder()
+	h.HandleReadyz(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "no data", w.Body.String())
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+}
+
+func TestHandleReadyzAnswersReadyOnceTheCacheHasLoaded(t *testing.T) {
+	h := NewHandler(loadedLikeCache(t), 0, nil)
+	w := httptest.NewRecorder()
+	h.HandleReadyz(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "ready", w.Body.String())
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+}
+
+func TestHandleReadyzHead(t *testing.T) {
+	h := NewHandler(loadedLikeCache(t), 0, nil)
+	w := httptest.NewRecorder()
+	h.HandleReadyz(w, httptest.NewRequest(http.MethodHead, "/readyz", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestReadyzIsNeverAProbe(t *testing.T) {
+	assert.False(t, isProbe("/readyz"))
 }

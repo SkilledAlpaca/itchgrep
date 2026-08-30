@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -53,6 +54,44 @@ func TestLimiterDisabledWhenRateIsZero(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		require.True(t, l.allow("1.2.3.4"))
 	}
+}
+
+// TestLimiterCapsTheBucketMapAtMaxBuckets is the regression test for idx 11:
+// evictLoop alone cannot bound the map against an attacker minting a fresh
+// identity every request faster than the 5-minute eviction sweep can reap
+// them. Once the map is already at maxBuckets, a brand new identity must
+// share the single overflow bucket rather than growing the map further.
+func TestLimiterCapsTheBucketMapAtMaxBuckets(t *testing.T) {
+	// burst 2, not 1: the first overflow identity's request leaves the shared
+	// bucket with one token still in it (burst-1), so a second identity's
+	// allow() outcome here is about map growth, not about also racing the
+	// budget the sibling test below already covers.
+	l := testLimiter(1, 2, false, nil)
+	for i := 0; i < maxBuckets; i++ {
+		l.buckets[strconv.Itoa(i)] = &bucket{tokens: 1, last: time.Now()}
+	}
+	require.Len(t, l.buckets, maxBuckets)
+
+	assert.True(t, l.allow("new-identity-1"))
+	assert.Len(t, l.buckets, maxBuckets+1, "only the shared overflow bucket should have been added")
+
+	l.allow("new-identity-2")
+	assert.Len(t, l.buckets, maxBuckets+1, "a second identity past the cap must not add a second bucket, whatever allow() answers")
+}
+
+// TestLimiterOverflowIdentitiesShareOneBudget proves the overflow bucket is
+// actually shared, not merely map-bounded: two distinct identities that both
+// arrive after the cap draw on the same token, so one draining it also
+// limits the other - the correct direction to fail in when the map is this
+// close to capacity.
+func TestLimiterOverflowIdentitiesShareOneBudget(t *testing.T) {
+	l := testLimiter(1, 1, false, nil)
+	for i := 0; i < maxBuckets; i++ {
+		l.buckets[strconv.Itoa(i)] = &bucket{tokens: 1, last: time.Now()}
+	}
+
+	assert.True(t, l.allow("overflow-a"), "the shared bucket's only token")
+	assert.False(t, l.allow("overflow-b"), "a different identity past the cap draws on the same, now-spent, bucket")
 }
 
 func TestClientIdentityIgnoresProxyHeadersByDefault(t *testing.T) {

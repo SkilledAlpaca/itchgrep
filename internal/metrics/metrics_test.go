@@ -118,30 +118,16 @@ func TestBreakdownIsExhaustive(t *testing.T) {
 	assert.EqualValues(t, 5, snap.Other, "the five routes with no dedicated bucket")
 }
 
-// TestEveryRateLimitedRouteHasABreakdownClassification mirrors the routing
-// table's rate-limited group in cmd/webserver/main.go: every GET registered
-// there must classify into a named bucket, not fall through into Other,
-// which exists for the routes deliberately mounted outside that group
-// (robots.txt, sitemap.xml, opensearch.xml, security.txt) and for paths that
-// never matched at all.
-//
-// The route list here has to be kept in step with main.go by hand - a
-// *Counters has no way to see chi's route table - but a slice literal beside
-// this comment is a three-line diff to keep in sync, and a divergence fails
-// this test loudly rather than silently under-counting on /stats.
-func TestEveryRateLimitedRouteHasABreakdownClassification(t *testing.T) {
-	rateLimitedRoutes := []string{
-		routeIndex, routeResults, routeAbout, routeStats,
-		routeNew, routeFeed, routeTag, routeSaved,
-	}
-
-	for _, route := range rateLimitedRoutes {
-		c := New()
-		c.RecordRequest(route, false, 200)
-		snap := c.Snapshot()
-		assert.EqualValues(t, 0, snap.Other, "%s must have its own bucket, not fall through to Other", route)
-	}
-}
+// A test asserting every rate-limited route classifies used to live here, as
+// a hand-copied slice of the constants below asserted against itself - which
+// passed regardless of what cmd/webserver/main.go's real router contained,
+// since this package has no way to see chi's route table (and, by design,
+// no dependency on internal/web or chi at all - see the package doc above).
+// That check now lives in cmd/webserver/router_test.go's
+// TestEveryRateLimitedRouteHasABreakdownClassification, which walks the
+// actual router chi.Walk sees in production and can therefore catch a
+// route added to main.go without a matching case in RecordRequest below -
+// something no test in this package could ever do.
 
 func TestNilCountersAreNoOps(t *testing.T) {
 	var c *Counters

@@ -210,6 +210,130 @@ func TestPublishIndexKeepsThePreviousIndexWhenNothingIsStaged(t *testing.T) {
 	assert.Equal(t, "good", string(got), "the live index must survive a failed publish")
 }
 
+// TestPublishIndexRecoversAnInterruptedPublish is the regression test for
+// idx 30: a process killed between PublishIndex's two renames leaves
+// published missing and previous holding the last known-good index. The
+// next PublishIndex call - not a special recovery path, just the ordinary
+// call the next crawl or self-heal rebuild makes - must restore that index
+// into place before publishing its own, rather than leaving the gap for
+// selfHealIndexFormat to discover as "unopenable" and pay for a full rebuild
+// to fix.
+func TestPublishIndexRecoversAnInterruptedPublish(t *testing.T) {
+	dir := useTempDir(t)
+
+	// Get a real "previous" index in place the way two consecutive
+	// PublishIndex calls would: publish "first", then rename it aside by
+	// hand exactly as PublishIndex itself does internally, then delete
+	// published - reproducing the exact on-disk shape a kill between the two
+	// renames leaves: no published index, a complete previous one.
+	stageIndex(t, "first")
+	require.NoError(t, PublishIndex())
+	require.NoError(t, os.Rename(IndexPath(), IndexPath()+previousIndexSuffix))
+
+	stageIndex(t, "second")
+	require.NoError(t, PublishIndex())
+
+	got, err := os.ReadFile(filepath.Join(IndexPath(), "marker"))
+	require.NoError(t, err)
+	assert.Equal(t, "second", string(got), "the interrupted publish is recovered first, then the new one still lands on top of it")
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.Equal(t, IndexDirName, e.Name(), "no staging or previous index may be left behind")
+	}
+}
+
+// TestPublishIndexWithNoPreviousDoesNotTryToRecoverAnything guards the
+// common case against a false-positive recovery: no published index and no
+// .previous either (a fresh volume, or the very first publish) must publish
+// normally, with no recovery rename attempted.
+func TestPublishIndexWithNoPreviousDoesNotTryToRecoverAnything(t *testing.T) {
+	useTempDir(t)
+
+	stageIndex(t, "only")
+	require.NoError(t, PublishIndex())
+
+	got, err := os.ReadFile(filepath.Join(IndexPath(), "marker"))
+	require.NoError(t, err)
+	assert.Equal(t, "only", string(got))
+}
+
+func TestEnsureWritableSucceedsOnAWritableDirectory(t *testing.T) {
+	dir := useTempDir(t)
+	require.NoError(t, EnsureWritable())
+	// The probe file must not be left behind for a caller to trip over later.
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "EnsureWritable must remove its own probe file")
+}
+
+func TestEnsureWritableCreatesTheDataDirectory(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "does", "not", "exist")
+	t.Setenv("DATA_DIR", dir)
+
+	require.NoError(t, EnsureWritable())
+	assert.DirExists(t, dir)
+}
+
+// TestEnsureWritableFailsOnAnUnwritableDirectory is the regression test for
+// idx 7: a bind-mounted DATA_PATH never chown'd to the container's nonroot
+// uid must be caught by this probe in milliseconds, not six hours into a
+// crawl at buildIndex's own bleve.New call. Skipped when running as root
+// (uid 0), since root ignores directory permission bits on most platforms
+// and this test would otherwise report success it did not actually observe.
+func TestEnsureWritableFailsOnAnUnwritableDirectory(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: permission bits are not enforced against this process")
+	}
+
+	dir := t.TempDir()
+	t.Setenv("DATA_DIR", dir)
+	require.NoError(t, os.Chmod(dir, 0o555))
+	// Belt-and-braces restore so the testing framework can still clean up
+	// t.TempDir() afterwards, regardless of what EnsureWritable did.
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	err := EnsureWritable()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not writable")
+}
+
+// TestCleanupOrphanedTempFilesRemovesOldOnesOnly is the regression test for
+// idx 28: a process killed between os.CreateTemp and the rename in
+// writeAtomic leaves a "*.tmp-*" file behind forever, since nothing else
+// ever globs for that pattern. cleanupOrphanedTempFiles must remove one old
+// enough to be abandoned while leaving a fresh one alone - a write genuinely
+// in progress right now must never be swept out from under it.
+func TestCleanupOrphanedTempFilesRemovesOldOnesOnly(t *testing.T) {
+	dir := useTempDir(t)
+
+	oldTmp := filepath.Join(dir, "assets.json.tmp-old12345")
+	require.NoError(t, os.WriteFile(oldTmp, []byte("stale"), 0o644))
+	require.NoError(t, os.Chtimes(oldTmp, time.Now().Add(-2*orphanTempFileAge), time.Now().Add(-2*orphanTempFileAge)))
+
+	freshTmp := filepath.Join(dir, "traffic.json.tmp-fresh6789")
+	require.NoError(t, os.WriteFile(freshTmp, []byte("in flight"), 0o644))
+
+	// A real, published file must never be touched just because its name
+	// happens to sit beside a tmp file - only the "*.tmp-*" pattern itself
+	// is in scope.
+	realFile := filepath.Join(dir, DataFileName)
+	require.NoError(t, os.WriteFile(realFile, []byte("[]"), 0o644))
+
+	cleanupOrphanedTempFiles()
+
+	assert.NoFileExists(t, oldTmp, "an old orphaned temp file must be removed")
+	assert.FileExists(t, freshTmp, "a temp file young enough to still be in flight must survive")
+	assert.FileExists(t, realFile, "a published file must never be swept")
+}
+
+func TestCleanupOrphanedTempFilesToleratesAMissingDirectory(t *testing.T) {
+	t.Setenv("DATA_DIR", filepath.Join(t.TempDir(), "does", "not", "exist"))
+	assert.NotPanics(t, cleanupOrphanedTempFiles)
+}
+
 func TestDirDefaultsWhenUnset(t *testing.T) {
 	t.Setenv("DATA_DIR", "")
 	assert.Equal(t, DefaultDir, Dir())
@@ -258,6 +382,78 @@ func TestGetHistoryOnEmptyStorageIsEmptyNotAnError(t *testing.T) {
 	history, err := GetHistory()
 	require.NoError(t, err)
 	assert.Empty(t, history)
+}
+
+// TestGetHistoryOnACorruptFileMovesItAsideAndStartsFresh is the regression
+// test for idx 29: history.json existing but failing to parse (a torn write,
+// a bad sector) used to be a real error GetHistory returned - and since
+// PutHistory calls GetHistory before every write, that made the corruption
+// permanent: no crawl could ever record history again. It must instead move
+// the bad file aside and read back as empty, the same as if nothing had ever
+// been written.
+func TestGetHistoryOnACorruptFileMovesItAsideAndStartsFresh(t *testing.T) {
+	dir := useTempDir(t)
+	corruptPath := filepath.Join(dir, HistoryFileName)
+	require.NoError(t, os.WriteFile(corruptPath, []byte("{not valid json"), 0o644))
+
+	history, err := GetHistory()
+	require.NoError(t, err, "a corrupt file must read back as empty, not as an error")
+	assert.Empty(t, history)
+	assert.NoFileExists(t, corruptPath, "the corrupt file must be moved aside, not left where the next read would trip over it again")
+
+	matches, err := filepath.Glob(corruptPath + ".corrupt-*")
+	require.NoError(t, err)
+	assert.Len(t, matches, 1, "the corrupt file must survive under a .corrupt-<unix ts> name for inspection")
+}
+
+// TestPutHistoryStillWritesAfterACorruptFile proves the fix actually
+// unblocks future writes, not just GetHistory's own read: a crawl completing
+// after the corruption must be able to record its history entry, where it
+// previously could not.
+func TestPutHistoryStillWritesAfterACorruptFile(t *testing.T) {
+	dir := useTempDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, HistoryFileName), []byte("garbage"), 0o644))
+
+	require.NoError(t, PutHistory(models.CrawlRecord{Indexed: 42}))
+
+	got, err := GetHistory()
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.EqualValues(t, 42, got[0].Indexed)
+}
+
+// TestGetTrafficOnACorruptFileMovesItAsideAndLogsLoudly is the traffic.json
+// half of idx 29: unlike history.json, a corrupt traffic.json already fell
+// back to zero counters (metrics.Restore discards any GetTraffic error) -
+// the bug was that it did so in total silence, with nothing in any log to
+// explain why /stats reset. GetTraffic itself must now move the bad file
+// aside for evidence before its caller falls back.
+func TestGetTrafficOnACorruptFileMovesItAsideAndLogsLoudly(t *testing.T) {
+	dir := useTempDir(t)
+	corruptPath := filepath.Join(dir, TrafficFileName)
+	require.NoError(t, os.WriteFile(corruptPath, []byte("{not valid json"), 0o644))
+
+	_, err := GetTraffic()
+	assert.Error(t, err, "GetTraffic's error contract for callers is unchanged - only the silent handling of corruption is fixed")
+	assert.NoFileExists(t, corruptPath)
+
+	matches, err := filepath.Glob(corruptPath + ".corrupt-*")
+	require.NoError(t, err)
+	assert.Len(t, matches, 1)
+}
+
+// TestGetTrafficOnAMissingFileDoesNotRenameAnything guards against the
+// obvious way to get idx 29 wrong: os.ErrNotExist (the ordinary first-boot
+// case) must never be treated as corruption - there is nothing to rename.
+func TestGetTrafficOnAMissingFileDoesNotRenameAnything(t *testing.T) {
+	dir := useTempDir(t)
+
+	_, err := GetTraffic()
+	assert.Error(t, err)
+
+	matches, err := filepath.Glob(filepath.Join(dir, TrafficFileName) + ".corrupt-*")
+	require.NoError(t, err)
+	assert.Empty(t, matches, "a missing file is not corruption and must not produce a .corrupt-* artifact")
 }
 
 func TestPutHistoryRoundTrips(t *testing.T) {

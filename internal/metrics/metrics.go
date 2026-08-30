@@ -31,13 +31,14 @@ import (
 const hoursInDay = 24
 
 // The route patterns RecordRequest classifies by, matching chi's own
-// registration in cmd/webserver/main.go exactly. Every route in that file's
-// rate-limited group has one of these - see
-// TestEveryRateLimitedRouteHasABreakdownClassification in metrics_test.go,
-// which asserts that list is a subset of this one - and everything else
-// (robots.txt, sitemap.xml, an unmatched path, ...) falls into routeOther, so
-// the /stats breakdown is exhaustive by construction rather than an
-// approximation that quietly stops summing to Total.
+// registration in cmd/webserver/main.go's rate-limited group exactly. Every
+// route in that group must have one of these - see
+// TestEveryRateLimitedRouteHasABreakdownClassification in
+// cmd/webserver/router_test.go, which walks the real router to enforce it -
+// and everything else (robots.txt, sitemap.xml, an unmatched path, ...)
+// falls into routeOther, so the /stats breakdown is exhaustive by
+// construction rather than an approximation that quietly stops summing to
+// Total.
 const (
 	routeIndex   = "/"
 	routeResults = "/results"

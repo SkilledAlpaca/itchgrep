@@ -184,15 +184,15 @@ func ParseECB(xml []byte) (Rates, error) {
 	// Matched by attribute rather than by unmarshalling the whole schema,
 	// because the shape of the nesting has changed before and the attributes
 	// have not.
-	date := attr(body, `time="`)
+	date := attr(body, "time")
 	if date == "" {
 		return Rates{}, fmt.Errorf("money: no time attribute in ECB response")
 	}
 
 	perEUR := map[string]float64{"EUR": 1}
 	for _, chunk := range strings.Split(body, "<Cube")[1:] {
-		currency := attr(chunk, `currency="`)
-		raw := attr(chunk, `rate="`)
+		currency := attr(chunk, "currency")
+		raw := attr(chunk, "rate")
 		if currency == "" || raw == "" {
 			continue
 		}
@@ -210,13 +210,24 @@ func ParseECB(xml []byte) (Rates, error) {
 	return r, nil
 }
 
-func attr(s, key string) string {
-	i := strings.Index(s, key)
+// attr extracts the value of name="..." or name='...' from s. Both quote
+// styles are accepted because the ECB has changed theirs before: the feed
+// used double quotes for years, then switched to single quotes in August
+// 2026 — which broke the previous version of this function and silently put
+// every price conversion on the built-in fallback snapshot until a crawl
+// log warning gave it away.
+func attr(s, name string) string {
+	i := strings.Index(s, name+"=")
 	if i < 0 {
 		return ""
 	}
-	rest := s[i+len(key):]
-	j := strings.Index(rest, `"`)
+	rest := s[i+len(name)+1:]
+	if rest == "" || (rest[0] != '"' && rest[0] != '\'') {
+		return ""
+	}
+	quote := rest[0]
+	rest = rest[1:]
+	j := strings.IndexByte(rest, quote)
 	if j < 0 {
 		return ""
 	}
