@@ -492,6 +492,16 @@ func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	templates.Layout("About — ITCHGREP", templates.AboutPage(h.freshness(), h.coverage())).Render(r.Context(), w)
 }
 
+// HandleSaved serves /saved: the masthead around an empty grid that app.js
+// fills from localStorage. There is no query to run and nothing per-visitor
+// to look up - the saved list itself never reaches this handler, or any
+// other part of the server - so the response is the same document for every
+// request, cacheable exactly like the other static shells.
+func (h *handler) HandleSaved(w http.ResponseWriter, r *http.Request) {
+	h.cacheable(w)
+	templates.Layout("Saved — ITCHGREP", templates.SavedPage(h.freshness(), h.coverage())).Render(r.Context(), w)
+}
+
 // HandleStats serves the public traffic page. It renders inside the
 // rate-limited route group like every other page, and it is cached far more
 // briefly than a result fragment - see statsMaxAge.

@@ -343,6 +343,74 @@ func TestArrivalsPageExplainsAnEmptyIndex(t *testing.T) {
 	assert.NotContains(t, html, `id="asset-list"`)
 }
 
+func TestSaveButtonCarriesTheFieldsNeededToRebuildTheCard(t *testing.T) {
+	// /saved never queries the server - app.js rebuilds each card from
+	// whatever the button that saved it was carrying, so every field it
+	// reads has to actually be on the markup.
+	r := sampleResults()
+	r.Assets = []models.Asset{
+		{GameId: "42", Title: "Pixel Tileset", Author: "ana", Link: "https://a.itch.io/t",
+			ThumbUrl: "https://img.itch.zone/t.png", Price: "$4.95"},
+	}
+	html := render(t, AssetPage(Filters{}, r))
+
+	assert.Contains(t, html, "data-save-toggle")
+	assert.Contains(t, html, `data-game-id="42"`)
+	assert.Contains(t, html, `data-title="Pixel Tileset"`)
+	assert.Contains(t, html, `data-author="ana"`)
+	assert.Contains(t, html, `data-link="https://a.itch.io/t"`)
+	assert.Contains(t, html, `data-thumb="https://img.itch.zone/t.png"`)
+	assert.Contains(t, html, `data-price="$4.95"`)
+	assert.Contains(t, html, `aria-pressed="false"`, "unsaved is the only state the server can render")
+}
+
+func TestSaveButtonUsesTheDisplayedPriceNotTheRawOne(t *testing.T) {
+	// A pay-what-you-want or free asset does not carry a plain price string -
+	// the badge already resolves that, so the button has to read the same
+	// resolved label rather than the raw (possibly empty) Price field.
+	r := sampleResults()
+	r.Assets = []models.Asset{{GameId: "1", Title: "Tip Jar", PayWhatYouWant: true}}
+	html := render(t, AssetPage(Filters{}, r))
+
+	assert.Contains(t, html, `data-price="Name your price"`)
+}
+
+func TestSavedPageStatesItsPrivacyPosture(t *testing.T) {
+	// The one thing this page must never leave implicit: nothing saved here
+	// is sent to, or knowable by, the server.
+	html := render(t, SavedPage(Freshness{}, Coverage{}))
+
+	assert.Contains(t, html, "never")
+	assert.Contains(t, html, "this browser")
+}
+
+func TestSavedPageDegradesHonestlyWithoutScripting(t *testing.T) {
+	// This is the one page on the site that cannot work with scripting off -
+	// a saved list kept off the server has nowhere else to come from - so it
+	// has to say that rather than render a silently empty grid.
+	html := render(t, SavedPage(Freshness{}, Coverage{}))
+
+	assert.Contains(t, html, "<noscript>")
+	assert.Contains(t, html, "needs JavaScript")
+}
+
+func TestSavedPageShellHasAnEmptyGridAndACardTemplate(t *testing.T) {
+	// Every card comes from localStorage via app.js; the server has nothing
+	// of its own to put in the grid, only the empty container and the
+	// <template> app.js clones from - so the grid it renders has to start
+	// with exactly one child, the (initially hidden) empty-state notice.
+	html := render(t, SavedPage(Freshness{}, Coverage{}))
+
+	assert.Contains(t, html, `id="asset-list" data-saved-grid`)
+	assert.Contains(t, html, `id="saved-card-template"`)
+	assert.Contains(t, html, `id="saved-empty" class="notice" hidden`)
+
+	gridStart := strings.Index(html, `id="asset-list"`)
+	templateStart := strings.Index(html, "<template")
+	require.True(t, gridStart >= 0 && templateStart > gridStart,
+		"the grid must be empty of cards; the template lives outside it")
+}
+
 func TestChangingCurrencyKeepsEveryOtherFilter(t *testing.T) {
 	// The currency picker is a form, so anything it does not carry as a hidden
 	// field is discarded the moment somebody uses it.

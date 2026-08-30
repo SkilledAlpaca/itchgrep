@@ -51,6 +51,7 @@ var liveRoutes = map[string]bool{
 	"/stats":          true,
 	"/new":            true,
 	"/feed":           true,
+	"/saved":          true,
 	"/sitemap.xml":    true,
 	"/opensearch.xml": true,
 	"/robots.txt":     true,

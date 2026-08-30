@@ -124,6 +124,11 @@ func main() {
 		r.Get("/new", h.HandleNew)
 		r.Get("/feed", h.HandleFeed)
 		r.Get("/tag/{slug}", h.HandleTag)
+		// Rate-limited like every other page even though it renders no
+		// query: the saved list itself never reaches the server, but the
+		// request for the page shell does, and it costs a template render
+		// like any other route in this group.
+		r.Get("/saved", h.HandleSaved)
 		// chi routes by method, so without this a HEAD is a 405 - and HEAD is
 		// what uptime monitors, link checkers and preview fetchers send first.
 		// net/http discards the body of a HEAD response itself, so the same
@@ -134,6 +139,7 @@ func main() {
 		r.Head("/new", h.HandleNew)
 		r.Head("/feed", h.HandleFeed)
 		r.Head("/tag/{slug}", h.HandleTag)
+		r.Head("/saved", h.HandleSaved)
 	})
 	r.NotFound(web.Handle404)
 

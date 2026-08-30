@@ -104,6 +104,25 @@ func authorClass(f Filters, author string) string {
 
 templ AssetCard(f Filters, asset models.Asset, rates money.Rates) {
 	<article class="asset">
+		// A save toggle rather than a link, and a sibling of asset-link
+		// rather than nested in it, for the same reason the tag-exclude
+		// control sits beside the facet link below: an interactive element
+		// cannot nest inside another one. The data-* attributes are the
+		// minimal fields app.js needs to re-render this card on /saved
+		// without ever asking the server for it again.
+		<button
+			type="button"
+			class="asset-save"
+			data-save-toggle
+			data-game-id={ asset.GameId }
+			data-title={ asset.Title }
+			data-author={ asset.Author }
+			data-link={ asset.Link }
+			data-thumb={ asset.ThumbUrl }
+			data-price={ priceLabel(f, asset, rates) }
+			aria-pressed="false"
+			aria-label={ "Save " + asset.Title }
+		>☆</button>
 		<a class="asset-link" href={ templ.SafeURL(asset.Link) } target="_blank" rel="noopener">
 			if asset.ThumbUrl != "" {
 				<img

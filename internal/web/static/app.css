@@ -629,6 +629,7 @@ a:hover {
 }
 
 .asset {
+  position: relative; /* anchors .asset-save to the card, not the viewport */
   display: flex;
   flex-direction: column;
   background: var(--bg-raised);
@@ -650,6 +651,39 @@ a:hover {
   .asset:hover {
     transform: none;
   }
+}
+
+/* Quiet by default - a solid glyph sitting on every thumbnail would compete
+ * with the art itself - full contrast once saved or focused/hovered, so the
+ * state is still clearly visible and the control is still easy to find. */
+.asset-save {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 1;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  font-size: 1.7rem;
+  line-height: 1;
+  color: var(--text);
+  background: var(--bg);
+  opacity: 0.55;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.asset-save:hover,
+.asset-save:focus-visible {
+  opacity: 1;
+}
+
+.asset-save.is-saved {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
 }
 
 .asset-link {

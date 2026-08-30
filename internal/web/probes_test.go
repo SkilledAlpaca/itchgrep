@@ -14,7 +14,7 @@ import (
 
 func TestLiveRoutesAreNeverProbes(t *testing.T) {
 	for _, path := range []string{
-		"/", "/results", "/about", "/stats", "/new", "/feed",
+		"/", "/results", "/about", "/stats", "/new", "/feed", "/saved",
 		"/sitemap.xml", "/opensearch.xml", "/robots.txt", "/favicon.ico",
 		"/static/app.css",
 		// Tag pages are a prefix, not one path, so they cannot sit in
