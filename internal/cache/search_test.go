@@ -71,9 +71,9 @@ func newLoadedCacheFromAssets(t *testing.T, pageSize int64, assets []models.Asse
 	c := NewCache(pageSize)
 	c.index = index
 	c.data = assets
-	c.dataMap = make(map[string]models.Asset, len(assets))
-	for _, a := range assets {
-		c.dataMap[a.GameId] = a
+	c.dataMap = make(map[string]int, len(assets))
+	for i, a := range assets {
+		c.dataMap[a.GameId] = i
 	}
 	c.tagCounts = countTags(assets)
 	c.rates = storedRates

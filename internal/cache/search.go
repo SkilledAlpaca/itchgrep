@@ -199,20 +199,21 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	}
 
 	// The source asset's tags come from dataMap rather than a bleve lookup:
-	// dataMap already holds every asset in memory keyed by GameId (see
-	// doRefresh), which is exactly what search() below resolves each hit
-	// against - so this reuses that lookup instead of adding a second, index-
-	// side way of reading the same document.
+	// dataMap already indexes every asset in data by GameId (see doRefresh),
+	// which is exactly what search() below resolves each hit against - so
+	// this reuses that lookup instead of adding a second, index-side way of
+	// reading the same document.
 	var likeTitle string
 	var likeTags []string
 	if opts.Like != "" {
-		source, ok := c.dataMap[opts.Like]
+		idx, ok := c.dataMap[opts.Like]
 		if !ok {
 			// Unknown id: nothing to be similar to. Answered as a normal
 			// empty result rather than an error, the same way an unknown tag
 			// or author matches nothing instead of failing the request.
 			return Results{}, nil
 		}
+		source := c.data[idx]
 		likeTitle = source.Title
 		likeTags = source.Tags
 	}
@@ -257,12 +258,12 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	// image - worse than one fewer result on the page.
 	missing := 0
 	for _, hit := range searchResult.Hits {
-		asset, ok := c.dataMap[hit.ID]
+		idx, ok := c.dataMap[hit.ID]
 		if !ok {
 			missing++
 			continue
 		}
-		results.Assets = append(results.Assets, asset)
+		results.Assets = append(results.Assets, c.data[idx])
 	}
 	if missing > 0 {
 		logging.Warning("Dropped %d hit(s) with no asset behind them; the index and the asset list disagree", missing)

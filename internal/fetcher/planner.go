@@ -279,7 +279,7 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 	// 7,200 of a set spanning tens of thousands, and the popular end is what
 	// every other view has already collected, so these are sampled rather than
 	// paged in full. Measured across two full
-	// crawls, the tag slices below plateau at 79.5% of the catalogue, and
+	// crawls, the tag slices below plateau at ~89% of the catalogue, and
 	// applying free/store - a true partition - to every oversized tag moved
 	// that by 0.2 points. So the residual is not "assets whose every tag is too
 	// big to page through"; it is assets no tag view reaches at all, because

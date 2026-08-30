@@ -328,6 +328,18 @@ func TestBackoffDelayProgression(t *testing.T) {
 		"it must not keep growing past the crawl interval")
 }
 
+func TestCheckCoverageFloorRejectsBelowFloor(t *testing.T) {
+	err := checkCoverageFloor(0.74, 0.75)
+	require.Error(t, err, "a run that stalled must not replace a good index with a worse one")
+	assert.Contains(t, err.Error(), "74.0%")
+	assert.Contains(t, err.Error(), "75.0%")
+}
+
+func TestCheckCoverageFloorAllowsAtOrAboveFloor(t *testing.T) {
+	assert.NoError(t, checkCoverageFloor(0.75, 0.75), "exactly at the floor must proceed, not just above it")
+	assert.NoError(t, checkCoverageFloor(0.89, 0.75))
+}
+
 func TestBackoffDelayNeverExceedsAShortInterval(t *testing.T) {
 	// A short CRAWL_INTERVAL configured for testing must not be defeated by a
 	// backoff step longer than the interval itself.

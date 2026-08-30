@@ -102,10 +102,10 @@ services:
       SCRAPE_RPS: "${SCRAPE_RPS:-2}"
       # Caps total pages fetched across every view. Unset means a full crawl.
       # Set it to a small number to smoke-test the whole pipeline in a couple
-      # of minutes instead of the better part of an hour. Produces a PARTIAL
-      # index, so it also disarms COVERAGE_FLOOR and shrinks tag discovery of
-      # the MAX_TAGS below - which is why MAX_TAGS itself is deliberately not
-      # set here: a value pinned in this file's environment: block would take
+      # of minutes instead of about six hours. Produces a PARTIAL index, so
+      # it also disarms COVERAGE_FLOOR and shrinks tag discovery to the
+      # MAX_TAGS below - which is why MAX_TAGS itself is deliberately not set
+      # here: a value pinned in this file's environment: block would take
       # precedence over that shrink from inside the container, and the smoke
       # test would spend ~17 minutes discovering tags before fetching a single
       # page of the partial run it was meant to finish in a couple of minutes.
@@ -114,18 +114,23 @@ services:
       # The last few percent costs disproportionately many requests.
       #
       # In practice this does not trigger: a full crawl exhausts every slice at
-      # ~80%. It is an upper bound, so lowering it would end the crawl early
+      # ~89%. It is an upper bound, so lowering it would end the crawl early
       # and index less. Leave it unless you deliberately want a shorter run.
       COVERAGE_TARGET: "${COVERAGE_TARGET:-0.95}"
       # Refuse to publish below this fraction, leaving the previous index in
       # place. Stops a stalled run replacing a good index with a worse one.
       #
       # Must sit BELOW what a healthy run actually reaches, or it rejects every
-      # run. A full crawl measures ~79.5% (86,414 of 108,697): the union of tag
-      # views cannot reach the rest, since assets carrying no tag in the
-      # discovered vocabulary appear in no tag view at all. 0.70 leaves room
-      # for the catalogue to grow while still catching a genuinely stalled run.
-      COVERAGE_FLOOR: "${COVERAGE_FLOOR:-0.70}"
+      # run. A full crawl currently measures ~89%: the union of tag views
+      # cannot reach the rest, since assets carrying no tag in the discovered
+      # vocabulary appear in no tag view at all. The code (cmd/dataservice)
+      # defaults this to 0.75 - deliberately below the measured figure, so a
+      # mildly degraded itch.io markup change does not block every publish -
+      # and this variable is passed through only so it can still be set from
+      # the environment for a smoke run (see SCRAPE_MAX_PAGES above, which
+      # disarms this to 0 on its own; setting it here is for overriding the
+      # floor outside of that).
+      COVERAGE_FLOOR: "${COVERAGE_FLOOR:-0.75}"
       # Abandon a view once it stops yielding new assets, as a fraction of a
       # page. Assets appear in ~5 views each, so without this the overlap
       # dominates the crawl.

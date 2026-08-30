@@ -66,9 +66,10 @@ func (c Coverage) Detail() string {
 		humaniseCount(c.Indexed), humaniseCount(c.Catalogue))
 }
 
-// humaniseCount groups thousands with commas. The sidebar counts are formatted
-// the same way, and a bare "96903" beside them would read as a different kind
-// of number.
+// humaniseCount groups thousands with commas. It is the one count formatter in
+// this package - the sidebar facet counts, /stats' traffic figures (via the
+// exported HumaneCount) and the history table all go through it, so a bare
+// "96903" never turns up beside a "96,903" formatted a different way.
 func humaniseCount(n int64) string {
 	s := fmt.Sprintf("%d", n)
 	if len(s) <= 3 {

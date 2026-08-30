@@ -36,7 +36,9 @@ const expiryCheckTTL = 5 * time.Second
 type Cache struct {
 	cacheLock sync.RWMutex
 
-	dataMap map[string]models.Asset
+	// dataMap indexes GameId to its position in data, rather than duplicating
+	// each asset, so the ~97k assets in data are held in memory exactly once.
+	dataMap map[string]int
 	data    []models.Asset
 	index   bleve.Index
 
@@ -106,7 +108,7 @@ type Cache struct {
 
 func NewCache(pageSize int64) *Cache {
 	return &Cache{
-		dataMap:         make(map[string]models.Asset),
+		dataMap:         make(map[string]int),
 		cacheLock:       sync.RWMutex{},
 		pageSize:        pageSize,
 		dataUpdatedTime: time.Time{},
@@ -309,10 +311,12 @@ func (c *Cache) doRefresh() error {
 		return cmp.Compare(i.InvPopularity, j.InvPopularity)
 	})
 
-	newDataMap := make(map[string]models.Asset, len(newData)) // we also save it as a map, so we can easily match searches from the index
+	// newDataMap indexes GameId to its position in newData, so a lookup is
+	// c.data[c.dataMap[id]] instead of duplicating every asset into the map.
+	newDataMap := make(map[string]int, len(newData))
 	hasRecency := false
-	for _, asset := range newData {
-		newDataMap[asset.GameId] = asset
+	for i, asset := range newData {
+		newDataMap[asset.GameId] = i
 		if asset.InvRecency > 0 {
 			hasRecency = true
 		}

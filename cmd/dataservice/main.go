@@ -293,14 +293,84 @@ func handleFetchTrigger(w http.ResponseWriter, r *http.Request) {
 // published; every other path - a fetch failure, a coverage-floor trip, an
 // indexing error, a publish failure - returns a non-nil error so the caller
 // (scheduleCrawls) can back off instead of retrying immediately.
+//
+// The body is a fixed sequence of stages, each depending on the previous
+// one's output, and none of them reorderable: crawlAndCollect must finish
+// before there is a coverage figure to gate on; the gate must pass before an
+// index is built from a possibly-stalled crawl; publishCrawl must finish -
+// index published, then assets.json written - before recordCrawlCompletion's
+// bookkeeping describes a dataset that is actually live.
 func fetchAndStoreAssets() error {
 	cfg := loadCrawlConfig()
 
-	// FETCHING ASSETS
+	// activeCrawler is set inside crawlAndCollect, as soon as the crawler
+	// exists, so a shutdown signal arriving mid-crawl can still find it and
+	// force a checkpoint - see activeCrawler's own doc comment. Cleared here,
+	// unconditionally, only once fetchAndStoreAssets is about to return: on a
+	// successful run that is after recordCrawlCompletion has already deleted
+	// the checkpoint. Storing nil over an unset pointer (a fetch failure
+	// before the crawler was ever constructed) is a harmless no-op.
+	defer activeCrawler.Store(nil)
+
+	result, err := crawlAndCollect(cfg)
+	if err != nil {
+		return err
+	}
+	c := result.crawler
+
+	// A run that stalled must not replace a good index with a worse one.
+	if err := checkCoverageFloor(result.coverage, cfg.coverageFloor); err != nil {
+		logging.Error("Coverage %.1f%% is below COVERAGE_FLOOR %.1f%%; refusing to publish. The previous index is left in place.",
+			result.coverage*100, cfg.coverageFloor*100)
+		return err
+	}
+
+	// Read before this run's index is built, not just before PutAssets
+	// overwrites assets.json: stampFirstSeen (inside publishCrawl) has to see
+	// it before NewIndexedAsset converts this run's assets, or the index
+	// just about to be published would carry no FirstSeen at all and /new
+	// would stay empty for one full cycle after every genuine arrival.
+	previousAssets, err := storage.GetAssets()
+	if err != nil {
+		// First ever publish, or an index from before this file existed.
+		// Diffing against nothing makes every asset "new", which is the
+		// honest answer for a dataset that never had a predecessor.
+		previousAssets = nil
+	}
+
+	if err := publishCrawl(result.assets, previousAssets); err != nil {
+		return err
+	}
+
+	recordCrawlCompletion(result, previousAssets, c)
+
+	return nil
+}
+
+// crawlResult is what crawlAndCollect produces: the deduplicated assets a
+// crawl gathered, how much of the catalogue they cover, and the bookkeeping
+// (crawler included) later stages need to gate on, index, and record.
+type crawlResult struct {
+	assets         []models.Asset
+	coverage       float64
+	totalAssets    int64
+	tagsDiscovered int64
+	slicesPlanned  int64
+	crawler        *crawler
+}
+
+// crawlAndCollect runs one full crawl against itch.io: it sizes the
+// catalogue, discovers (or reuses) the tag universe, plans the slices needed
+// to cover it, walks every slice, and attaches the tags and recency ranks
+// gathered along the way. It is the first stage of fetchAndStoreAssets
+// because every later stage - the coverage gate, the index build, the
+// publish - depends on the asset list and coverage figure only a completed
+// crawl can produce; nothing downstream can run first.
+func crawlAndCollect(cfg crawlConfig) (crawlResult, error) {
 	totalAssets, err := fetcher.GetAssetCount()
 	if err != nil {
 		logging.Error("Failed to get asset count: %v", err)
-		return fmt.Errorf("fetcher.GetAssetCount: %w", err)
+		return crawlResult{}, fmt.Errorf("fetcher.GetAssetCount: %w", err)
 	}
 
 	// The root view's first page also tells us how many items a page holds,
@@ -309,18 +379,18 @@ func fetchAndStoreAssets() error {
 	firstPage, outcome := fetcher.FetchAssetPage(root, 1)
 	if outcome != fetcher.FetchOK {
 		logging.Error("Failed to fetch first page, terminating.")
-		return fmt.Errorf("fetching first page: outcome %v", outcome)
+		return crawlResult{}, fmt.Errorf("fetching first page: outcome %v", outcome)
 	}
 	itemsPerPage := firstPage.NumItems
 	if itemsPerPage <= 0 {
 		logging.Error("First page reported %d items per page, terminating.", itemsPerPage)
-		return fmt.Errorf("first page reported %d items per page", itemsPerPage)
+		return crawlResult{}, fmt.Errorf("first page reported %d items per page", itemsPerPage)
 	}
 
 	tags, err := loadOrDiscoverTags(cfg)
 	if err != nil {
 		logging.Error("Failed to obtain tag universe: %v", err)
-		return fmt.Errorf("loadOrDiscoverTags: %w", err)
+		return crawlResult{}, fmt.Errorf("loadOrDiscoverTags: %w", err)
 	}
 
 	slices := fetcher.PlanSlices(tags, itemsPerPage)
@@ -337,10 +407,10 @@ func fetchAndStoreAssets() error {
 		doneSlices:   make(map[string]struct{}, len(slices)),
 		runStart:     time.Now(),
 	}
-	// Published for the shutdown handler in main to find, and cleared on
-	// every exit path below via defer - see activeCrawler's own doc comment.
+	// Published for the shutdown handler in main to find, and cleared by
+	// fetchAndStoreAssets on every exit path via defer - see activeCrawler's
+	// own doc comment.
 	activeCrawler.Store(c)
-	defer activeCrawler.Store(nil)
 	c.resume(cfg.checkpointMaxAge)
 	// Computed after resume, not at PlanSlices: on a resumed run doneSlices is
 	// now populated, and pages already accounted for by the checkpoint must
@@ -355,29 +425,43 @@ func fetchAndStoreAssets() error {
 	logging.Info("Successfully fetched %d assets (%.1f%% of %d) using %d pages across %d slices, 429s: %d",
 		len(assets), coverage*100, totalAssets, c.pagesFetched.Load(), c.slicesDone.Load(), fetcher.Refusals())
 
-	// A run that stalled must not replace a good index with a worse one.
-	if coverage < cfg.coverageFloor {
-		logging.Error("Coverage %.1f%% is below COVERAGE_FLOOR %.1f%%; refusing to publish. The previous index is left in place.",
-			coverage*100, cfg.coverageFloor*100)
-		return fmt.Errorf("coverage %.1f%% below COVERAGE_FLOOR %.1f%%", coverage*100, cfg.coverageFloor*100)
-	}
+	return crawlResult{
+		assets:         assets,
+		coverage:       coverage,
+		totalAssets:    totalAssets,
+		tagsDiscovered: int64(len(tags)),
+		slicesPlanned:  int64(len(slices)),
+		crawler:        c,
+	}, nil
+}
 
-	// Read before this run's index is built, not just before PutAssets
-	// overwrites assets.json: stampFirstSeen has to run before NewIndexedAsset
-	// converts assets below, or the index just about to be published would
-	// carry no FirstSeen at all and /new would stay empty for one full cycle
-	// after every genuine arrival.
-	previousAssets, err := storage.GetAssets()
-	if err != nil {
-		// First ever publish, or an index from before this file existed.
-		// Diffing against nothing makes every asset "new", which is the
-		// honest answer for a dataset that never had a predecessor.
-		previousAssets = nil
+// checkCoverageFloor reports whether coverage clears floor, and if not, the
+// error fetchAndStoreAssets returns instead of publishing. It is pure -
+// nothing about it depends on a network or a real crawl - so the boundary
+// itself (below floor errors and leaves the previous index untouched; at or
+// above floor proceeds) can be tested directly.
+func checkCoverageFloor(coverage, floor float64) error {
+	if coverage < floor {
+		return fmt.Errorf("coverage %.1f%% below COVERAGE_FLOOR %.1f%%", coverage*100, floor*100)
 	}
+	return nil
+}
+
+// publishCrawl builds the search index from assets and publishes it, then
+// writes assets.json - in that order, and only that order. The webserver
+// decides a new dataset is ready by watching assets.json's timestamp, so
+// publishing the index first guarantees that by the time a webserver notices
+// a fresh asset list, the index it will open already matches it; reversed,
+// a webserver could open a fresh asset list against a stale or missing
+// index.
+//
+// previousAssets is read by the caller before this runs (see
+// fetchAndStoreAssets), since stampFirstSeen must see the prior publish's
+// FirstSeen values before NewIndexedAsset - inside buildIndex - converts
+// this run's assets into index documents.
+func publishCrawl(assets, previousAssets []models.Asset) error {
 	stampFirstSeen(previousAssets, assets, time.Now().UTC())
 
-	// CREATING INDEX
-	//
 	// Rates are refreshed here, at the end of a crawl, because that is the only
 	// moment the index is rebuilt - and PriceUSD is baked into the documents,
 	// so the snapshot the index was built with is the snapshot it must be
@@ -393,11 +477,6 @@ func fetchAndStoreAssets() error {
 		return fmt.Errorf("buildIndex: %w", err)
 	}
 
-	// PUBLISHING
-	//
-	// Index first, assets.json second. The webserver watches assets.json's
-	// timestamp to decide a new dataset is ready, so this ordering guarantees
-	// the index it then opens is the one matching those assets.
 	logging.Info("Publishing index to %s", storage.IndexPath())
 	if err := storage.PublishIndex(); err != nil {
 		logging.Error("Failed to publish index: %v", err)
@@ -412,18 +491,27 @@ func fetchAndStoreAssets() error {
 	}
 	logging.Info("Successfully stored assets")
 
-	// Written last, and only on a run that published, so the figure the site
-	// quotes always describes the dataset actually being served. A failure here
-	// costs the coverage line and nothing else, so it is not worth returning on.
+	return nil
+}
+
+// recordCrawlCompletion writes the crawl's bookkeeping - coverage stats,
+// history, and the now-stale checkpoint's removal - after publishCrawl has
+// already made the new index and asset list live. It runs last, and every
+// write in it is best-effort: a publish that already succeeded must not be
+// reported as failed just because one of these follow-up writes was, so
+// failures here are logged and swallowed rather than returned.
+func recordCrawlCompletion(result crawlResult, previousAssets []models.Asset, c *crawler) {
+	assets := result.assets
+
+	// Written only on a run that published, so the figure the site quotes
+	// always describes the dataset actually being served.
 	if err := storage.PutStats(models.Stats{
 		Indexed:   int64(len(assets)),
-		Catalogue: int64(totalAssets),
+		Catalogue: result.totalAssets,
 	}); err != nil {
 		logging.Error("Failed to store crawl stats, coverage will not be shown: %v", err)
 	}
 
-	// History is bookkeeping, not the product: a write failure here must not
-	// fail a publish that otherwise succeeded.
 	publishedAt := time.Now().UTC()
 	newCount, removedCount := diffAssetIDs(previousAssets, assets)
 	var freeCount int64
@@ -436,15 +524,15 @@ func fetchAndStoreAssets() error {
 		When:            publishedAt,
 		DurationSeconds: int64(publishedAt.Sub(c.runStart).Seconds()),
 		Indexed:         int64(len(assets)),
-		Catalogue:       totalAssets,
+		Catalogue:       result.totalAssets,
 		NewAssets:       newCount,
 		RemovedAssets:   removedCount,
 		FreeAssets:      freeCount,
 		Pages:           c.pagesFetched.Load(),
 		SlicesDone:      c.slicesDone.Load(),
-		SlicesPlanned:   int64(len(slices)),
+		SlicesPlanned:   result.slicesPlanned,
 		Refusals:        fetcher.Refusals(),
-		Tags:            int64(len(tags)),
+		Tags:            result.tagsDiscovered,
 		Resumed:         c.resumed,
 	}); err != nil {
 		logging.Warning("Failed to record crawl history: %v", err)
@@ -455,8 +543,6 @@ func fetchAndStoreAssets() error {
 	if err := storage.DeleteCheckpoint(); err != nil {
 		logging.Warning("Failed to delete crawl checkpoint: %v", err)
 	}
-
-	return nil
 }
 
 // stampFirstSeen carries FirstSeen forward from the previous publish, id by
@@ -520,24 +606,24 @@ type crawlConfig struct {
 
 func loadCrawlConfig() crawlConfig {
 	cfg := crawlConfig{
-		coverageTarget: envFloat("COVERAGE_TARGET", 0.95),
+		coverageTarget: config.EnvNonNegativeFloat("COVERAGE_TARGET", 0.95),
 		// Below what a full crawl actually reaches (~89%), or the run that
 		// proves the crawler works is the run that refuses to publish. Above
 		// what a stalled or truncated one produces, so a bad run still cannot
 		// replace a good index.
-		coverageFloor:    envFloat("COVERAGE_FLOOR", 0.75),
-		minYield:         envFloat("SLICE_MIN_YIELD", 0.05),
-		tagCacheMaxAge:   envDuration("TAG_CACHE_MAX_AGE", 168*time.Hour),
-		checkpointMaxAge: envDuration("CHECKPOINT_MAX_AGE", 24*time.Hour),
-		maxTags:          int(envInt("MAX_TAGS", fetcher.DefaultMaxTags)),
+		coverageFloor:    config.EnvNonNegativeFloat("COVERAGE_FLOOR", 0.75),
+		minYield:         config.EnvNonNegativeFloat("SLICE_MIN_YIELD", 0.05),
+		tagCacheMaxAge:   config.EnvDuration("TAG_CACHE_MAX_AGE", 168*time.Hour),
+		checkpointMaxAge: config.EnvDuration("CHECKPOINT_MAX_AGE", 24*time.Hour),
+		maxTags:          int(config.EnvInt("MAX_TAGS", fetcher.DefaultMaxTags)),
 	}
 
 	// SCRAPE_MAX_PAGES caps how many pages are fetched in total, across every
-	// slice. A full crawl is thousands of pages and takes the better part of
-	// an hour at a polite request rate, which makes it a painful way to
-	// smoke-test the rest of the pipeline (indexing, archiving, upload,
-	// webserver startup). Setting this small exercises every one of those
-	// stages in a couple of minutes. Leave it unset in production.
+	// slice. A full crawl is thousands of pages and takes about six hours at
+	// a polite request rate, which makes it a painful way to smoke-test the
+	// rest of the pipeline (indexing, archiving, upload, webserver startup).
+	// Setting this small exercises every one of those stages in a couple of
+	// minutes. Leave it unset in production.
 	if v := os.Getenv("SCRAPE_MAX_PAGES"); v != "" {
 		if maxPages, err := strconv.ParseInt(v, 10, 64); err == nil && maxPages > 0 {
 			logging.Warning("SCRAPE_MAX_PAGES=%d set: fetching at most %d pages in total. This produces a PARTIAL index and is intended for testing only.", maxPages, maxPages)
@@ -556,45 +642,6 @@ func loadCrawlConfig() crawlConfig {
 		}
 	}
 	return cfg
-}
-
-func envFloat(name string, def float64) float64 {
-	v := os.Getenv(name)
-	if v == "" {
-		return def
-	}
-	parsed, err := strconv.ParseFloat(v, 64)
-	if err != nil || parsed < 0 {
-		logging.Warning("Ignoring invalid %s=%q, using %v", name, v, def)
-		return def
-	}
-	return parsed
-}
-
-func envInt(name string, def int64) int64 {
-	v := os.Getenv(name)
-	if v == "" {
-		return def
-	}
-	parsed, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || parsed <= 0 {
-		logging.Warning("Ignoring invalid %s=%q, using %d", name, v, def)
-		return def
-	}
-	return parsed
-}
-
-func envDuration(name string, def time.Duration) time.Duration {
-	v := os.Getenv(name)
-	if v == "" {
-		return def
-	}
-	parsed, err := time.ParseDuration(v)
-	if err != nil || parsed <= 0 {
-		logging.Warning("Ignoring invalid %s=%q, using %v", name, v, def)
-		return def
-	}
-	return parsed
 }
 
 // loadOrDiscoverTags returns the tag universe, preferring the cached copy.

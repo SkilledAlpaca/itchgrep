@@ -32,8 +32,8 @@ var TrustedProxyCIDRs = sync.OnceValue(func() []*net.IPNet {
 
 // parseTrustedCIDRs turns a comma-separated CIDR list into parsed networks. A
 // malformed entry is skipped and warned about rather than failing startup
-// over one typo - the same tolerance envBool and envFloat give a bad value
-// elsewhere in this package.
+// over one typo - the same tolerance config.EnvBool and config.EnvFloat give
+// a bad value elsewhere in this package.
 func parseTrustedCIDRs(raw string) []*net.IPNet {
 	var nets []*net.IPNet
 	for _, part := range strings.Split(raw, ",") {

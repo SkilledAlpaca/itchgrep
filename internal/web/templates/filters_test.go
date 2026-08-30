@@ -124,11 +124,11 @@ func TestResolvedSortDependsOnWhetherAnythingWasSearchedFor(t *testing.T) {
 }
 
 func TestFormatCountGroupsThousands(t *testing.T) {
-	assert.Equal(t, "0", formatCount(0))
-	assert.Equal(t, "999", formatCount(999))
-	assert.Equal(t, "1,000", formatCount(1000))
-	assert.Equal(t, "17,488", formatCount(17488))
-	assert.Equal(t, "108,697", formatCount(108697))
+	assert.Equal(t, "0", humaniseCount(0))
+	assert.Equal(t, "999", humaniseCount(999))
+	assert.Equal(t, "1,000", humaniseCount(1000))
+	assert.Equal(t, "17,488", humaniseCount(17488))
+	assert.Equal(t, "108,697", humaniseCount(108697))
 }
 
 func TestRequiringAndExcludingTheSameTagCannotBothStand(t *testing.T) {

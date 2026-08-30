@@ -3,20 +3,19 @@ package web
 import (
 	"net"
 	"net/http"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
+	"itchgrep/internal/config"
 	"itchgrep/internal/logging"
 )
 
 // TrustProxyHeaders is read once and shared by everything that needs to agree
 // on where a client's identity comes from - the limiter and the request
 // logger both derive it from the same env var, and a sync.OnceValue is cheaper
-// insurance against them drifting than two independent envBool calls.
+// insurance against them drifting than two independent config.EnvBool calls.
 var TrustProxyHeaders = sync.OnceValue(func() bool {
-	return envBool("TRUST_PROXY_HEADERS", false)
+	return config.EnvBool("TRUST_PROXY_HEADERS", false)
 })
 
 // Rate limiting exists because a search is not a cheap request. Each one runs
@@ -64,8 +63,8 @@ type Limiter struct {
 func NewLimiter() *Limiter {
 	l := &Limiter{
 		buckets:      make(map[string]*bucket),
-		rate:         envFloat("RATE_LIMIT_RPS", 5),
-		burst:        envFloat("RATE_LIMIT_BURST", 20),
+		rate:         config.EnvFloat("RATE_LIMIT_RPS", 5),
+		burst:        config.EnvFloat("RATE_LIMIT_BURST", 20),
 		trustProxy:   TrustProxyHeaders(),
 		trustedCIDRs: TrustedProxyCIDRs(),
 	}
@@ -145,28 +144,3 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-func envFloat(name string, def float64) float64 {
-	v, ok := os.LookupEnv(name)
-	if !ok {
-		return def
-	}
-	parsed, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		logging.Warning("Ignoring invalid %s=%q, using %v", name, v, def)
-		return def
-	}
-	return parsed
-}
-
-func envBool(name string, def bool) bool {
-	v, ok := os.LookupEnv(name)
-	if !ok {
-		return def
-	}
-	parsed, err := strconv.ParseBool(v)
-	if err != nil {
-		logging.Warning("Ignoring invalid %s=%q, using %v", name, v, def)
-		return def
-	}
-	return parsed
-}

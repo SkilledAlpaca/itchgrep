@@ -87,7 +87,8 @@ func TestClientIPPrefersCFConnectingIPOverXForwardedFor(t *testing.T) {
 
 func TestParseTrustedCIDRsSkipsMalformedEntries(t *testing.T) {
 	// One typo in the list must not take down every entry beside it - the
-	// same tolerance envBool and envFloat give a bad env var elsewhere.
+	// same tolerance config.EnvBool and config.EnvFloat give a bad env var
+	// elsewhere.
 	got := parseTrustedCIDRs("10.0.0.0/24, not-a-cidr ,192.168.1.0/24,")
 
 	require.Len(t, got, 2)

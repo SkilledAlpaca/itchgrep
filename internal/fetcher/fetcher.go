@@ -302,20 +302,8 @@ func FetchAssetPage(slice Slice, pageNum int64) (itchResponse, FetchOutcome) {
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			retryAfterHeader := resp.Header.Get("Retry-After")
-			resp.Body.Close()
-			wait := calculateBackoff(attempt, baseDelay)
-			source := "backoff"
-			if d, ok := parseRetryAfter(retryAfterHeader); ok {
-				wait = d
-				source = "Retry-After"
-			}
-			// The pause is applied to the limiter rather than slept here, so
-			// it holds back every worker instead of just this one.
-			refusals.Add(1)
-			limiter().pause(epoch, wait)
-			logging.Warning("429 on %s page %d (attempt %d/%d): pausing all fetches for %s (%s)",
-				slice.Label(), pageNum, attempt+1, maxAttempts, wait.Round(time.Millisecond), source)
+			handleTooManyRequests(resp, epoch, attempt, maxAttempts, baseDelay,
+				fmt.Sprintf("%s page %d", slice.Label(), pageNum))
 			continue
 		}
 
@@ -344,6 +332,31 @@ func FetchAssetPage(slice Slice, pageNum int64) (itchResponse, FetchOutcome) {
 
 	logging.Error("Failed to fetch %s page %d after %d attempts", slice.Label(), pageNum, maxAttempts)
 	return itchResponse{}, FetchFailed
+}
+
+// handleTooManyRequests processes one 429 response, shared by FetchAssetPage
+// and GetAssetCount: it closes the body, works out how long to pause -
+// preferring itch.io's own Retry-After over our own backoff schedule - and
+// applies that pause fleet-wide via the rate limiter rather than sleeping
+// locally, so it holds back every worker rather than just the one that saw
+// the 429 (see rateLimiter's own doc comment for why that matters). context
+// names what was being fetched, for the log line only; it changes nothing
+// about the pause itself.
+func handleTooManyRequests(resp *http.Response, epoch uint64, attempt, maxAttempts int, baseDelay time.Duration, context string) {
+	retryAfterHeader := resp.Header.Get("Retry-After")
+	resp.Body.Close()
+	wait := calculateBackoff(attempt, baseDelay)
+	source := "backoff"
+	if d, ok := parseRetryAfter(retryAfterHeader); ok {
+		wait = d
+		source = "Retry-After"
+	}
+	// The pause is applied to the limiter rather than slept here, so it holds
+	// back every worker instead of just this one.
+	refusals.Add(1)
+	limiter().pause(epoch, wait)
+	logging.Warning("429 on %s (attempt %d/%d): pausing all fetches for %s (%s)",
+		context, attempt+1, maxAttempts, wait.Round(time.Millisecond), source)
 }
 
 // maxBackoff caps the delay calculateBackoff can return, so a large attempt
@@ -445,18 +458,7 @@ func GetAssetCount() (int64, error) {
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			retryAfterHeader := resp.Header.Get("Retry-After")
-			resp.Body.Close()
-			wait := calculateBackoff(attempt, baseDelay)
-			source := "backoff"
-			if d, ok := parseRetryAfter(retryAfterHeader); ok {
-				wait = d
-				source = "Retry-After"
-			}
-			refusals.Add(1)
-			limiter().pause(epoch, wait)
-			logging.Warning("429 on asset count (attempt %d/%d): pausing all fetches for %s (%s)",
-				attempt+1, maxAttempts, wait.Round(time.Millisecond), source)
+			handleTooManyRequests(resp, epoch, attempt, maxAttempts, baseDelay, "asset count")
 			continue
 		}
 
