@@ -148,6 +148,19 @@ services:
       # to re-scrape (see the header comment above).
       - "127.0.0.1:62685:8080"
     volumes:
+      # Both Dockerfiles now run as uid 65532 (distroless's :nonroot base
+      # image - see the comment above FROM in Dockerfile.dataservice), not
+      # root, so this mount must be writable by 65532 or every crawl fails
+      # before it can write assets.json/tags.json/checkpoint.json or
+      # index.bleve/. Docker seeds a *named* volume's ownership from the
+      # image's own mount point on first use, which already works here. A
+      # bind-mounted DATA_PATH (set as an env var - see .env.example) is
+      # never chown'd automatically - on the host, once, before first `up`
+      # with that path and again after upgrading an existing deployment onto
+      # this nonroot image:
+      #   chown -R 65532:65532 <DATA_PATH>
+      # Skipping this on an upgrade is not a degraded mode - both services
+      # fail to write and the webserver can never take the bleve lock.
       - "${DATA_PATH:-itchgrep-data}:/data"
     logging: *logging
     # Deliberately no healthcheck: stanza. Its only endpoint is the crawl
@@ -202,7 +215,11 @@ services:
       - "62686:8080"
     volumes:
       # Read-write, not read-only: bleve takes a lock file inside the index
-      # directory when opening it, even for search-only use.
+      # directory when opening it, even for search-only use. And it must be
+      # writable specifically by uid 65532 now that Dockerfile.webserver runs
+      # as :nonroot rather than root - see the matching comment on
+      # dataservice's volumes: entry above for the one-time host chown a
+      # bind-mounted DATA_PATH needs.
       - "${DATA_PATH:-itchgrep-data}:/data"
     # Exec form, not a shell string: distroless has no shell to run it in, so
     # the check is the webserver binary's own "-healthcheck" flag, which GETs
@@ -260,7 +277,17 @@ services:
   # - a hostname routed here would still let any visitor who finds it fire the
   # button on purpose.
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pinned to a release tag + digest, not :latest: this container holds the
+    # tunnel credential (TUNNEL_TOKEN below) and dials out to Cloudflare on
+    # every start, so an unpinned :latest can swap in a new cloudflared build
+    # under this stack with no review and no way to tell which version is
+    # actually running. The tag is kept alongside the digest so a human
+    # reading this line still sees the version without resolving the hash.
+    # Refresh deliberately, never as a drive-by:
+    #   docker buildx imagetools inspect cloudflare/cloudflared:latest
+    # then confirm the new tag with:
+    #   docker run --rm cloudflare/cloudflared:latest --version
+    image: cloudflare/cloudflared:2026.8.2@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38
     profiles: [public]
     restart: unless-stopped
     command: tunnel --no-autoupdate run

@@ -1,6 +1,14 @@
 # Use the official Golang image to create a build artifact.
 # This is based on Debian and sets the GOPATH environment variable at /go.
-FROM golang:1.27 AS builder
+#
+# Pinned by digest, not just tag: golang:1.27 is a moving target that gets
+# repushed on every point release and base-image rebuild, so a tag-only FROM
+# is not reproducible - the exact same Dockerfile can build a different image
+# tomorrow. The tag is kept alongside the digest so a human reading this line
+# still sees which Go version it is without resolving the hash. Refresh
+# deliberately, never as a drive-by:
+#   docker buildx imagetools inspect golang:1.27
+FROM golang:1.27@sha256:0ecdc2a9f6156af6451080bfe3d8382a662fcc4e209608c6f919e643453514c1 AS builder
 
 # Create and change to the app directory.
 WORKDIR /app
@@ -21,7 +29,23 @@ RUN CGO_ENABLED=0 go build -v -ldflags="-s -w" -o dataservice ./cmd/dataservice
 
 # Use a Docker multi-stage build to create a lean production image.
 # https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds
-FROM gcr.io/distroless/base-debian12
+#
+# :nonroot, not the bare tag: the plain base-debian12 image has no USER, so
+# the process runs as uid 0 with nothing to stop it. :nonroot bakes in
+# `USER nonroot:nonroot` (65532:65532), so no USER line is needed here - the
+# base image itself refuses to run dataservice as root.
+#
+# CONSEQUENCE FOR THE /data VOLUME: uid 65532 must be able to write /data, or
+# this container cannot write assets.json/tags.json/checkpoint.json or build
+# index.bleve/ and every crawl fails outright. Docker only seeds a *named*
+# volume's ownership from the image on its first use; a bind-mounted
+# DATA_PATH is never chown'd automatically. See docker-compose.yml's
+# volumes: comment for the required one-time `chown -R 65532:65532` step.
+#
+# Pinned by digest for the same reproducibility reason as the builder stage
+# above - refresh deliberately:
+#   docker buildx imagetools inspect gcr.io/distroless/base-debian12:nonroot
+FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5
 
 # Copy the compiled application from the builder stage.
 COPY --from=builder /app/dataservice /

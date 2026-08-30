@@ -1,21 +1,30 @@
+# Allowlist, not a blocklist: ignore everything, then un-ignore exactly what
+# Dockerfile.webserver and Dockerfile.dataservice COPY (go.mod, go.sum, cmd/,
+# internal/, pkg/ - verify against those files before adding anything here).
+#
+# The previous blocklist approach silently shipped whatever nobody had
+# thought to exclude yet into the build context - in practice that meant
+# data/ (a ~740 MB local index after a dev crawl), data-smoke/, and .env (the
+# Cloudflare tunnel token) all rode along on every `docker compose build`.
+# None of those were ever supposed to be in the context; a blocklist just
+# never caught them. An allowlist is correct by construction: a new
+# top-level file or directory is excluded by default and must be deliberately
+# added below before either Dockerfile can COPY it.
+*
+
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!pkg/
+
 # Generated templ files - regenerated inside the webserver image build.
 # Scoped to *_templ.go so hand-written helpers in that package still ship.
+# Must come AFTER `!internal/` above: a re-exclusion pattern only takes
+# effect below the directory-level negation it narrows, not before it.
 internal/web/templates/*_templ.go
 
-# Nothing below is needed to build either binary; excluding it keeps the
-# build context small and avoids shipping repo history to the daemon.
-.git
-.github
-.gitattributes
-.gitignore
-local_data/
-.tmp_local_data/
-tasks/
-docker-compose.yml
-README.md
-LICENSE
-Taskfile.dist.yml
-
-# Compiled binaries from a host-side `go build`
-/dataservice
-/webserver
+# No entry needed for a host-side `go build` binary (previously /dataservice
+# and /webserver here): the leading `*` above already excludes everything at
+# the repo root by default, and neither binary is produced under cmd/,
+# internal/ or pkg/.
