@@ -38,6 +38,7 @@ const (
 	// TrafficFileName is deliberately not "stats.json" - that name is already
 	// the crawl-coverage file, and the two mean entirely different things.
 	TrafficFileName = "traffic.json"
+	HistoryFileName = "history.json"
 
 	// IndexDirName is the published bleve index. stagingIndexDirName is where a
 	// new one is built; it lives alongside so that publishing is a rename
@@ -220,6 +221,43 @@ func GetTraffic() (models.Traffic, error) {
 		return models.Traffic{}, err
 	}
 	return t, nil
+}
+
+// maxHistoryEntries caps history.json at roughly two years of weekly crawls.
+// Unbounded, the file would grow forever for a service meant to run for years
+// - and nothing on /stats needs more than a couple of years of context.
+const maxHistoryEntries = 104
+
+// PutHistory appends one crawl's record to the published history, oldest
+// first on disk, trimmed to the newest maxHistoryEntries. Read-modify-write
+// rather than a single append: JSON has no append-in-place format, and the
+// whole file is small enough that rewriting it is cheap even at the cap.
+func PutHistory(rec models.CrawlRecord) error {
+	history, err := GetHistory()
+	if err != nil {
+		return err
+	}
+	history = append(history, rec)
+	if len(history) > maxHistoryEntries {
+		history = history[len(history)-maxHistoryEntries:]
+	}
+	return writeJSON(HistoryFileName, history)
+}
+
+// GetHistory returns the published crawl history, oldest first. A missing
+// file is normal on any deploy before this existed, or before the first crawl
+// since - the caller shows no history at all rather than treating it as an
+// error. A file that exists but fails to parse is a real error and is
+// returned as one.
+func GetHistory() ([]models.CrawlRecord, error) {
+	var history []models.CrawlRecord
+	if _, err := readJSON(HistoryFileName, &history); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return history, nil
 }
 
 // Checkpoint is a partially-complete crawl, written periodically so that a run

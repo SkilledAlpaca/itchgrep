@@ -6,6 +6,7 @@ import (
 	"itchgrep/internal/cache"
 	"itchgrep/internal/logging"
 	"itchgrep/internal/metrics"
+	"itchgrep/internal/storage"
 	"itchgrep/internal/web/templates"
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
@@ -83,6 +84,20 @@ func (h *handler) freshness() templates.Freshness {
 
 func (h *handler) coverage() templates.Coverage {
 	return templates.NewCoverage(h.cache.Stats())
+}
+
+// history reads the crawl log directly from storage rather than through the
+// cache: history.json changes only once per crawl, is small even at its
+// two-year cap, and /stats already carries statsMaxAge cache headers - adding
+// a reload-triggered cache field for it would be a second caching layer
+// solving a load problem that does not exist.
+func (h *handler) history() templates.History {
+	records, err := storage.GetHistory()
+	if err != nil {
+		logging.Warning("Failed to read crawl history, /stats will show none: %v", err)
+		records = nil
+	}
+	return templates.NewHistory(records)
 }
 
 // pageParam reads ?page=, defaulting to the first. Unlike the filter
@@ -391,5 +406,5 @@ func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 func (h *handler) HandleStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", statsMaxAge))
 	traffic := templates.NewTraffic(h.metrics.Snapshot(), time.Now())
-	templates.Layout("Stats — ITCHGREP", templates.StatsPage(h.freshness(), h.coverage(), traffic)).Render(r.Context(), w)
+	templates.Layout("Stats — ITCHGREP", templates.StatsPage(h.freshness(), h.coverage(), traffic, h.history())).Render(r.Context(), w)
 }

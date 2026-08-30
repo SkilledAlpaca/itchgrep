@@ -58,11 +58,55 @@ func TestStatsLinksToAboutAsAPlainNavigation(t *testing.T) {
 	// no state to keep - the swap left visitors reading about-content under a
 	// /stats URL, where refresh and share both resurrect the wrong page. Here
 	// the link must be an ordinary navigation.
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now())))
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), History{}))
 
 	assert.Contains(t, html, `href="/about"`)
 	assert.NotContains(t, html, `hx-get="/about"`,
 		"stats must navigate to /about, not swap it in place")
+}
+
+func TestEmptyHistoryRendersNoSection(t *testing.T) {
+	// A deploy before this feature shipped, or one with no crawl since, has
+	// nothing recorded - the section must not appear at all rather than
+	// appear with nothing in it.
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), History{}))
+
+	assert.NotContains(t, html, "Index history")
+	assert.NotContains(t, html, "history-row")
+}
+
+func TestHistorySectionRendersRowsNewestFirstWithDeltas(t *testing.T) {
+	history := NewHistory([]models.CrawlRecord{
+		{When: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC), Indexed: 95699, Catalogue: 108000,
+			DurationSeconds: 3600, Pages: 4000, SlicesDone: 300, SlicesPlanned: 320},
+		{When: time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), Indexed: 96903, Catalogue: 108697,
+			DurationSeconds: 3600 + 12*60, Pages: 4200, SlicesDone: 314, SlicesPlanned: 320, Resumed: true},
+	})
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), history))
+
+	assert.Contains(t, html, "Index history")
+	assert.Contains(t, html, "Aug 29, 2026 — 96,903 assets (+1,204)",
+		"the newest crawl's delta is against the previous one")
+	assert.Contains(t, html, "first recorded crawl",
+		"the oldest row has nothing to diff against")
+	assert.Contains(t, html, "resumed from checkpoint")
+
+	// Only the resumed row says so.
+	newest := strings.Index(html, "Aug 29, 2026")
+	oldest := strings.Index(html, "Aug 20, 2026")
+	require.True(t, newest >= 0 && oldest >= 0 && newest < oldest,
+		"newest row must render before the oldest")
+}
+
+func TestHistoryDeltaUsesARealMinusSign(t *testing.T) {
+	history := NewHistory([]models.CrawlRecord{
+		{Indexed: 96903},
+		{Indexed: 95699},
+	})
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), history))
+
+	assert.Contains(t, html, "−1,204", "a shrinking index must not read as a hyphenated range")
+	assert.NotContains(t, html, "-1,204")
 }
 
 func TestAboutDoesNotSpeakAsTheOriginalAuthor(t *testing.T) {

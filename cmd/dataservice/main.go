@@ -162,8 +162,13 @@ func fetchAndStoreAssets() {
 		tagSets:      make(map[string]map[string]struct{}, totalAssets),
 		recency:      make(map[string]int64),
 		doneSlices:   make(map[string]struct{}, len(slices)),
+		runStart:     time.Now(),
 	}
 	c.resume(cfg.checkpointMaxAge)
+	// Computed after resume, not at PlanSlices: on a resumed run doneSlices is
+	// now populated, and pages already accounted for by the checkpoint must
+	// not inflate the ETA the way they would inflate a plain slice count.
+	c.plannedPages = plannedPages(slices, c.doneSlices, itemsPerPage)
 	c.run(slices)
 	c.attachTags()
 	c.attachRecency()
@@ -286,6 +291,17 @@ func fetchAndStoreAssets() {
 	}
 	logging.Info("Successfully published index")
 
+	// Read before PutAssets overwrites this file: once it does, the previous
+	// publish's game ids are gone for good, and NewAssets/RemovedAssets below
+	// would have nothing left to diff against.
+	previousAssets, err := storage.GetAssets()
+	if err != nil {
+		// First ever publish, or an index from before this file existed.
+		// Diffing against nothing makes every asset "new", which is the
+		// honest answer for a dataset that never had a predecessor.
+		previousAssets = nil
+	}
+
 	logging.Info("Storing assets")
 	if err := storage.PutAssets(assets); err != nil {
 		logging.Error("Failed to put assets: %v", err)
@@ -303,11 +319,64 @@ func fetchAndStoreAssets() {
 		logging.Error("Failed to store crawl stats, coverage will not be shown: %v", err)
 	}
 
+	// History is bookkeeping, not the product: a write failure here must not
+	// fail a publish that otherwise succeeded.
+	publishedAt := time.Now().UTC()
+	newCount, removedCount := diffAssetIDs(previousAssets, assets)
+	var freeCount int64
+	for _, a := range assets {
+		if a.Free() {
+			freeCount++
+		}
+	}
+	if err := storage.PutHistory(models.CrawlRecord{
+		When:            publishedAt,
+		DurationSeconds: int64(publishedAt.Sub(c.runStart).Seconds()),
+		Indexed:         int64(len(assets)),
+		Catalogue:       totalAssets,
+		NewAssets:       newCount,
+		RemovedAssets:   removedCount,
+		FreeAssets:      freeCount,
+		Pages:           c.pagesFetched.Load(),
+		SlicesDone:      c.slicesDone.Load(),
+		SlicesPlanned:   int64(len(slices)),
+		Refusals:        fetcher.Refusals(),
+		Tags:            int64(len(tags)),
+		Resumed:         c.resumed,
+	}); err != nil {
+		logging.Warning("Failed to record crawl history: %v", err)
+	}
+
 	// The crawl completed and published, so the checkpoint is now stale. Left
 	// behind, the next run would resume a finished crawl and skip every slice.
 	if err := storage.DeleteCheckpoint(); err != nil {
 		logging.Warning("Failed to delete crawl checkpoint: %v", err)
 	}
+}
+
+// diffAssetIDs compares two publishes by game id, since that is the only
+// stable identity an asset carries across crawls - titles and descriptions
+// can change without the asset itself being new or gone.
+func diffAssetIDs(previous, current []models.Asset) (newCount, removedCount int64) {
+	prevIDs := make(map[string]struct{}, len(previous))
+	for _, a := range previous {
+		prevIDs[a.GameId] = struct{}{}
+	}
+	curIDs := make(map[string]struct{}, len(current))
+	for _, a := range current {
+		curIDs[a.GameId] = struct{}{}
+	}
+	for id := range curIDs {
+		if _, ok := prevIDs[id]; !ok {
+			newCount++
+		}
+	}
+	for id := range prevIDs {
+		if _, ok := curIDs[id]; !ok {
+			removedCount++
+		}
+	}
+	return newCount, removedCount
 }
 
 // crawlConfig is the tuning for one crawl. Every field has a working default,
@@ -473,10 +542,50 @@ type crawler struct {
 	// the checkpointed run being resumed.
 	doneSlices map[string]struct{}
 
+	// resumed is true once resume actually restores a checkpoint, as opposed
+	// to finding none, a stale one, or one for a different catalogue size.
+	// Recorded on CrawlRecord because it explains a low NewAssets/RemovedAssets
+	// count that would otherwise look like the diff logic was broken.
+	resumed bool
+
 	lastCheckpoint time.Time
+
+	// runStart is when this process instance began crawling - not when a
+	// resumed checkpoint's original run began. It is the numerator's clock for
+	// the ETA (see etaLabel) and the DurationSeconds recorded on CrawlRecord;
+	// both describe what this run has actually spent, not work inherited from
+	// an earlier process.
+	runStart time.Time
+
+	// plannedPages is the page budget this run expects to spend: the planned
+	// slices' PagesToFetch, minus whatever a resumed checkpoint already marked
+	// done. It only ever overestimates, because SLICE_MIN_YIELD abandons slices
+	// before they reach it - and an overestimate that shrinks as the crawl
+	// progresses is the safe direction for an ETA to be wrong in.
+	plannedPages int64
 
 	pagesFetched atomic.Int64
 	slicesDone   atomic.Int64
+}
+
+// plannedPages sums PagesToFetch across the slices this run will actually
+// crawl. Asset coverage is deliberately not the basis for an ETA anywhere in
+// this file: coverage saturates near coverageTarget by design (see done), so
+// an estimate built on it would stall well short of finishing. Pages are what
+// the rate limiter actually paces, so they are what remaining time is
+// measured against.
+func plannedPages(slices []fetcher.Slice, done map[string]struct{}, itemsPerPage int64) int64 {
+	var total int64
+	for _, s := range slices {
+		if !s.Valid() {
+			continue
+		}
+		if _, ok := done[s.Label()]; ok {
+			continue
+		}
+		total += s.PagesToFetch(itemsPerPage)
+	}
+	return total
 }
 
 // checkpointInterval is the minimum wall-clock gap between checkpoint writes.
@@ -532,6 +641,7 @@ func (c *crawler) resume(maxAge time.Duration) {
 	for id, rank := range cp.Recency {
 		c.recency[id] = rank
 	}
+	c.resumed = true
 
 	logging.Info("Resuming crawl from checkpoint %s old: %d assets, %d slices already done",
 		time.Since(updated).Round(time.Minute), len(c.assets), len(c.doneSlices))
@@ -913,9 +1023,34 @@ func (c *crawler) logProgress(stop <-chan struct{}, totalSlices int) {
 			// crawl being refused half the time and one running clean produce
 			// identical progress lines, differing only in how slowly the count
 			// climbs.
-			logging.Info("assets: %d/%d (%.1f%%), slices: %d/%d, pages: %d, 429s: %d",
+			logging.Info("assets: %d/%d (%.1f%%), slices: %d/%d, pages: %d, 429s: %d, %s",
 				found, c.totalAssets, pct, c.slicesDone.Load(), totalSlices,
-				c.pagesFetched.Load(), fetcher.Refusals())
+				c.pagesFetched.Load(), fetcher.Refusals(), c.etaLabel())
 		}
 	}
+}
+
+// etaLabel is the fuzzy time-to-completion appended to the progress line.
+//
+// Pages, not the asset count above, are the basis: a page costs the same rate
+// limiter delay whichever slice it comes from, so remaining time is remaining
+// pages times observed pace. Observed pace already absorbs 429 pauses, since
+// they show up as elapsed wall-clock time without a matching page fetched.
+func (c *crawler) etaLabel() string {
+	pagesFetched := c.pagesFetched.Load()
+	if pagesFetched == 0 {
+		return "estimating"
+	}
+
+	pace := time.Since(c.runStart) / time.Duration(pagesFetched)
+
+	remaining := c.plannedPages - pagesFetched
+	if remaining < 0 {
+		// plannedPages is a ceiling that only ever overestimates (slices
+		// abandoned early via SLICE_MIN_YIELD never reach it) - never a reason
+		// to report a negative time left.
+		remaining = 0
+	}
+
+	return fuzzyETA(pace * time.Duration(remaining))
 }

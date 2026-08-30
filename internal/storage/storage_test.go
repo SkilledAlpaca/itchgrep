@@ -248,3 +248,71 @@ func TestAnEmptyRatesTableIsRejected(t *testing.T) {
 	_, err := GetRates()
 	assert.Error(t, err)
 }
+
+func TestGetHistoryOnEmptyStorageIsEmptyNotAnError(t *testing.T) {
+	// Unlike GetAssets, a missing history file is expected on every deploy
+	// before the first crawl since this feature shipped - it must not read
+	// back as a failure the caller has to handle specially.
+	useTempDir(t)
+
+	history, err := GetHistory()
+	require.NoError(t, err)
+	assert.Empty(t, history)
+}
+
+func TestPutHistoryRoundTrips(t *testing.T) {
+	useTempDir(t)
+
+	rec := models.CrawlRecord{
+		When:            time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		DurationSeconds: 3600,
+		Indexed:         96903,
+		Catalogue:       108697,
+		NewAssets:       1204,
+		RemovedAssets:   12,
+		FreeAssets:      83214,
+		Pages:           4200,
+		SlicesDone:      314,
+		SlicesPlanned:   320,
+		Refusals:        7,
+		Tags:            812,
+		Resumed:         true,
+	}
+	require.NoError(t, PutHistory(rec))
+
+	got, err := GetHistory()
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, rec, got[0])
+}
+
+func TestPutHistoryAppendsNewestLast(t *testing.T) {
+	useTempDir(t)
+
+	first := models.CrawlRecord{When: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Indexed: 1}
+	second := models.CrawlRecord{When: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), Indexed: 2}
+	require.NoError(t, PutHistory(first))
+	require.NoError(t, PutHistory(second))
+
+	got, err := GetHistory()
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, first.Indexed, got[0].Indexed, "oldest entry stays first on disk")
+	assert.Equal(t, second.Indexed, got[1].Indexed, "newest entry is appended last")
+}
+
+func TestPutHistoryCapsAtTheNewestEntries(t *testing.T) {
+	// 104 entries is two years of weekly crawls. Uncapped, a service meant to
+	// run for years would grow this file forever.
+	useTempDir(t)
+
+	for i := 0; i < maxHistoryEntries+10; i++ {
+		require.NoError(t, PutHistory(models.CrawlRecord{Indexed: int64(i)}))
+	}
+
+	got, err := GetHistory()
+	require.NoError(t, err)
+	require.Len(t, got, maxHistoryEntries)
+	assert.EqualValues(t, 10, got[0].Indexed, "oldest surviving entry is the 11th written")
+	assert.EqualValues(t, maxHistoryEntries+9, got[len(got)-1].Indexed, "the newest entry is always kept")
+}

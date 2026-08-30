@@ -147,6 +147,24 @@ type Stats struct {
 	Catalogue int64
 }
 
+// CrawlRecord is what one crawl knew about itself at publish time. Recorded
+// then because none of it can be reconstructed afterwards.
+type CrawlRecord struct {
+	When            time.Time // publish time, UTC
+	DurationSeconds int64     // run start (this run, not checkpoint origin) to publish
+	Indexed         int64     // assets in the published index
+	Catalogue       int64     // itch.io's reported catalogue size at crawl start
+	NewAssets       int64     // game ids absent from the previously published assets.json
+	RemovedAssets   int64     // game ids previously published, now gone
+	FreeAssets      int64     // Price == "" count; paid = Indexed - FreeAssets
+	Pages           int64     // pages fetched this run
+	SlicesDone      int64
+	SlicesPlanned   int64
+	Refusals        int64 // 429s from itch.io this run
+	Tags            int64 // tag universe size used for planning
+	Resumed         bool  // run picked up a checkpoint rather than starting fresh
+}
+
 // Tag is an itch.io asset facet and the number of assets carrying it.
 // It lives here rather than in internal/fetcher because internal/storage
 // caches the discovered tag universe and must not depend on the fetcher.

@@ -8,7 +8,7 @@ package templates
 // operator-side signals - a public probe counter is a feedback channel a
 // scanner author could use to tune around the matcher, and the error counters
 // tell an attacker how the origin is reacting. They stay in the log.
-templ StatsPage(age Freshness, coverage Coverage, tr Traffic) {
+templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 	@Masthead(age, coverage)
 	<div id="page-content" class="prose stats-page">
 		<h2>Traffic</h2>
@@ -61,6 +61,60 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic) {
 				></meter>
 			}
 		</div>
+		if !history.Empty() {
+			<h2>Index history</h2>
+			<div class="history-list">
+				for _, row := range history.Rows() {
+					<details class="history-row">
+						<summary>{ row.Summary() }</summary>
+						<dl>
+							<div class="history-cell">
+								<dt>Coverage</dt>
+								<dd>{ row.CoverageLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>Duration</dt>
+								<dd>{ row.DurationLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>New assets</dt>
+								<dd>{ row.NewAssetsLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>Removed assets</dt>
+								<dd>{ row.RemovedAssetsLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>Free / paid</dt>
+								<dd>{ row.FreePaidLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>Pages fetched</dt>
+								<dd>{ row.PagesLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>Slices done/planned</dt>
+								<dd>{ row.SlicesLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>429 refusals</dt>
+								<dd>{ row.RefusalsLabel() }</dd>
+							</div>
+							<div class="history-cell">
+								<dt>Tags planned against</dt>
+								<dd>{ row.TagsLabel() }</dd>
+							</div>
+							if row.Resumed() {
+								<div class="history-cell">
+									<dt>Checkpoint</dt>
+									<dd>resumed from checkpoint</dd>
+								</div>
+							}
+						</dl>
+					</details>
+				}
+			</div>
+		}
 		<hr/>
 		<p><a href="/">← Back to search</a></p>
 	</div>

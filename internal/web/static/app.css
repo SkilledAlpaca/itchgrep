@@ -889,6 +889,36 @@ a:hover {
   accent-color: var(--accent);
 }
 
+.history-row {
+  padding: 0.7rem 1rem;
+  margin-bottom: 1px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.history-row summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.history-row dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.6rem 1rem;
+  margin: 0.8rem 0 0;
+}
+
+.history-cell dt {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.history-cell dd {
+  margin: 0;
+}
+
 @media (max-width: 640px) {
   .masthead {
     align-items: flex-start;
