@@ -52,7 +52,7 @@ Unraid's root filesystem — including `/etc` — is a tmpfs ramdisk rebuilt fro
 
 The operator reports `COMPOSE_PROJECT_NAME=itchgrep` is set explicitly in the production `.env` file. Docker Compose otherwise derives the project name from the checkout directory's own name — and every container, network, and named-volume name it creates is derived from that project name. Pinning it means those names stay stable regardless of what the checkout directory is actually called.
 
-**What breaks if it isn't pinned (or is changed):** `scripts/export-logs.sh`'s `CONTAINER_NAME` default (`itchgrep-webserver`) still works, because the webserver's name is separately pinned by `container_name:` in `docker-compose.yml` — but the dataservice's container name is *not* pinned, so it does shift with the project name. Worse, an unpinned or changed project name means Compose creates (or looks for) a *different* named data volume than the one already holding the crawl database — effectively starting from an empty `/data` on the next `docker compose up`, invisibly, with no error.
+**What breaks if it isn't pinned (or is changed):** `scripts/export-logs.sh`'s two container-name defaults (`itchgrep-webserver` and `itchgrep-dataservice`) still work regardless, because both are separately pinned by `container_name:` in `docker-compose.yml` — the project name doesn't govern either. What does still shift with the project name is the named Docker volume (when `DATA_PATH` is unset): an unpinned or changed project name means Compose creates (or looks for) a *different* named data volume than the one already holding the crawl database — effectively starting from an empty `/data` on the next `docker compose up`, invisibly, with no error. A bind-mounted `DATA_PATH` (production's setup) isn't affected by this, since it names an absolute host path rather than a project-derived volume name.
 
 ### Two services, one optional third
 
@@ -93,6 +93,40 @@ Every long-running service carries this restart policy, so Docker brings each ba
 The tunnel routes the public hostname at `http://webserver:8080` — the Compose service name, resolved on the Compose network, not `localhost`.
 
 **The dataservice must never be given a public hostname.** Its `/trigger-fetch` endpoint takes no authentication and starts a multi-hour crawl on a bare `POST` — see [docs/configuration.md](configuration.md) and `cmd/dataservice/main.go`'s `handleFetchTrigger`. A public route to it, on any port, would hand any visitor who finds it a button to fire at will.
+
+### Creating the tunnel
+
+This is a one-time setup step, needed before the first `--profile public`
+deploy (see [docs/deployment.md](deployment.md)) and again if the tunnel
+itself is ever recreated from scratch (rather than just re-tokened — see
+[docs/disaster-recovery.md](disaster-recovery.md#rotating-the-cloudflare-tunnel-token)).
+
+1. In the Cloudflare dashboard for the account that owns `itchgrep.com`, go
+   to the Zero Trust section, then **Networks** → **Tunnels**, and create a
+   new tunnel. **Dashboard navigation labels change over time** — Cloudflare
+   has already reorganized tunnel management once (see
+   [docs/disaster-recovery.md](disaster-recovery.md#rotating-the-cloudflare-tunnel-token)
+   for the dated note on that move); if this path doesn't match what you
+   see, look for "Tunnels" under whatever networking section the current
+   dashboard shows, and correct this document once you've found it.
+2. Copy the token the dashboard shows you into the production `.env` file as
+   `CLOUDFLARE_TUNNEL_TOKEN` — see
+   [docs/configuration.md](configuration.md#cloudflare_tunnel_token).
+3. Add a public hostname route: `itchgrep.com` → `http://webserver:8080`.
+   `webserver` is the Compose service name, not `localhost` — `cloudflared`
+   resolves it on the Compose network, the same way `docker-compose.yml`'s
+   own header comment for the `cloudflared` service describes.
+4. Bring the stack up with `--profile public` (see
+   [docs/deployment.md](deployment.md)) and confirm the tunnel shows
+   connected in the dashboard.
+
+**This project's existing production tunnel's exact configuration** (when it
+was created, its exact route list beyond the one described above, any
+additional settings) is `UNKNOWN — REQUIRES HUMAN CONFIRMATION` — see
+[docs/open-questions.md](open-questions.md#4-full-cloudflare-account-inventory)
+for the standing entry covering the full Cloudflare account inventory; this
+section isn't a second copy of that question, just the creation steps for
+setting up a tunnel from nothing.
 
 ### The WAF managed-challenge rule
 

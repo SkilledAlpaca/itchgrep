@@ -62,7 +62,7 @@ For the Go language conventions used throughout `internal/` and `pkg/`, see [lan
 
 A visitor's browser never reaches the `webserver` program directly. Cloudflare sits in front of the site, and a program called `cloudflared` (Cloudflare Tunnel) forwards traffic from Cloudflare to the `webserver` container without opening any inbound port on the host. See [infrastructure](infrastructure.md) for how the tunnel itself is set up.
 
-Inside `webserver`, a request passes through a fixed chain of middleware (`cmd/webserver/main.go:141-148`) before it reaches a page handler:
+Inside `webserver`, a request passes through a fixed chain of middleware (`cmd/webserver/main.go`) before it reaches a page handler:
 
 1. **`middleware.Recoverer`** (from the chi router library) — catches a panic anywhere below and still answers something, rather than dropping the connection.
 2. **`web.SecurityHeaders`** (`internal/web/secheaders.go`) — sets a Content-Security-Policy and a few other headers on every response.
@@ -72,7 +72,7 @@ Inside `webserver`, a request passes through a fixed chain of middleware (`cmd/w
 
 From there, a handler in `internal/web/handlers.go` (or `tag.go` for `/tag/{slug}`) parses the query string into a `templates.Filters` value, calls `cache.Find` (`internal/cache/search.go`), and renders the result through `internal/web/templates`.
 
-`cache.Find` decides between two paths (`internal/cache/search.go:150-153`):
+`cache.Find` decides between two paths (`internal/cache/search.go`):
 
 - An **unfiltered front page** (no query, no tags, popularity order) is served directly from an in-memory slice already sorted by popularity — no bleve query at all.
 - Anything else — a search, a tag filter, a price filter, a different sort — runs against the bleve index.
@@ -97,17 +97,17 @@ flowchart LR
 
 ## How a crawl flows
 
-`dataservice` decides whether to crawl by checking the age of `assets.json` on disk against `CRAWL_INTERVAL`, every 15 minutes (`scheduleCrawls`, `cmd/dataservice/main.go:169-216`) — not from a timer that resets on every restart, so a container that gets restarted often still crawls on schedule. The same decision can also be triggered immediately by a `POST /trigger-fetch`.
+`dataservice` decides whether to crawl by checking the age of `assets.json` on disk against `CRAWL_INTERVAL`, every 15 minutes (`scheduleCrawls`, `cmd/dataservice/main.go`) — not from a timer that resets on every restart, so a container that gets restarted often still crawls on schedule. The same decision can also be triggered immediately by a `POST /trigger-fetch`.
 
-One crawl, driven by `fetchAndStoreAssets` (`cmd/dataservice/main.go:313-358`), runs as a fixed sequence:
+One crawl, driven by `fetchAndStoreAssets` (`cmd/dataservice/main.go`), runs as a fixed sequence:
 
 1. **Fetch and collect** (`crawlAndCollect`) — reads itch.io's reported catalogue size, plans which browsable views ("slices") to walk (`internal/fetcher/planner.go`), and walks them, deduplicating assets by game ID. This stage also resumes an in-progress crawl from a checkpoint if one exists and is fresh enough.
 2. **Coverage gate** (`checkCoverageFloor`) — if the crawl collected less than `COVERAGE_FLOOR` of the reported catalogue, the run stops here and the previous index is left in place untouched. A stalled or truncated crawl must never replace a good index with a worse one.
-3. **Build the index** (`buildIndex`, `cmd/dataservice/selfheal.go:160-257`) — converts the collected assets to `models.IndexedAsset` (pricing converted to US dollars using the exchange-rate snapshot fetched this run) and writes a new bleve index at the staging path.
+3. **Build the index** (`buildIndex`, `cmd/dataservice/selfheal.go`) — converts the collected assets to `models.IndexedAsset` (pricing converted to US dollars using the exchange-rate snapshot fetched this run) and writes a new bleve index at the staging path.
 4. **Publish** (`publishCrawl` → `storage.PublishIndex`, then `storage.PutAssets`) — the index is published first, `assets.json` second, deliberately in that order (see [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md)).
 5. **Record completion** (`recordCrawlCompletion`) — writes `stats.json` (coverage figures) and appends one entry to `history.json`, then deletes the now-stale checkpoint.
 
-The webserver never learns about a new crawl through a signal or a webhook. Each request checks whether the on-disk `assets.json` is newer than what is loaded (`Cache.IsCacheExpired`, `internal/cache/cache.go:222-260`), throttled to at most once every 5 seconds so the check costs nothing on the hot path. When it finds a newer file, it reloads the asset list and reopens the bleve index (`Cache.doRefresh`), swapping both in atomically so no in-flight request ever sees a mix of old and new data.
+The webserver never learns about a new crawl through a signal or a webhook. Each request checks whether the on-disk `assets.json` is newer than what is loaded (`Cache.IsCacheExpired`, `internal/cache/cache.go`), throttled to at most once every 5 seconds so the check costs nothing on the hot path. When it finds a newer file, it reloads the asset list and reopens the bleve index (`Cache.doRefresh`), swapping both in atomically so no in-flight request ever sees a mix of old and new data.
 
 ```mermaid
 flowchart TD
@@ -124,21 +124,21 @@ flowchart TD
 
 ## Data lifecycle
 
-Everything either program persists lives in one directory (`DATA_DIR`, default `./data` for a bare `go run`; `/data` in both containers — `internal/storage/storage.go:63-74`). `internal/storage` is the only package that touches it. Every write goes through `writeAtomic` (`internal/storage/storage.go:87-128`): write to a temp file in the same directory, `fsync` it, then `os.Rename` it into place, so a concurrent reader never sees a half-written file.
+Everything either program persists lives in one directory (`DATA_DIR`, default `./data` for a bare `go run`; `/data` in both containers — `internal/storage/storage.go`). `internal/storage` is the only package that touches it. Every write goes through `writeAtomic` (`internal/storage/storage.go`): write to a temp file in the same directory, `fsync` it, then `os.Rename` it into place, so a concurrent reader never sees a half-written file.
 
 The distinction between **regenerable** and **unregenerable** below matters for [disaster-recovery.md](disaster-recovery.md), which restores these artifacts differently depending on which kind they are.
 
 | Artifact | File name | Written by | Read by | Regenerable? |
 |---|---|---|---|---|
-| Assets | `assets.json` | `dataservice`, last step of every publish (`storage.PutAssets`, `internal/storage/storage.go:191`) | `webserver` cache on every refresh; `dataservice` (as `previousAssets`, to carry `FirstSeen` forward and to diff new/removed counts) | Partly. A crawl always produces a fresh `assets.json`. But each asset's `FirstSeen` timestamp is carried forward from the previous publish (`stampFirstSeen`, `cmd/dataservice/main.go:566-578`) rather than recomputed — **if this file is lost, every asset's arrival date resets to "first seen in the next crawl," and that history cannot be recovered from anywhere else.** |
+| Assets | `assets.json` | `dataservice`, last step of every publish (`storage.PutAssets`, `internal/storage/storage.go`) | `webserver` cache on every refresh; `dataservice` (as `previousAssets`, to carry `FirstSeen` forward and to diff new/removed counts) | Partly. A crawl always produces a fresh `assets.json`. But each asset's `FirstSeen` timestamp is carried forward from the previous publish (`stampFirstSeen`, `cmd/dataservice/main.go`) rather than recomputed — **if this file is lost, every asset's arrival date resets to "first seen in the next crawl," and that history cannot be recovered from anywhere else.** |
 | Tag universe | `tags.json` | `dataservice`, after tag discovery (`storage.PutTags`) | `dataservice` (reuses the cache instead of rediscovering); `webserver` cache (`/tag/{slug}` validation, sitemap) | Yes. Rediscovered automatically when missing or older than `TAG_CACHE_MAX_AGE` — costs several hundred requests to itch.io (see [glossary: tag universe](glossary.md#tag-universe)). |
 | Crawl checkpoint | `checkpoint.json` | `dataservice`, periodically during a crawl (`crawler.checkpoint`); deleted on successful publish | `dataservice`, to resume an interrupted crawl (`crawler.resume`) | Yes, and short-lived by design. Losing it only means the next crawl starts from scratch instead of resuming. |
 | Exchange rates | `rates.json` | `dataservice`, once per crawl (`currentRates`, `cmd/dataservice/rates.go`) | `dataservice` (fallback source if a rebuild can't refetch); `webserver` cache (`Rates()`, and the dollar values baked into the index) | Yes. Refetched from the ECB every crawl; falls back to the built-in table (`money.Fallback()`) if both the live fetch and the stored file are unavailable. |
 | Crawl coverage stats | `stats.json` | `dataservice`, at the end of a successful publish (`recordCrawlCompletion`) | `webserver` cache (the coverage line in the masthead) | Yes. Recomputed by the next successful crawl. |
 | Public traffic counters | `traffic.json` | `webserver`, on a timer (every 5 minutes) and once more on graceful shutdown (`internal/metrics`) | `webserver`, restored into `metrics.Counters` at startup | **No.** This is the webserver's own visitor-count history (aggregate counts only — no IP addresses, no query text). Nothing about it is derived from a crawl, and a crawl cannot reconstruct it. Losing it resets every counter to zero and resets "counting since" to the moment of loss. |
-| Crawl history | `history.json` | `dataservice`, one entry appended per successful publish (`storage.PutHistory`), capped at 104 entries (~2 years of weekly crawls) | `webserver` handler, read directly from storage for the `/stats` history table (`internal/web/handlers.go:132-144`) | **No.** Each entry is a record of one specific crawl run (when, how long it took, how many assets, how many 429s, and so on) that cannot be reconstructed after the fact. |
+| Crawl history | `history.json` | `dataservice`, one entry appended per successful publish (`storage.PutHistory`), capped at 104 entries (~2 years of weekly crawls) | `webserver` handler, read directly from storage for the `/stats` history table (`internal/web/handlers.go`) | **No.** Each entry is a record of one specific crawl run (when, how long it took, how many assets, how many 429s, and so on) that cannot be reconstructed after the fact. |
 | Search index | `index.bleve/` | `dataservice`, via `buildIndex` + `storage.PublishIndex` (atomic three-rename swap, see [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md)) | `webserver` cache (`bleve.Open`) | Yes, fully. Rebuildable from `assets.json` + `rates.json` alone, with no need to recrawl itch.io — see [ADR 0008](architecture/decisions/0008-self-healing-index-rebuild.md), which automates exactly this at `dataservice` startup. |
 | Staging index | `index.bleve.staging/` | `dataservice`, while `buildIndex` is running | Nobody directly; it exists only to be renamed into place by `PublishIndex`, or deleted on a failed build | Yes — purely transient. Always safe to delete if found orphaned; the next crawl clears it before building. |
-| Previous index (transient) | `index.bleve.previous/` (only exists mid-publish) | `dataservice`, briefly, as the middle step of `PublishIndex`'s crash-safe three-rename sequence (`internal/storage/storage.go:387-435`) | Nobody; it is either restored (on a failed publish) or deleted (on success) before `PublishIndex` returns | Yes — purely transient and self-cleaning. A copy left behind by a hard crash mid-publish is cleared automatically at the start of the next `PublishIndex` call. |
+| Previous index (transient) | `index.bleve.previous/` (only exists mid-publish) | `dataservice`, briefly, as the middle step of `PublishIndex`'s crash-safe three-rename sequence (`internal/storage/storage.go`) | Nobody; it is either restored (on a failed publish) or deleted (on success) before `PublishIndex` returns | Yes — purely transient and self-cleaning. A copy left behind by a hard crash mid-publish is cleared automatically at the start of the next `PublishIndex` call. |
 
 For what happens if any of these is missing, corrupted, or needs to be restored from a backup, see [disaster-recovery.md](disaster-recovery.md).

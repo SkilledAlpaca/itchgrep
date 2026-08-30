@@ -45,8 +45,8 @@ func HandleRobots(w http.ResponseWriter, r *http.Request) {
 // that spam harvesters read too, and the repository is public anyway.
 //
 // Expires is mandatory and the file is invalid once it passes, so this needs
-// bumping annually - see the README's security section, which says so in the
-// one place someone would look.
+// bumping annually - SECURITY.md's reporting section says so in the one
+// place someone would look.
 const securityTxt = `Contact: https://github.com/SkilledAlpaca/itchgrep/issues
 Expires: 2027-08-10T00:00:00Z
 Preferred-Languages: en

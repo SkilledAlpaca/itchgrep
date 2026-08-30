@@ -22,11 +22,11 @@ A **package** is a directory of `.go` files that share a `package <name>` declar
 - `internal/...` — packages only this module is allowed to import. Go enforces this: no other module could import `itchgrep/internal/cache` even if it wanted to. This is where nearly all of the project's logic lives.
 - `pkg/...` — packages meant to be reusable even outside this module (`pkg/models`, `pkg/money`). In practice nothing outside this repository imports them yet, but the directory name signals the intent.
 
-Every package file opens with a package-level doc comment on the `package` line explaining what the package is for — for example `internal/storage/storage.go:1-26` or `internal/fetcher/fetcher.go:1-7`. Reading that comment first is the fastest way to orient yourself in an unfamiliar package.
+Every package file opens with a package-level doc comment on the `package` line explaining what the package is for — for example `internal/storage/storage.go` or `internal/fetcher/fetcher.go`. Reading that comment first is the fastest way to orient yourself in an unfamiliar package.
 
 ## Imports
 
-An `import` block lists the packages a file uses, standard library first, then this module's own packages, then third-party ones — see the top of `internal/web/handlers.go:10-25`:
+An `import` block lists the packages a file uses, standard library first, then this module's own packages, then third-party ones — see the top of `internal/web/handlers.go`:
 
 ```go
 import (
@@ -54,12 +54,12 @@ An unused import is a compile error in Go — the build refuses to proceed rathe
 A plain function is declared with `func`, a name, typed parameters, and a return type:
 
 ```go
-// internal/cache/cache.go:397-409 (excerpt of the pattern; see file for the
+// internal/cache/cache.go (excerpt of the pattern; see file for the
 // full body)
 func syncDir(dir string) {
 ```
 
-A **method** is a function attached to a type, declared with a receiver in parentheses before the name. This project uses value receivers for small, read-only types and pointer receivers for anything that mutates state or is expensive to copy. Compare a value receiver on `Asset` (`pkg/models/models.go:82-87`):
+A **method** is a function attached to a type, declared with a receiver in parentheses before the name. This project uses value receivers for small, read-only types and pointer receivers for anything that mutates state or is expensive to copy. Compare a value receiver on `Asset` (`pkg/models/models.go`):
 
 ```go
 func (a Asset) RecencyRank() int64 {
@@ -70,7 +70,7 @@ func (a Asset) RecencyRank() int64 {
 }
 ```
 
-against a pointer receiver on `Cache`, which holds a mutex and must never be copied (`internal/cache/cache.go:143-147`):
+against a pointer receiver on `Cache`, which holds a mutex and must never be copied (`internal/cache/cache.go`):
 
 ```go
 func (c *Cache) Rates() money.Rates {
@@ -84,7 +84,7 @@ A function can return more than one value — the idiom `(value, error)` is ever
 
 ## Structs
 
-A `struct` groups named fields into one type. `models.Asset` (`pkg/models/models.go:17-73`) is the central example — it is what one crawled game asset looks like once parsed:
+A `struct` groups named fields into one type. `models.Asset` (`pkg/models/models.go`) is the central example — it is what one crawled game asset looks like once parsed:
 
 ```go
 type Asset struct {
@@ -120,7 +120,7 @@ Checkpoint{
 
 ## Error handling
 
-Go has no exceptions. A function that can fail returns an `error` as its last value, and the caller is expected to check it immediately with `if err != nil`. This project follows that convention everywhere — see `internal/storage/storage.go:172-186`:
+Go has no exceptions. A function that can fail returns an `error` as its last value, and the caller is expected to check it immediately with `if err != nil`. This project follows that convention everywhere — see `internal/storage/storage.go`:
 
 ```go
 func readJSON(name string, v any) (time.Time, error) {
@@ -142,7 +142,7 @@ func readJSON(name string, v any) (time.Time, error) {
 
 Two things worth noticing in that example, because they recur throughout the codebase:
 
-- **Error wrapping.** `fmt.Errorf("os.Stat %s: %w", p, err)` uses the `%w` verb to wrap the original error inside a new one that adds context (which operation failed, and on what path) without discarding the original. A caller further up can still test the underlying cause with `errors.Is` — see `internal/web/handlers.go:534-539`, which distinguishes `cache.ErrNotReady` from every other error this way:
+- **Error wrapping.** `fmt.Errorf("os.Stat %s: %w", p, err)` uses the `%w` verb to wrap the original error inside a new one that adds context (which operation failed, and on what path) without discarding the original. A caller further up can still test the underlying cause with `errors.Is` — see `internal/web/handlers.go`, which distinguishes `cache.ErrNotReady` from every other error this way:
 
   ```go
   func statusFor(err error) int {
@@ -153,13 +153,13 @@ Two things worth noticing in that example, because they recur throughout the cod
   }
   ```
 
-- **An error is just a value.** It can be compared, stored, logged, or ignored like any other value — there is no `try`/`catch` block forcing a particular structure. This project's comments frequently explain *why* a particular error is treated as fatal versus recoverable; read those comments, since the choice is rarely accidental (for example, `internal/storage/storage.go:130-160` explains at length why a directory-sync failure is logged once and swallowed rather than returned).
+- **An error is just a value.** It can be compared, stored, logged, or ignored like any other value — there is no `try`/`catch` block forcing a particular structure. This project's comments frequently explain *why* a particular error is treated as fatal versus recoverable; read those comments, since the choice is rarely accidental (for example, `internal/storage/storage.go` explains at length why a directory-sync failure is logged once and swallowed rather than returned).
 
 ## Goroutines, channels, and atomics
 
 Go's concurrency primitives appear in this codebase only where they solve a real problem the comments explain — not as a general style. Three uses are worth learning by name, because you will meet them again if you touch the crawler or the cache.
 
-**Goroutines** (`go someFunc()`) start a function running concurrently, without blocking the caller. The crawl scheduler is one long-running goroutine, started once at process startup (`cmd/dataservice/main.go:52`):
+**Goroutines** (`go someFunc()`) start a function running concurrently, without blocking the caller. The crawl scheduler is one long-running goroutine, started once at process startup (`cmd/dataservice/main.go`):
 
 ```go
 go scheduleCrawls(config.CrawlInterval())
@@ -181,7 +181,7 @@ wg.Wait()
 
 `sync.WaitGroup` is how the calling code waits for a known number of goroutines to finish: `Add(1)` before starting each one, `Done()` (via `defer`, so it always runs) when it finishes, and `Wait()` blocks until every `Add` has been matched by a `Done`.
 
-**`sync.RWMutex`** protects data that many goroutines read concurrently but only occasionally write. `Cache` uses one because every incoming HTTP request reads the loaded dataset, while a refresh occasionally swaps in a new one (`internal/cache/cache.go:49, 143-147, 385-397`):
+**`sync.RWMutex`** protects data that many goroutines read concurrently but only occasionally write. `Cache` uses one because every incoming HTTP request reads the loaded dataset, while a refresh occasionally swaps in a new one (`internal/cache/cache.go`):
 
 ```go
 type Cache struct {
@@ -196,9 +196,9 @@ func (c *Cache) Rates() money.Rates {
 }
 ```
 
-Many goroutines can hold an `RLock` (read lock) at once; a `Lock` (write lock) — used when `doRefresh` swaps the loaded dataset in — waits for every reader to finish first and excludes new ones until it's done. This is why `doRefresh` does all the slow work (reading files, opening the index) *before* taking the write lock, and holds it only for the instant of assignment (`internal/cache/cache.go:385-397`).
+Many goroutines can hold an `RLock` (read lock) at once; a `Lock` (write lock) — used when `doRefresh` swaps the loaded dataset in — waits for every reader to finish first and excludes new ones until it's done. This is why `doRefresh` does all the slow work (reading files, opening the index) *before* taking the write lock, and holds it only for the instant of assignment (`internal/cache/cache.go`).
 
-**`sync/atomic`** provides variables that many goroutines can read and update at once without a lock at all, for simple counters and single-value flags. `dataservice` uses `atomic.Bool` to guarantee only one crawl ever runs at a time (`cmd/dataservice/main.go:32, 261-264`):
+**`sync/atomic`** provides variables that many goroutines can read and update at once without a lock at all, for simple counters and single-value flags. `dataservice` uses `atomic.Bool` to guarantee only one crawl ever runs at a time (`cmd/dataservice/main.go`):
 
 ```go
 var scrapeInProgress atomic.Bool
@@ -213,13 +213,13 @@ func startScrape(onDone func(error)) bool {
 
 `CompareAndSwap(false, true)` atomically checks "is this currently false?" and, only if so, sets it to `true` — returning whether it succeeded. Two goroutines calling this at the same instant can never both get `true` back, which is exactly the guarantee needed to stop two crawls from writing the same index directory at once.
 
-`atomic.Pointer[T]` is the same idea for a pointer instead of a bool. `activeCrawler` (`cmd/dataservice/main.go:39`) lets a shutdown signal find the currently-running crawler (if any) without a mutex:
+`atomic.Pointer[T]` is the same idea for a pointer instead of a bool. `activeCrawler` (`cmd/dataservice/main.go`) lets a shutdown signal find the currently-running crawler (if any) without a mutex:
 
 ```go
 var activeCrawler atomic.Pointer[crawler]
 ```
 
-**`sync.OnceValue`** builds a value the first time it's asked for and caches it forever after, which is how this project reads certain environment variables exactly once and shares the result everywhere it's needed — for example `TrustProxyHeaders` (`internal/web/ratelimit.go:17-19`):
+**`sync.OnceValue`** builds a value the first time it's asked for and caches it forever after, which is how this project reads certain environment variables exactly once and shares the result everywhere it's needed — for example `TrustProxyHeaders` (`internal/web/ratelimit.go`):
 
 ```go
 var TrustProxyHeaders = sync.OnceValue(func() bool {
@@ -234,7 +234,7 @@ Calling `TrustProxyHeaders()` from anywhere in the program runs the inner functi
 `defer someCall()` schedules `someCall()` to run when the surrounding function returns, no matter which `return` statement it exits through, or even if it panics. It is used throughout this project to pair an acquire with its release — a lock with its unlock, a file open with its close — right next to each other in the source, rather than scattered across every exit path:
 
 ```go
-// internal/cache/cache.go:161-163
+// internal/cache/cache.go
 func (c *Cache) HasRecency() bool {
 	c.cacheLock.RLock()
 	defer c.cacheLock.RUnlock()
@@ -244,9 +244,9 @@ func (c *Cache) HasRecency() bool {
 
 ## Testing convention
 
-Every test file in this repository is named `<subject>_test.go` sitting beside the code it tests, in the same package — Go's `go test` command finds these automatically. Test functions are named `TestSomethingDescriptive` — this codebase favors long, sentence-like test names that state the behavior being verified, for example `TestTagUniverseIsLoadedFromDiscoveryNotFromThisPublishsAssets` (`internal/cache/cache_test.go:41`). Read the name as the specification; the test body proves it.
+Every test file in this repository is named `<subject>_test.go` sitting beside the code it tests, in the same package — Go's `go test` command finds these automatically. Test functions are named `TestSomethingDescriptive` — this codebase favors long, sentence-like test names that state the behavior being verified, for example `TestTagUniverseIsLoadedFromDiscoveryNotFromThisPublishsAssets` (`internal/cache/cache_test.go`). Read the name as the specification; the test body proves it.
 
-Assertions go through `github.com/stretchr/testify`'s `assert` (report a failure and keep running the rest of the test) and `require` (report a failure and stop the test immediately — used when a later step would panic on bad input, like using a value that failed to load). Both appear side by side, for example `internal/cache/cache_test.go:52-56`:
+Assertions go through `github.com/stretchr/testify`'s `assert` (report a failure and keep running the rest of the test) and `require` (report a failure and stop the test immediately — used when a later step would panic on bad input, like using a value that failed to load). Both appear side by side, for example `internal/cache/cache_test.go`:
 
 ```go
 assert.Equal(t, []string{"pixel-art", "unreleased"}, c.TagSlugs(), "sorted, not tags.json's own order")
@@ -254,7 +254,7 @@ assert.True(t, c.HasTag("pixel-art"))
 assert.False(t, c.HasTag("no-such-tag"))
 ```
 
-`t.Helper()` marks a function as a test helper, so a failure inside it is reported at the helper's *caller's* line, not buried inside the helper itself — see `loadedCacheWithTags` (`internal/cache/cache_test.go:17-19`). `t.TempDir()` and `t.Setenv(...)` give a test its own scratch directory and its own environment variable value that Go automatically cleans up when the test ends — used throughout to point `DATA_DIR` at an isolated temporary directory per test, so tests never share or corrupt each other's data.
+`t.Helper()` marks a function as a test helper, so a failure inside it is reported at the helper's *caller's* line, not buried inside the helper itself — see `loadedCacheWithTags` (`internal/cache/cache_test.go`). `t.TempDir()` and `t.Setenv(...)` give a test its own scratch directory and its own environment variable value that Go automatically cleans up when the test ends — used throughout to point `DATA_DIR` at an isolated temporary directory per test, so tests never share or corrupt each other's data.
 
 For what is and is not tested, how to run the suite, and how to add a new test, see [testing.md](../testing.md).
 
@@ -288,7 +288,7 @@ templ generate
 
 The generated `*_templ.go` files are **not committed to git** — `.gitignore` excludes them by pattern (`internal/web/templates/*_templ.go`, see `.gitignore`), and they are regenerated as the first step of every build (see both Dockerfiles, and `go build`/`go test` on a fresh clone — nothing compiles until they exist). If you edit a `.templ` file and forget to re-run `templ generate`, your changes will not appear, because the compiler is still building the stale generated file.
 
-A `.templ` file declares a **component** with the `templ` keyword instead of `func`, and can call another component the way a function calls another function. Here is a real one, `IndexAge` (`internal/web/templates/freshness.go`'s sibling `.templ` file — see also `internal/web/templates/index.templ:9-41`), which shows a value from a plain Go struct spliced into an HTML attribute and a text node:
+A `.templ` file declares a **component** with the `templ` keyword instead of `func`, and can call another component the way a function calls another function. Here is a real one, the `IndexAge` component (`internal/web/templates/freshness.go`'s sibling `.templ` file — see also `internal/web/templates/index.templ`), which shows a value from a plain Go struct spliced into an HTML attribute and a text node:
 
 ```templ
 templ IndexAge(f Freshness, c Coverage) {

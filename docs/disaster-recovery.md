@@ -110,9 +110,9 @@ Follow these steps **on the Unraid host**, in order, assuming you have a backup 
 
 6. **Watch for the automatic index rebuild.** Because the backup deliberately excludes `index.bleve/`, the dataservice will find no usable index on this fresh restore and rebuild one from `assets.json` on its own — no action needed from you. Watch its logs for confirmation:
    ```
-   docker logs -f <dataservice-container-name>
+   docker logs -f itchgrep-dataservice
    ```
-   (Find the exact container name with `docker compose ps` if you're unsure — it isn't pinned the way the webserver's is.) Expect a line like `Published index is unusable (...); rebuilding as scorch from assets.json`, followed within a few minutes by `Self-heal rebuild complete`.
+   Expect a line like `Published index is unusable (...); rebuilding as scorch from assets.json`, followed within a few minutes by `Self-heal rebuild complete`.
 
 7. **Verify.**
    - `curl http://127.0.0.1:62686/healthz` from the host should return `ok`.
@@ -134,13 +134,32 @@ If the Unraid host itself is destroyed or unavailable, and you're rebuilding on 
    ```
    docker run --rm -v /mnt/user/appdata/itchgrep/src:/git alpine/git clone https://github.com/SkilledAlpaca/itchgrep.git /git
    ```
-4. Reconstruct `.env` in the `src/` directory. See [docs/configuration.md](configuration.md) for the complete variable list and their defaults. The values that must be **re-obtained** rather than reasoned out from `.env.example`:
-   - `CLOUDFLARE_TUNNEL_TOKEN` — from the Cloudflare dashboard; see "Credential loss" below for where and how.
-   - `COMPOSE_PROJECT_NAME=itchgrep` — the operator reports this is pinned in production; set it explicitly so container and volume names match what `scripts/export-logs.sh` and this document's commands expect. See [docs/infrastructure.md](infrastructure.md).
-   - `DATA_PATH` and `LOG_EXPORT_DIR` — host paths; set to `/mnt/user/appdata/itchgrep/data` and `/mnt/user/appdata/itchgrep/logs` respectively to match `scripts/bootstrap-host.sh`'s layout.
-   Everything else in `.env.example` ships with a workable default and does not need to be sourced from anywhere external.
+4. Reconstruct `.env` in the `src/` directory, starting from `cp
+   .env.example .env`. See [docs/configuration.md](configuration.md) for the
+   complete variable list and their defaults. The four values a public
+   production deployment needs — matching
+   [docs/deployment.md](deployment.md#write-the-production-env-file)'s
+   table exactly — are:
+   - `CLOUDFLARE_TUNNEL_TOKEN` — **re-obtained**, from the Cloudflare
+     dashboard; see "Credential loss" below for where and how.
+   - `COMPOSE_PROJECT_NAME=itchgrep` — **re-obtained** as a fact, not a
+     secret: the operator reports this is pinned in production, so set it
+     explicitly so container and volume names match what
+     `scripts/export-logs.sh` and this document's commands expect. See
+     [docs/infrastructure.md](infrastructure.md).
+   - `DATA_PATH` — a host path; set to `/mnt/user/appdata/itchgrep/data` to
+     match `scripts/bootstrap-host.sh`'s layout.
+   - `TRUST_PROXY_HEADERS=true` — **not** re-obtained from anywhere, but
+     must be set explicitly: it defaults to `false`, and a rebuilt host
+     behind the tunnel with this left at its default logs and rate-limits
+     every visitor as the single `cloudflared` container address instead of
+     their own. See [docs/configuration.md](configuration.md#trust_proxy_headers).
+   Everything else in `.env.example`, including `TRUSTED_PROXY_CIDRS`, ships
+   with a workable default and does not need to be sourced from anywhere
+   external. `LOG_EXPORT_DIR` is not part of `.env` at all — see step 6
+   below.
 5. Restore the latest data backup into the freshly created `data/` directory — follow the RESTORE procedure above (steps 3–4 specifically: extract, then `chown -R 65532:65532`).
-6. Install the log follower as an Unraid User Scripts entry (`itchgrep-log-export`, "At Startup of Array," background-only) — see [docs/deployment.md](deployment.md) for the exact steps.
+6. Install the log follower as an Unraid User Scripts entry (`itchgrep-log-export`, "At Startup of Array," background-only) — see [docs/deployment.md](deployment.md) for the exact steps. If you want logs written somewhere other than the default `/mnt/user/appdata/itchgrep/logs`, set `LOG_EXPORT_DIR` in that User Scripts entry's own environment, not in `.env` — `scripts/export-logs.sh` runs outside Docker Compose entirely, so `.env` has no effect on it. See [docs/configuration.md](configuration.md#log_export_dir).
 7. Bring up the stack:
    ```
    docker compose --profile public up -d --build

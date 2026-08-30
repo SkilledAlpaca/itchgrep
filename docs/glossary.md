@@ -4,23 +4,23 @@ Terms specific to this project, or standard terms used in a specific way here. A
 
 ### Asset
 
-One item in itch.io's game-asset catalogue — a tileset, a sound pack, a font, and so on (not a full game). Represented in code as `models.Asset` (`pkg/models/models.go:17-73`): title, author, description, price, tags, and a few crawl-derived rankings. The whole collection is what `assets.json` holds; see [Data lifecycle](architecture.md#data-lifecycle).
+One item in itch.io's game-asset catalogue — a tileset, a sound pack, a font, and so on (not a full game). Represented in code as `models.Asset` (`pkg/models/models.go`): title, author, description, price, tags, and a few crawl-derived rankings. The whole collection is what `assets.json` holds; see [Data lifecycle](architecture.md#data-lifecycle).
 
 ### AuthorKey
 
-The exact-match form of an asset's author name, folded to lowercase with whitespace collapsed (`models.AuthorKey`, `pkg/models/models.go:255-260`). Exists because the `?author=` filter has to derive the same key from a URL parameter that the index derived when the document was built — two subtly different foldings would mean an author link that matches nothing.
+The exact-match form of an asset's author name, folded to lowercase with whitespace collapsed (`models.AuthorKey`, `pkg/models/models.go`). Exists because the `?author=` filter has to derive the same key from a URL parameter that the index derived when the document was built — two subtly different foldings would mean an author link that matches nothing.
 
 ### Checkpoint
 
-A partially-complete crawl's progress, written to `checkpoint.json` periodically during a crawl (`storage.Checkpoint`, `internal/storage/storage.go:325-337`) so a run killed part way through can resume instead of restarting from zero. Deleted automatically once a crawl publishes successfully. See `CheckpointVersion` (`internal/storage/storage.go:339-351`) for why a checkpoint from an older build of the code is deliberately discarded rather than resumed.
+A partially-complete crawl's progress, written to `checkpoint.json` periodically during a crawl (`storage.Checkpoint`, `internal/storage/storage.go`) so a run killed part way through can resume instead of restarting from zero. Deleted automatically once a crawl publishes successfully. See `CheckpointVersion` (`internal/storage/storage.go`) for why a checkpoint from an older build of the code is deliberately discarded rather than resumed.
 
 ### Coverage
 
-How much of itch.io's reported asset catalogue a crawl actually collected, expressed as a fraction (`crawler.coverage`, `cmd/dataservice/main.go:905-912`): assets collected divided by itch.io's own reported total. Shown to visitors as the "X% of catalogue indexable" line — see `templates.Coverage` (`internal/web/templates/coverage.go`).
+How much of itch.io's reported asset catalogue a crawl actually collected, expressed as a fraction (`crawler.coverage`, `cmd/dataservice/main.go`): assets collected divided by itch.io's own reported total. Shown to visitors as the "X% of catalogue indexable" line — see `templates.Coverage` (`internal/web/templates/coverage.go`).
 
 ### Coverage floor
 
-The minimum coverage a crawl must reach before its results are allowed to replace the currently published index (`COVERAGE_FLOOR`, checked by `checkCoverageFloor`, `cmd/dataservice/main.go:453-458`). Exists so a stalled or truncated run cannot silently replace a good index with a worse one — see [ADR 0003](architecture/decisions/0003-coverage-floor-and-backoff.md).
+The minimum coverage a crawl must reach before its results are allowed to replace the currently published index (`COVERAGE_FLOOR`, checked by `checkCoverageFloor`, `cmd/dataservice/main.go`). Exists so a stalled or truncated run cannot silently replace a good index with a worse one — see [ADR 0003](architecture/decisions/0003-coverage-floor-and-backoff.md).
 
 ### Distroless / nonroot
 
@@ -32,19 +32,19 @@ A bleve concept: a column-oriented copy of a field's values, stored alongside th
 
 ### Epoch (rate limiter)
 
-A generation counter inside the fetcher's shared rate limiter (`rateLimiter.epoch`, `internal/fetcher/fetcher.go:107-119`) that identifies the current "refusal episode." Every outbound request is tagged with the epoch it was issued under; only a 429 response reported under the *current* epoch is allowed to open a new fleet-wide pause. Without this, several requests already in flight when itch.io starts refusing would each report their own 429 moments apart, and each one would re-trigger a fresh pause — see [ADR 0004](architecture/decisions/0004-fleet-wide-429-pause-and-epoch.md).
+A generation counter inside the fetcher's shared rate limiter (`rateLimiter.epoch`, `internal/fetcher/fetcher.go`) that identifies the current "refusal episode." Every outbound request is tagged with the epoch it was issued under; only a 429 response reported under the *current* epoch is allowed to open a new fleet-wide pause. Without this, several requests already in flight when itch.io starts refusing would each report their own 429 moments apart, and each one would re-trigger a fresh pause — see [ADR 0004](architecture/decisions/0004-fleet-wide-429-pause-and-epoch.md).
 
 ### Facet
 
-A bleve query feature that counts how many matching documents carry each distinct value of a field — used here for the sidebar's tag counts (`bleve.NewFacetRequest("TagSlugs", maxFacetTags)`, `internal/cache/search.go:239`). Distinct from `tagUniverse` (below): a facet only ever counts *the current search's matches*.
+A bleve query feature that counts how many matching documents carry each distinct value of a field — used here for the sidebar's tag counts (`bleve.NewFacetRequest("TagSlugs", maxFacetTags)`, `internal/cache/search.go`). Distinct from `tagUniverse` (below): a facet only ever counts *the current search's matches*.
 
 ### FirstSeen
 
-The moment an asset's game ID first appeared in a published `assets.json`, carried forward publish over publish once set (`Asset.FirstSeen`, `pkg/models/models.go:63-73`; the carry-forward logic is `stampFirstSeen`, `cmd/dataservice/main.go:558-578`). Zero means unknown — either the asset predates this field, or it is genuinely new and the current crawl hasn't published yet. This is the field the `/new` page and the Atom feed (`/feed`) order by, and it is the one piece of history that a fresh crawl *cannot* reconstruct if `assets.json` is lost — see [Data lifecycle](architecture.md#data-lifecycle).
+The moment an asset's game ID first appeared in a published `assets.json`, carried forward publish over publish once set (`Asset.FirstSeen`, `pkg/models/models.go`; the carry-forward logic is `stampFirstSeen`, `cmd/dataservice/main.go`). Zero means unknown — either the asset predates this field, or it is genuinely new and the current crawl hasn't published yet. This is the field the `/new` page and the Atom feed (`/feed`) order by, and it is the one piece of history that a fresh crawl *cannot* reconstruct if `assets.json` is lost — see [Data lifecycle](architecture.md#data-lifecycle).
 
 ### Fleet-wide pause
 
-When itch.io returns a 429 (Too Many Requests), the fetcher's rate limiter pauses *every* concurrent worker, not just the one that received the 429 (`rateLimiter.pause`, `internal/fetcher/fetcher.go:155-178`). A crawl runs several requests concurrently against one shared limiter; a plain per-request backoff would just hand a paused worker's slot to another worker, so the aggregate request rate offered to itch.io would never actually drop. See [ADR 0004](architecture/decisions/0004-fleet-wide-429-pause-and-epoch.md).
+When itch.io returns a 429 (Too Many Requests), the fetcher's rate limiter pauses *every* concurrent worker, not just the one that received the 429 (`rateLimiter.pause`, `internal/fetcher/fetcher.go`). A crawl runs several requests concurrently against one shared limiter; a plain per-request backoff would just hand a paused worker's slot to another worker, so the aggregate request rate offered to itch.io would never actually drop. See [ADR 0004](architecture/decisions/0004-fleet-wide-429-pause-and-epoch.md).
 
 ### Follower (the), export-logs
 
@@ -52,59 +52,59 @@ When itch.io returns a 429 (Too Many Requests), the fetcher's rate limiter pause
 
 ### IndexedAsset
 
-The smaller, search-optimized shape an `Asset` is converted to before being written into the bleve index (`models.IndexedAsset`, `pkg/models/models.go:211-249`, built by `models.NewIndexedAsset`). It duplicates a few fields of `Asset` deliberately — for example `Tags` (analyzed as prose) alongside `TagSlugs` (indexed as exact keywords) — because search and exact filtering need the same underlying data analyzed two different ways. See [ADR 0001](architecture/decisions/0001-explicit-bleve-scorch-mapping.md).
+The smaller, search-optimized shape an `Asset` is converted to before being written into the bleve index (`models.IndexedAsset`, `pkg/models/models.go`, built by `models.NewIndexedAsset`). It duplicates a few fields of `Asset` deliberately — for example `Tags` (analyzed as prose) alongside `TagSlugs` (indexed as exact keywords) — because search and exact filtering need the same underlying data analyzed two different ways. See [ADR 0001](architecture/decisions/0001-explicit-bleve-scorch-mapping.md).
 
 ### InvPopularity
 
-"Inverse popularity": the page number an asset was found on in itch.io's own popularity-ordered browse view (`Asset.InvPopularity`). Smaller means more popular, hence "inverse" — it is a rank, not a score. Used as the default sort order and as the tiebreak for every other sort order (`sortOrder`, `internal/cache/search.go:493-521`).
+"Inverse popularity": the page number an asset was found on in itch.io's own popularity-ordered browse view (`Asset.InvPopularity`). Smaller means more popular, hence "inverse" — it is a rank, not a score. Used as the default sort order and as the tiebreak for every other sort order (`sortOrder`, `internal/cache/search.go`).
 
 ### InvRecency / RecencyRank
 
-`InvRecency` (`Asset.InvRecency`, `pkg/models/models.go:50-61`) is the page number an asset appeared on in itch.io's *newest-first* view — a rank by recency, the same way `InvPopularity` is a rank by popularity. Zero means "never seen in that view" (true for most of the catalogue, since the view is capped at itch.io's 200-page limit). `RecencyRank()` (`pkg/models/models.go:82-87`) is the version actually indexed and sorted by: it maps the "unknown" zero to a value larger than any real rank, so unranked assets sort last instead of appearing to be the newest thing in the catalogue.
+`InvRecency` (`Asset.InvRecency`, `pkg/models/models.go`) is the page number an asset appeared on in itch.io's *newest-first* view — a rank by recency, the same way `InvPopularity` is a rank by popularity. Zero means "never seen in that view" (true for most of the catalogue, since the view is capped at itch.io's 200-page limit). `RecencyRank()` (`pkg/models/models.go`) is the version actually indexed and sorted by: it maps the "unknown" zero to a value larger than any real rank, so unranked assets sort last instead of appearing to be the newest thing in the catalogue.
 
 ### PageInFull
 
-A flag on a crawl `Slice` (`fetcher.Slice.PageInFull`, `internal/fetcher/planner.go:109-132`) marking a view that must be paged all the way to its end rather than abandoned once its yield of new assets drops off. Set for views that are known to be exhaustible and worth exhausting — a small tag's whole view, or a filter applied to an oversized tag. See [ADR 0003](architecture/decisions/0003-coverage-floor-and-backoff.md) and the planner's own extensive comments (`internal/fetcher/planner.go:246-256`).
+A flag on a crawl `Slice` (`fetcher.Slice.PageInFull`, `internal/fetcher/planner.go`) marking a view that must be paged all the way to its end rather than abandoned once its yield of new assets drops off. Set for views that are known to be exhaustible and worth exhausting — a small tag's whole view, or a filter applied to an oversized tag. See [ADR 0003](architecture/decisions/0003-coverage-floor-and-backoff.md) and the planner's own extensive comments (`internal/fetcher/planner.go`).
 
 ### Probe
 
-A request shaped like a commodity vulnerability scanner's — `/wp-admin`, `/.env`, anything ending `.php`, and similar (`isProbeSuffixes`/`isProbePrefixes`, `internal/web/probes.go:28-42`). `ProbeFilter` recognizes these and answers with a bare 404 before the request reaches routing, the access log, or the rate limiter, logging it separately as a `"kind":"probe"` line instead. See [ADR 0007](architecture/decisions/0007-privacy-posture.md) for what is and isn't logged about a probe.
+A request shaped like a commodity vulnerability scanner's — `/wp-admin`, `/.env`, anything ending `.php`, and similar (`isProbeSuffixes`/`isProbePrefixes`, `internal/web/probes.go`). `ProbeFilter` recognizes these and answers with a bare 404 before the request reaches routing, the access log, or the rate limiter, logging it separately as a `"kind":"probe"` line instead. See [ADR 0007](architecture/decisions/0007-privacy-posture.md) for what is and isn't logged about a probe.
 
 ### Publish
 
-The moment a freshly built index and a fresh `assets.json` become the dataset the webserver serves. Two separate writes, deliberately in a fixed order — the index first, then `assets.json` — so the file the webserver watches for freshness never goes stale relative to the index it names. See `publishCrawl` (`cmd/dataservice/main.go:460-505`) and [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md).
+The moment a freshly built index and a fresh `assets.json` become the dataset the webserver serves. Two separate writes, deliberately in a fixed order — the index first, then `assets.json` — so the file the webserver watches for freshness never goes stale relative to the index it names. See `publishCrawl` (`cmd/dataservice/main.go`) and [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md).
 
 ### Root view / newest root view
 
-The **root view** is the unfiltered, untagged, unsorted itch.io browse view (`Slice.IsRoot`, `internal/fetcher/planner.go:198-207`) — the only view whose page numbers are a genuine, catalogue-wide popularity rank, which is why it is always crawled first and never abandoned early. The **newest root view** is the same but sorted newest-first (`Slice.IsNewestRoot`, `internal/fetcher/planner.go:209-218`) — the only source of a recency rank (`InvRecency`), for the same reason: page numbers only mean the same thing across different slices when neither slice narrows the catalogue by tag.
+The **root view** is the unfiltered, untagged, unsorted itch.io browse view (`Slice.IsRoot`, `internal/fetcher/planner.go`) — the only view whose page numbers are a genuine, catalogue-wide popularity rank, which is why it is always crawled first and never abandoned early. The **newest root view** is the same but sorted newest-first (`Slice.IsNewestRoot`, `internal/fetcher/planner.go`) — the only source of a recency rank (`InvRecency`), for the same reason: page numbers only mean the same thing across different slices when neither slice narrows the catalogue by tag.
 
 ### Scorch
 
-The name of bleve's default (and, as of bleve v2, only writable) on-disk index storage format. This project relies on that default rather than pinning it explicitly (`buildIndex`, `cmd/dataservice/selfheal.go:169-174`). Contrast with [upsidedown](#upsidedown).
+The name of bleve's default (and, as of bleve v2, only writable) on-disk index storage format. This project relies on that default rather than pinning it explicitly (`buildIndex`, `cmd/dataservice/selfheal.go`). Contrast with [upsidedown](#upsidedown).
 
 ### Self-heal
 
-`dataservice`'s startup routine (`selfHealIndexFormat`, `cmd/dataservice/selfheal.go:32-51`) that detects an index this build cannot open — either the legacy [upsidedown](#upsidedown) format or a corrupted directory — and rebuilds it from the already-published `assets.json` and `rates.json`, in minutes, without waiting for or triggering a full recrawl. See [ADR 0008](architecture/decisions/0008-self-healing-index-rebuild.md).
+`dataservice`'s startup routine (`selfHealIndexFormat`, `cmd/dataservice/selfheal.go`) that detects an index this build cannot open — either the legacy [upsidedown](#upsidedown) format or a corrupted directory — and rebuilds it from the already-published `assets.json` and `rates.json`, in minutes, without waiting for or triggering a full recrawl. See [ADR 0008](architecture/decisions/0008-self-healing-index-rebuild.md).
 
 ### Slice
 
-One browsable view of the catalogue that a crawl can page through — a plain URL like `/game-assets/tag-pixel-art` or `/game-assets/newest` (`fetcher.Slice`, `internal/fetcher/planner.go:85-133`). A full crawl is the union of many slices, deduplicated by game ID, because itch.io caps any single view at 200 pages (`fetcher.MaxPagesPerView`) and the catalogue is far larger than that. See `PlanSlices` (`internal/fetcher/planner.go:256-375`) for how the set of slices to crawl is chosen.
+One browsable view of the catalogue that a crawl can page through — a plain URL like `/game-assets/tag-pixel-art` or `/game-assets/newest` (`fetcher.Slice`, `internal/fetcher/planner.go`). A full crawl is the union of many slices, deduplicated by game ID, because itch.io caps any single view at 200 pages (`fetcher.MaxPagesPerView`) and the catalogue is far larger than that. See `PlanSlices` (`internal/fetcher/planner.go`) for how the set of slices to crawl is chosen.
 
 ### Smoke test (`SCRAPE_MAX_PAGES`)
 
-Setting the `SCRAPE_MAX_PAGES` environment variable caps the total pages a crawl fetches, turning a ~6 hour full crawl into a few minutes that still exercise every stage of the pipeline — tag discovery (shrunk too, unless `MAX_TAGS` is set explicitly), fetching, indexing, and publishing (`loadCrawlConfig`, `cmd/dataservice/main.go:631-653`). It deliberately disarms `COVERAGE_FLOOR` to 0, since a smoke-tested run is expected to cover only a small fraction of the catalogue. Never set this in production — the resulting index is a small, arbitrary subset of the real catalogue.
+Setting the `SCRAPE_MAX_PAGES` environment variable caps the total pages a crawl fetches, turning a ~6 hour full crawl into a few minutes that still exercise every stage of the pipeline — tag discovery (shrunk too, unless `MAX_TAGS` is set explicitly), fetching, indexing, and publishing (`loadCrawlConfig`, `cmd/dataservice/main.go`). It deliberately disarms `COVERAGE_FLOOR` to 0, since a smoke-tested run is expected to cover only a small fraction of the catalogue. Never set this in production — the resulting index is a small, arbitrary subset of the real catalogue.
 
 ### Staging index
 
-The bleve index directory a crawl builds into while it's in progress (`storage.StagingIndexPath`, `internal/storage/storage.go:82-85`), kept in the same directory as the published index specifically so publishing can be a single atomic rename rather than a slower cross-filesystem copy. See [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md).
+The bleve index directory a crawl builds into while it's in progress (`storage.StagingIndexPath`, `internal/storage/storage.go`), kept in the same directory as the published index specifically so publishing can be a single atomic rename rather than a slower cross-filesystem copy. See [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md).
 
 ### Tag universe
 
-The full set of asset tags itch.io has, discovered by crawling itch.io's own tag directory (`fetcher.DiscoverTags`, `internal/fetcher/tags.go`) and cached in `tags.json`. Distinct from the *tag facet* the sidebar shows: the tag universe is every tag that exists, independent of whether the currently published dataset happens to have a matching asset for it (`Cache.tagUniverse`, `internal/cache/cache.go:79-86`) — it's what backs `/tag/{slug}` page validation and the sitemap, so a tag with zero matching assets today still gets a real page instead of a 404.
+The full set of asset tags itch.io has, discovered by crawling itch.io's own tag directory (`fetcher.DiscoverTags`, `internal/fetcher/tags.go`) and cached in `tags.json`. Distinct from the *tag facet* the sidebar shows: the tag universe is every tag that exists, independent of whether the currently published dataset happens to have a matching asset for it (`Cache.tagUniverse`, `internal/cache/cache.go`) — it's what backs `/tag/{slug}` page validation and the sitemap, so a tag with zero matching assets today still gets a real page instead of a 404.
 
 ### Term vectors
 
-A bleve field option (`IncludeTermVectors`) that records not just *which* terms are in a field but *where* — the positions needed to answer a phrase query ("this exact run of words, in this order"). Enabled only on the four fields that are ever phrase-searched (`Title`, `Description`, `Tags`, `Author`) — see `internal/storage/index.go:58-69, 101-111` and [ADR 0001](architecture/decisions/0001-explicit-bleve-scorch-mapping.md).
+A bleve field option (`IncludeTermVectors`) that records not just *which* terms are in a field but *where* — the positions needed to answer a phrase query ("this exact run of words, in this order"). Enabled only on the four fields that are ever phrase-searched (`Title`, `Description`, `Tags`, `Author`) — see `internal/storage/index.go` and [ADR 0001](architecture/decisions/0001-explicit-bleve-scorch-mapping.md).
 
 ### Token bucket
 

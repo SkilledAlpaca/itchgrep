@@ -1,6 +1,11 @@
 # Testing
 
-As of this branch, the suite is **418 tests across 12 packages**, all passing (`go test ./... -count=1`). This page explains what that suite actually covers, what it honestly does not, how to run it, how to add to it, and how to read a failure.
+As of this branch, the suite is **443 tests across 10 packages** (of the 12
+packages in this module, `internal/logging` and `pkg/models` have no test
+files — see "What is not tested, and why" below), all passing (`go test
+./... -count=1`). This page explains what that suite actually covers, what
+it honestly does not, how to run it, how to add to it, and how to read a
+failure.
 
 ## What is tested
 
@@ -23,6 +28,7 @@ Be honest with yourself about this list before changing any of it — a passing 
 - **`fetcher.GetAssetCount`.** Unlike `FetchAssetPage` and `DiscoverTags`, nothing overrides `assetCountURL` to point it at a fake server — there is no test for this function at all. It is a small function (fetch one page, regex out a number), but it is real, live-network code with zero coverage.
 - **`cmd/dataservice/rates.go`'s `fetchECBRates`.** The real HTTP call to the European Central Bank is not tested; only the resulting XML *parsing* is, indirectly, via `pkg/money`'s own parse tests. `currentRates`'s fallback chain (live fetch → stored snapshot → baked-in table) is exercised in comments and by inspection, not by a test that forces the live fetch to fail.
 - **`internal/logging`.** This package has no test file at all. It is a thin wrapper around the standard library's `log` package, which lowers the risk, but a change here is genuinely unverified by the suite.
+- **`pkg/models`.** Also no test file. It's data-shape definitions (`Asset`, `IndexedAsset`, and so on) with a handful of small derived-field methods (`AuthorKey`, `RecencyRank`) that are exercised indirectly through the packages that call them (`internal/storage`, `internal/cache`) rather than directly.
 - **Real container behavior** — the Dockerfiles, the `nonroot` user's filesystem permissions, `docker-compose.yml`'s health checks and restart policies. These are infrastructure, not Go code, and are outside what `go test` can reach; see [deployment.md](deployment.md) for how that's verified instead.
 
 If you're about to touch any of the above, treat it as changing untested code: read it slowly, and consider whether the change is small enough to reason about by hand or whether it's worth writing the test that's missing first.
@@ -64,7 +70,7 @@ Follow the convention every existing test file already uses (see [languages/go.m
 1. Put it in `<subject>_test.go`, in the same directory and `package` as the code it tests.
 2. Name it `TestSomethingDescriptive` — state the behavior being verified in the name itself, long if it needs to be. A reader should be able to understand what's guaranteed just from `go test -v` output, without opening the file.
 3. Use `require` (from `testify`) for a precondition the rest of the test can't proceed without (a fixture that failed to load, a nil that would panic on the next line); use `assert` for the actual behavior being checked, so one failing assertion doesn't hide a second one right after it.
-4. If the test needs the filesystem, use `t.TempDir()` and, if the code under test reads `DATA_DIR`, `t.Setenv("DATA_DIR", t.TempDir())` — see `internal/cache/cache_test.go:17-19` for the pattern. Go cleans both up automatically when the test ends, including on failure.
+4. If the test needs the filesystem, use `t.TempDir()` and, if the code under test reads `DATA_DIR`, `t.Setenv("DATA_DIR", t.TempDir())` — see `internal/cache/cache_test.go` for the pattern. Go cleans both up automatically when the test ends, including on failure.
 5. If the test needs to fake an HTTP dependency, point the relevant package-level `var` (`baseURL`, `assetCountURL`, `tagDirectoryURL`, `browseSitemapURL` — all in `internal/fetcher`) at an `httptest.Server`, and restore it with `t.Cleanup` — see `internal/fetcher/tags_test.go` for the pattern.
 6. Run the new test on its own first (`go test ./path/... -run TestYourNewTest -v`) to confirm it actually exercises what you think it does before running the full suite.
 

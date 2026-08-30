@@ -14,8 +14,9 @@ Production facts referenced throughout this document:
 
 For the system design behind these choices, see
 [docs/architecture.md](architecture.md). For the Cloudflare-side setup (DNS,
-the tunnel itself, WAF rules), see [docs/infrastructure.md](infrastructure.md) —
-this document only covers what runs the containers.
+[creating the tunnel itself](infrastructure.md#creating-the-tunnel), WAF
+rules), see [docs/infrastructure.md](infrastructure.md) — this document only
+covers what runs the containers.
 
 ## Prerequisites
 
@@ -27,34 +28,29 @@ required because Git refuses to operate on a repository it doesn't own by
 default, and the repository's on-disk owner (whatever user created it) will
 rarely match the user Git runs as inside that container.
 
-### Bootstrap the three host directories
+### Create the base and checkout directories by hand
 
-COMMAND: `BASE_PATH=/mnt/user/appdata/itchgrep scripts/bootstrap-host.sh`
-(or, from an existing checkout on the host, `scripts/bootstrap-host.sh` alone
-— it defaults `BASE_PATH` to `/mnt/user/appdata/itchgrep` already)
-Purpose: Creates `src/`, `logs/`, and `data/` under `BASE_PATH`, the
-directories every other step in this document assumes already exist.
-When to use: Once, before the very first deploy on a new host. Safe to
-re-run any time after that (each step is a plain `mkdir -p`) — for example,
-after restoring an Unraid appdata backup, to double-check a manual setup.
+`scripts/bootstrap-host.sh` lives inside this repository, so it isn't
+available yet on a bare host — the checkout has to exist before it can be
+run. Create just enough by hand to clone into:
+
+COMMAND:
+```
+mkdir -p /mnt/user/appdata/itchgrep
+mkdir -p /mnt/user/appdata/itchgrep/src
+```
+Purpose: Creates the base directory and the empty `src/` the clone step
+below populates.
+When to use: Once, before the very first deploy on a new host.
 Prerequisites: Shell access to the Unraid host (its own **Terminal** icon
 in the web UI, or SSH).
-Expected result:
-```
-bootstrap-host: created: /mnt/user/appdata/itchgrep/src
-bootstrap-host: created: /mnt/user/appdata/itchgrep/logs
-bootstrap-host: created: /mnt/user/appdata/itchgrep/data
-bootstrap-host: done
-```
-On a re-run, each line instead reads `already exists: ...`.
+Expected result: No output; `ls /mnt/user/appdata/itchgrep` shows an empty
+`src/` directory.
 Common failures: `Permission denied` means the shell you're running this
 from doesn't have write access to `/mnt/user/appdata` — check you're on the
 Unraid host itself, not a remote machine.
-How to undo or recover: `rm -r` any of the three directories to remove
-them; nothing else in this script is destructive.
-
-This script deliberately does **not** set ownership on `data/` — see the
-next step for why that's separate.
+How to undo or recover: `rm -r /mnt/user/appdata/itchgrep` to remove
+everything created so far and start over; nothing else has been created yet.
 
 ### Clone the repository into `src/`
 
@@ -63,7 +59,7 @@ Purpose: Populates the empty `src/` directory with the repository, using a
 throwaway container instead of a host-installed `git`.
 When to use: Once, on first deploy only — every deploy after this one uses
 `scripts/update.sh`'s pull instead (see below).
-Prerequisites: `src/` exists and is empty (from the bootstrap step above);
+Prerequisites: `src/` exists and is empty (from the step above);
 Docker installed on the host (Unraid ships it).
 Expected result: A `Cloning into '.'...` progress message, then the prompt
 returns with no error; `ls /mnt/user/appdata/itchgrep/src` shows the
@@ -73,6 +69,38 @@ empty directory` means `src/` already has something in it — either a
 previous partial clone (delete its contents and retry) or you're re-running
 this on an already-deployed host (use the update flow instead).
 How to undo or recover: Delete everything under `src/` and retry.
+
+### Bootstrap the remaining host directories
+
+COMMAND: `BASE_PATH=/mnt/user/appdata/itchgrep scripts/bootstrap-host.sh`,
+run from the freshly cloned checkout (or `scripts/bootstrap-host.sh` alone —
+it defaults `BASE_PATH` to `/mnt/user/appdata/itchgrep` already)
+Purpose: Creates `logs/` and `data/` under `BASE_PATH` (`src/` already
+exists from the step above, so it's reported as already existing rather than
+created again), and — when run as root, which the Unraid Terminal is —
+`chown`s `data/` to `65532:65532` so the container images (which run as that
+uid) can write to it.
+When to use: Once, right after the clone, before the first `docker compose
+up`. Idempotent — safe to re-run any time after that too (for example, after
+restoring an Unraid appdata backup, or to double-check a manual setup).
+Prerequisites: The clone above completed, so the script exists at
+`/mnt/user/appdata/itchgrep/src/scripts/bootstrap-host.sh`.
+Expected result:
+```
+bootstrap-host: already exists: /mnt/user/appdata/itchgrep/src
+bootstrap-host: created: /mnt/user/appdata/itchgrep/logs
+bootstrap-host: created: /mnt/user/appdata/itchgrep/data
+bootstrap-host: chowned /mnt/user/appdata/itchgrep/data to 65532:65532
+bootstrap-host: done
+```
+On a re-run, the first three lines instead read `already exists: ...`.
+Common failures: `Permission denied` means the shell you're running this
+from doesn't have write access to `/mnt/user/appdata` — check you're on the
+Unraid host itself, not a remote machine. A `WARNING: not running as root,
+skipped chown` line means the script wasn't run as root — see "The one-time
+ownership fix for `data/`" below for the manual command it would have run.
+How to undo or recover: `rm -r` `logs/` or `data/` to remove them; the
+`chown` is always safe to re-run.
 
 ### Write the production `.env` file
 
@@ -84,7 +112,7 @@ public production deployment needs:
 | --- | --- | --- |
 | `COMPOSE_PROJECT_NAME` | `itchgrep` | Pins the Compose project name. Without it, running `docker compose` from a directory not literally named `itchgrep` (this checkout lives in `src/`) creates a differently named, independent stack instead of managing the existing one — see [docs/troubleshooting.md](troubleshooting.md) for exactly what that failure looks like. |
 | `DATA_PATH` | `/mnt/user/appdata/itchgrep/data` | Points the shared data volume at the host directory `bootstrap-host.sh` created, instead of an anonymous Docker-managed volume. |
-| `CLOUDFLARE_TUNNEL_TOKEN` | *(secret — from the Cloudflare Zero Trust dashboard)* | Required only if deploying with `--profile public` (see below); without it `cloudflared` starts and immediately exits. |
+| `CLOUDFLARE_TUNNEL_TOKEN` | *(secret — see [Creating the tunnel](infrastructure.md#creating-the-tunnel))* | Required only if deploying with `--profile public` (see below); without it `cloudflared` starts and immediately exits. |
 | `TRUST_PROXY_HEADERS` | `true` | Required alongside the tunnel token — tells the webserver to read the visitor's real address from Cloudflare's headers instead of treating every request as coming from the tunnel container. |
 
 Every variable here — its exact format, default, and what happens if it's
@@ -106,14 +134,23 @@ and `Dockerfile.dataservice`). Docker only sets ownership automatically for
 a *named* Docker volume; a bind-mounted host path like `DATA_PATH` above is
 never `chown`'d for you.
 
+**On a first deploy that followed the steps above, this is already done** —
+`scripts/bootstrap-host.sh` runs this same command automatically when it's
+run as root (the normal case on Unraid). The command below is what it ran;
+keep it for two cases: `bootstrap-host.sh` warned it wasn't running as root
+and skipped the step, or you're upgrading an older deployment that predates
+the switch to this non-root image and never had `bootstrap-host.sh` chown
+its `data/` at all.
+
 COMMAND: `chown -R 65532:65532 /mnt/user/appdata/itchgrep/data`
 Purpose: Gives the container process permission to create and open
 `index.bleve/`, `assets.json`, and everything else it writes to `data/`.
 When to use: Once, before the very first `docker compose up` against this
-`DATA_PATH`. Also required again after upgrading an older deployment that
-predates the switch to this non-root image — check
-[docs/troubleshooting.md](troubleshooting.md) if a previously working
-deployment suddenly can't write to `/data` after an update.
+`DATA_PATH`, if `bootstrap-host.sh` didn't already do it. Also required
+again after upgrading an older deployment that predates the switch to this
+non-root image — check [docs/troubleshooting.md](troubleshooting.md) if a
+previously working deployment suddenly can't write to `/data` after an
+update.
 Prerequisites: The `data/` directory exists (from the bootstrap step).
 Expected result: No output; `ls -ln /mnt/user/appdata/itchgrep/data` shows
 `65532 65532` as the owner and group of its contents (once the containers
@@ -176,14 +213,18 @@ update: rebuilding and restarting (docker compose --profile public up -d --build
 update: waiting up to 60s for itchgrep-webserver to report healthy...
 update: itchgrep-webserver is healthy
 update: running image creation timestamps:
-  /itchgrep-webserver: image created 2026-...
-  /itchgrep-dataservice-1: image created 2026-...
+  itchgrep-webserver: image created 2026-...
+  itchgrep-dataservice: image created 2026-...
+  itchgrep-cloudflared-1: image created 2026-...
 update: done
 ```
-The trailing image-creation timestamps are worth actually reading, not just
-glancing past — they're how you confirm the stack is running images that
-were *just built*, not stale ones left over from a build that silently
-no-opped.
+Three lines, not two — the loop iterates every container `docker compose
+--profile public ps -q` returns, which includes `cloudflared` alongside the
+two application services. No leading slash on any of the names: the script
+strips it (`sed 's#^/##'`) before printing. The trailing image-creation
+timestamps are worth actually reading, not just glancing past — they're how
+you confirm the stack is running images that were *just built*, not stale
+ones left over from a build that silently no-opped.
 Common failures: If the webserver doesn't report healthy within 60 seconds,
 the script exits non-zero and prints rollback guidance directly to your
 terminal (find the previous commit, check it out via the same `alpine/git`
@@ -300,12 +341,12 @@ change, rolling back the code alone won't fix it; see
 
 ## Logs
 
-The webserver's only log sink is its own stdout, captured by Docker with a
+Both containers' only log sink is their own stdout, captured by Docker with a
 10 MB × 3 rotation cap per service (see the `x-logging` block in
 `docker-compose.yml`) — a safety valve against unbounded growth, not a
 retention policy. `scripts/export-logs.sh` is what actually retains it:
-a host-side script that follows the container's log stream continuously and
-appends it to durable, rotated files. See
+a host-side script that follows both containers' log streams continuously
+and appends them to durable, rotated files. See
 [docs/observability.md](observability.md) for the record formats and how to
 query them; this section only covers installing the follower itself.
 
@@ -313,11 +354,29 @@ query them; this section only covers installing the follower itself.
 
 The follower needs to run continuously, starting every time the Unraid
 array starts (containers can restart or rebuild; the follower needs to be
-there to catch the gap). Unraid's **User Scripts** plugin is what runs it:
+there to catch the gap), and it follows **both** containers — webserver
+into `access.jsonl`/`security.jsonl`/`app.log`, dataservice into
+`crawler.log` — reconnecting on its own after either one restarts. Unraid's
+**User Scripts** plugin is what runs it:
 
 1. In the Unraid web UI, go to **Plugins → User Scripts**.
-2. Add a new script named `itchgrep-log-export`, pointing at
-   `/mnt/user/appdata/itchgrep/src/scripts/export-logs.sh`.
+2. Add a new script named `itchgrep-log-export`. A User Scripts entry is
+   script *content*, typed or pasted into the plugin's own editor — there's
+   no field to point it at a file path on disk. Paste exactly this two-line
+   wrapper as the script's contents:
+   ```sh
+   #!/bin/bash
+   exec /mnt/user/appdata/itchgrep/src/scripts/export-logs.sh
+   ```
+   The `exec` matters, not just a plain call: it replaces the wrapper
+   process with `export-logs.sh` itself, so that script's own `$0` is the
+   real checkout path. `export-logs.sh` derives `SCRIPT_DIR` from `$0` to
+   find `itchgrep-logrotate.conf` beside itself and (re)install it to
+   `/etc/logrotate.d/itchgrep` — pasting the script's full contents into
+   User Scripts directly (instead of this wrapper) would leave `$0` pointing
+   at User Scripts' own copy instead, and the log follower would keep
+   working while the logrotate reinstall silently failed to find its
+   template, quietly disabling the 30-day retention with no visible error.
 3. Set its schedule to **At Startup of Array**, and enable the **Run in
    Background** option — the script runs an infinite follow loop and never
    exits on its own, so without this the array's startup sequence would
@@ -325,28 +384,27 @@ there to catch the gap). Unraid's **User Scripts** plugin is what runs it:
 4. Start it once by hand, for the current session (User Scripts entries set
    to "At Startup of Array" don't retroactively run for an array that's
    already up).
+5. Confirm the logrotate config actually landed: `ls /etc/logrotate.d/itchgrep`
+   should show the file. If it doesn't, check the script's own output in the
+   User Scripts log for a `WARNING` line naming why (see
+   `scripts/export-logs.sh`'s "logrotate reinstall" section for what it
+   checks).
 
-The script also (re)installs `scripts/itchgrep-logrotate.conf` to
+Because the wrapper always `exec`s the checked-out script rather than a
+copy, `export-logs.sh` (re)installs `scripts/itchgrep-logrotate.conf` to
 `/etc/logrotate.d/itchgrep` on every run, since Unraid's `/etc` is a
-ramdisk wiped on every boot — this is why it needs to run at every array
-start, not just once.
+ramdisk wiped on every boot — this is why the follower needs to run at
+every array start, not just once.
 
 ### After changing `scripts/export-logs.sh`
 
-The User Scripts plugin runs its own **copy** of the script, taken at the
-time the entry was created or last edited — pulling new source into
-`src/` (via `scripts/update.sh` or a manual `git pull`) does **not**
-automatically update what User Scripts is running. After a change to
-`scripts/export-logs.sh` specifically:
-
-1. Go to **Plugins → User Scripts** in the Unraid web UI.
-2. Open the `itchgrep-log-export` entry's editor.
-3. Replace its contents with the updated
-   `/mnt/user/appdata/itchgrep/src/scripts/export-logs.sh`, or point the
-   entry at that path directly instead of pasting the script inline, so
-   future updates need no manual copy step at all.
-4. Save, then stop and restart the script for the current session — the
-   next array start picks up the change automatically either way.
+Because the User Scripts entry above is a thin wrapper that `exec`s the
+checked-out script rather than a pasted copy, pulling new source into
+`src/` (via `scripts/update.sh` or a manual `git pull`) is sufficient on its
+own — there is no separate copy-paste step to remember. The next time the
+follower (re)starts — the next array start, or stopping and restarting the
+script by hand for the current session — it picks up the change
+automatically.
 
 ## Recovery from a failed deploy
 

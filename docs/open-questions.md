@@ -101,18 +101,6 @@ If you find one of these questions genuinely can't be answered (an account nobod
 
 ---
 
-### 8. Only the webserver's stdout is captured durably — dataservice logs are not
-
-**What's unknown/undecided:** `scripts/export-logs.sh` follows only the `itchgrep-webserver` container's logs (its `CONTAINER_NAME` default). The dataservice's own crawl logs — progress, coverage figures, 429 counts — exist only inside Docker's own 30 MB-capped `json-file` buffer, and are lost whenever that container is recreated (for example, on every `docker compose up -d --build`).
-
-**Why it matters:** crawl-time diagnostics (why a crawl under-collected, how many 429s it hit) can be gone by the time anyone investigates a stale dataset, especially since [docs/observability.md](observability.md) recommends watching for exactly this kind of thing.
-
-**How to determine/decide:** decide whether this gap is worth closing — either by extending `scripts/export-logs.sh` to follow both containers, or by accepting the current buffer as sufficient given how infrequently the dataservice container is actually recreated in practice.
-
-**Affects:** [docs/observability.md](observability.md#log-pipeline-end-to-end).
-
----
-
 ### 9. Cloudflare Tunnel token rotation — exact current dashboard path
 
 **What's partially known:** per Cloudflare's own public documentation as of 2026, tunnel token rotation is done from the main Cloudflare dashboard under **Networking > Tunnels** (tunnel management moved out of the separate Zero Trust dashboard in a February 2026 change) — select the tunnel, choose **Rotate token**. This is documented in [docs/disaster-recovery.md](disaster-recovery.md#rotating-the-cloudflare-tunnel-token) but has not been exercised against this project's actual Cloudflare account, and dashboard layouts do get reorganized again over time.

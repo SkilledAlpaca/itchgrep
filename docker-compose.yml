@@ -25,7 +25,7 @@
 # (one writer, no ACLs, no listing, no lifecycle rules).
 #
 # The first run crawls the whole itch.io asset catalogue (~108,000 assets) at a
-# deliberately polite 2 requests/second, so expect an hour or more. It cannot be
+# deliberately polite 2 requests/second, so expect about six hours. It cannot be
 # done in one pass: itch.io serves at most 200 pages per browse view (~7,200
 # assets), so the crawl walks many tag-filtered views and deduplicates. The
 # first run also spends a few hundred requests discovering the tag universe,

@@ -30,7 +30,7 @@ var ErrNotReady = errors.New("cache: not ready")
 
 // expiryCheckTTL is the minimum interval between live storage.GetAssetsUpdateTime
 // checks in IsCacheExpired. The underlying data only changes when the
-// dataservice finishes a scrape (at most once a day), so checking on every
+// dataservice finishes a scrape (weekly, per CRAWL_INTERVAL), so checking on every
 // single HTTP request is wasted work.
 //
 // It used to be 60s, when the check was a GCS round-trip. Against a local
@@ -236,7 +236,7 @@ func (c *Cache) IsCacheExpired() bool {
 	}
 
 	// Throttle the live storage.GetAssetsUpdateTime roundtrip: the
-	// underlying data only changes at most once a day, so we only need to
+	// underlying data only changes when a crawl publishes (weekly), so we only need to
 	// actually check at most once every expiryCheckTTL. expiryCheckMu is a
 	// dedicated mutex (not cacheLock) so this bookkeeping never needs to
 	// upgrade an RLock to a Lock (which would deadlock) and so the network

@@ -32,11 +32,17 @@ How to undo or recover: Not applicable — read-only.
 
 **Pattern A — designed pre-data state.** No crawl has ever published on
 this data directory yet (a brand-new deployment), or the webserver just
-restarted and is still loading. The log reads:
+restarted and is still loading. In a container (`DATA_DIR=/data` — see
+`docker-compose.yml`), the log reads:
 
 ```
-ERRO: ... Initial cache load failed, will retry in background every 15s: storage.GetAssetsUpdateTime: os.Stat: stat data/assets.json: no such file or directory
+ERRO: ... Initial cache load failed, will retry in background every 15s: storage.GetAssetsUpdateTime: os.Stat: stat /data/assets.json: no such file or directory
 ```
+
+A bare `go run` (local dev, `DATA_DIR` defaulting to `./data`) shows the
+same line with a relative path instead:
+`stat data/assets.json: no such file or directory` — see
+[docs/getting-started.md](getting-started.md#what-you-see-when-it-works).
 
 This is working as designed — see
 [docs/getting-started.md](getting-started.md#what-you-see-when-it-works)
@@ -48,9 +54,8 @@ no restart needed. If it's been substantially longer than that with no
 change, move to "crawl fails" below.
 
 **Pattern B — a genuinely broken index.** Data has published before, but
-the webserver can't open it. `docker logs itchgrep-dataservice-1` (note:
-this container has no pinned name — confirm it with `docker compose ps` if
-unsure) shows the dataservice's own self-heal running at its next startup:
+the webserver can't open it. `docker logs itchgrep-dataservice` shows the
+dataservice's own self-heal running at its next startup:
 
 ```
 Published index is unusable (<reason>); rebuilding as scorch from assets.json - this takes minutes, the webserver keeps serving the old data meanwhile
@@ -150,11 +155,11 @@ How to undo or recover: Not applicable — read-only.
 
 - **`oom=true`.** The kernel killed the process for using too much memory.
   The webserver holds the entire dataset in memory, and during an index
-  swap both the old and new copies are briefly open at once — README.md
-  notes this can roughly double steady-state memory usage against a
-  ~740 MB index. Give the host, or an explicit container memory limit if
-  you set one, real headroom above that peak — this is a host resource
-  problem, not a code bug to fix.
+  swap both the old and new copies are briefly open at once — this can
+  roughly double steady-state memory usage against the ~740 MB index size
+  quoted in "Disk filling up" below. Give the host, or an explicit container
+  memory limit if you set one, real headroom above that peak — this is a
+  host resource problem, not a code bug to fix.
 - **`exited=1` (or similar) with no `oom`.** Check the log for a `Server
   failed: ...` line at startup — the most common cause is `PORT` set to
   something that can't be bound (non-numeric, or already in use by another
@@ -168,12 +173,47 @@ How to undo or recover: Not applicable — read-only.
   one-time failure. Fix the underlying cause; the loop is a symptom, not
   the problem itself.
 
+## `/data` permission denied (root-owned named volume from an older image)
+
+Both images now ship an empty `/data` directory owned by `65532:65532`
+(the uid/gid the containers run as), so a **fresh** named Docker volume
+(`DATA_PATH` unset) is seeded with the right ownership automatically and
+works out of the box — see
+[docs/configuration.md](configuration.md#data_path). This only applies to a
+volume Docker creates for the first time *from this image*. A named volume
+that was already created by an **older** image build (before that ownership
+seed existed) is still owned by root underneath, and pulling this image on
+top of it does not retroactively fix it.
+
+**Symptom:** `docker logs itchgrep-dataservice` (or the webserver) shows a
+permission error opening or writing under `/data` — `permission denied`
+against `assets.json`, `index.bleve/`, or similar — even though nothing
+about `DATA_PATH` or the compose file changed.
+
+**Fix, pick one:**
+
+- If the data in that volume is disposable (a local dev setup, a test
+  stack): `docker compose down -v` to delete the volume, then bring the
+  stack back up — the next `docker compose up` recreates it fresh, seeded
+  with the correct ownership from the image.
+- If the data must be kept, `chown` the existing volume's contents in place
+  with a one-shot throwaway container:
+  ```
+  docker run --rm -v itchgrep-data:/data alpine chown -R 65532:65532 /data
+  ```
+  (substitute the actual volume name if `COMPOSE_PROJECT_NAME` isn't
+  `itchgrep` — `docker volume ls` shows the exact name).
+
+A **bind-mounted** `DATA_PATH` is a different case entirely — Docker never
+chowns a bind mount automatically regardless of image version. See "The
+one-time ownership fix for `data/`" in
+[docs/deployment.md](deployment.md#the-one-time-ownership-fix-for-data).
+
 ## Crawl fails or coverage below floor
 
 **Diagnostic:**
 
-COMMAND: `docker logs itchgrep-dataservice-1 --tail 100` (confirm the exact
-container name with `docker compose ps`)
+COMMAND: `docker logs itchgrep-dataservice --tail 100`
 Purpose: Shows the crawl's own progress and outcome.
 When to use: The site is stuck on `503` past when a crawl should have
 finished, or `/stats` shows a coverage figure that hasn't updated.
@@ -230,7 +270,7 @@ genuinely takes hours, and long gaps between log lines during a big
 tag-filtered view are expected, not a hang. Check for forward progress
 rather than instant completion:
 
-COMMAND: `docker logs itchgrep-dataservice-1 --tail 20 --follow`
+COMMAND: `docker logs itchgrep-dataservice --tail 20 --follow`
 Purpose: Watches for new log lines in real time, to distinguish "slow but
 progressing" from "actually stopped."
 When to use: A crawl has been running much longer than expected with no
@@ -248,10 +288,9 @@ How to undo or recover: Ctrl-C locally, or
 resumes from its last checkpoint rather than restarting from zero, per the
 resume behavior above.
 
-**Note:** README.md's configuration table states checkpoints happen "every
-3 minutes." The code's actual constant
-(`checkpointInterval` in `cmd/dataservice/main.go`) is **10 minutes** — this
-document uses the verified value.
+**Note:** a crawl checkpoints itself at most every **10 minutes**
+(`checkpointInterval` in `cmd/dataservice/main.go`) — verified directly
+against that constant, not assumed.
 
 ## Disk filling up
 

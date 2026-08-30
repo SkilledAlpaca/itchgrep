@@ -51,14 +51,27 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
   outside the host. It applies:
   - **Per-client rate limiting** (`internal/web/ratelimit.go`) — a search is
     expensive (three disjunctions, two fuzzy, over the whole catalogue), and
-    nothing else in the request path pushes back.
+    nothing else in the request path pushes back. Probe traffic (below)
+    draws from the same per-client budget as real requests, so an unlimited
+    scanner sweep can't write to disk faster than a real client could be
+    served. The limiter's own identity map is capped at 50,000 entries with
+    a shared overflow bucket beyond that, so no identity source — a proxy
+    header, an IPv6 /64 worth of distinct socket addresses — can grow it
+    without bound.
   - **Proxy-header trust gated on `TRUSTED_PROXY_CIDRS`**
-    (`internal/web/clientip.go`). `CF-Connecting-IP` and `X-Forwarded-For`
-    are attacker-controlled unless something upstream sets them, so they're
-    honored only when the request's own socket address — which a header can
-    never spoof — falls inside a configured trusted network. Fails closed:
-    `TRUST_PROXY_HEADERS=true` with no valid `TRUSTED_PROXY_CIDRS` trusts
-    nobody rather than trusting everybody. See
+    (`internal/web/clientip.go`), defaulting under Compose to a single
+    `/32` naming `cloudflared`'s own fixed address on the compose network,
+    not the whole subnet — see
+    [docs/infrastructure.md](docs/infrastructure.md#the-pinned-network-subnet).
+    `CF-Connecting-IP` and `X-Forwarded-For` are attacker-controlled unless
+    something upstream sets them, so they're honored only when the
+    request's own socket address — which a header can never spoof — falls
+    inside a configured trusted network, and the header's value is itself
+    validated with `net.ParseIP` before being trusted as an identity (a
+    value that isn't an address falls back to the socket address, the same
+    as a missing header would). Fails closed: `TRUST_PROXY_HEADERS=true`
+    with no valid `TRUSTED_PROXY_CIDRS` trusts nobody rather than trusting
+    everybody. See
     [ADR 0002](docs/architecture/decisions/0002-trusted-proxy-cidrs-fail-closed.md).
   - **Security-event logging** — every request the scanner-probe filter
     blocks is recorded to `security.jsonl`; see

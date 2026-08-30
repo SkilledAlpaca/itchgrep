@@ -446,7 +446,7 @@ func GetHistory() ([]models.CrawlRecord, error) {
 
 // Checkpoint is a partially-complete crawl, written periodically so that a run
 // killed part way through is resumable instead of worthless. A full crawl is
-// ~75 minutes and lives entirely in memory until it publishes.
+// ~6 hours and lives entirely in memory until it publishes.
 type Checkpoint struct {
 	Version     int // CheckpointVersion at the time of writing
 	Assets      []models.Asset

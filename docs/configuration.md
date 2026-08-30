@@ -70,13 +70,14 @@ Change safety:
 | [`COMPOSE_PROJECT_NAME`](#compose_project_name) | `docker-compose.yml` (Compose built-in) | Yes in production | Basename of the checkout directory | Any short identifier, no spaces | Names the Compose project (containers, networks, volumes) | Never change manually |
 | [`CLOUDFLARE_TUNNEL_TOKEN`](#cloudflare_tunnel_token) | `docker-compose.yml` (`cloudflared` service) | Only with `--profile public` | Empty (tunnel refuses to start) | Opaque token string from Cloudflare | Authenticates the `cloudflared` tunnel to your Cloudflare account | Change only if you understand the consequences |
 | [`TRUST_PROXY_HEADERS`](#trust_proxy_headers) | `docker-compose.yml`, `internal/web/ratelimit.go` | No | `false` | `true`/`false` (any `strconv.ParseBool` spelling) | Whether to trust `CF-Connecting-IP` / `X-Forwarded-For` for the visitor's real address | Change only if you understand the consequences |
-| [`TRUSTED_PROXY_CIDRS`](#trusted_proxy_cidrs) | `docker-compose.yml`, `internal/web/clientip.go` | Only if `TRUST_PROXY_HEADERS=true` | `172.30.99.0/24` (Compose default only) | Comma-separated CIDR list | Which peers' proxy headers are trusted | Change only if you understand the consequences |
+| [`TRUSTED_PROXY_CIDRS`](#trusted_proxy_cidrs) | `docker-compose.yml`, `internal/web/clientip.go` | Only if `TRUST_PROXY_HEADERS=true` | `172.30.99.10/32` (Compose default only) | Comma-separated CIDR list | Which peers' proxy headers are trusted | Change only if you understand the consequences |
 | [`RATE_LIMIT_RPS`](#rate_limit_rps) | `docker-compose.yml`, `internal/web/ratelimit.go` | No | `5` | Float; `0` or negative disables limiting | Per-client request budget for the webserver | Safe to change |
 | [`RATE_LIMIT_BURST`](#rate_limit_burst) | `docker-compose.yml`, `internal/web/ratelimit.go` | No | `20` | Float | How many requests a client may burst above the steady rate | Safe to change |
 | [`PAGE_SIZE`](#page_size) | `docker-compose.yml`, `Dockerfile.webserver`, `cmd/webserver/main.go` | No | `36` | Positive integer | Assets shown per page of results | Safe to change |
 | [`PORT`](#port) | `docker-compose.yml`, `cmd/webserver/main.go`, `cmd/dataservice/main.go` | No | `8080` | Numeric TCP port | Which port the binary listens on inside its container | Change only if you understand the consequences |
 | [`LOG_EXPORT_DIR`](#log_export_dir) | `.env.example` (comment only), `scripts/export-logs.sh` | No | `/mnt/user/appdata/itchgrep/logs` | Absolute host path | Where the host-side log follower writes `access.jsonl`, `security.jsonl`, `app.log` | Safe to change |
 | [`CONTAINER_NAME`](#container_name) | `scripts/export-logs.sh`, `scripts/update.sh` | No | `itchgrep-webserver` | Docker container name | Which container the script targets | Change only if you understand the consequences |
+| [`DATASERVICE_CONTAINER_NAME`](#dataservice_container_name) | `scripts/export-logs.sh` | No | `itchgrep-dataservice` | Docker container name | Which container the dataservice-side log follower targets | Change only if you understand the consequences |
 | [`RECONNECT_DELAY_SECONDS`](#reconnect_delay_seconds) | `scripts/export-logs.sh` | No | `5` | Positive integer (seconds) | Delay between reconnect attempts when the log follower loses the container | Safe to change |
 | [`BASE_PATH`](#base_path) | `scripts/bootstrap-host.sh` | No | `/mnt/user/appdata/itchgrep` | Absolute host path | Base directory under which `src/`, `logs/`, `data/` are created | Change only if you understand the consequences |
 
@@ -239,13 +240,14 @@ Upper bound on how many tags discovery will visit.
   dataservice's `environment:` block**, so under `docker compose up`, setting
   `MAX_TAGS` in `.env` has no effect whatsoever — verified by rendering the
   Compose config with a test override present and confirming the variable
-  never reaches the container. A comment in `docker-compose.yml` suggests
-  exporting it in the shell or `.env` file to override the default in
-  production; that advice does not work for the containerized deployment as
-  currently written, only when running the `dataservice` binary directly
-  (`go run ./cmd/dataservice`, `task dataservice`, `task smoke`). Changing
-  this for the production Compose stack requires adding a `MAX_TAGS:
-  "${MAX_TAGS:-1000}"` line to `docker-compose.yml` first.
+  never reaches the container. `docker-compose.yml`'s own comment on this
+  already says so directly: there is no pass-through line, so exporting
+  `MAX_TAGS` in the shell or `.env` has no effect on a compose run, and a
+  production override requires adding a literal `MAX_TAGS: "<value>"` line
+  to that block for the run, then removing it afterward. `.env.example`
+  matches this: it ships `MAX_TAGS` commented out, with a note that it only
+  applies to a direct run (`go run ./cmd/dataservice`, `task dataservice`,
+  `task smoke`), never to `docker compose up`.
 
 ## Storage and networking (both services, Compose)
 
@@ -289,12 +291,18 @@ it decides what backs the container's `/data` mount.
   the uid the container needs. See the next paragraph.
 - **The consequence that matters**: both `webserver` and `dataservice` run
   as uid `65532` (a non-root user baked into their distroless base image —
-  see `Dockerfile.webserver` and `Dockerfile.dataservice`). Docker
-  automatically sets a **named** volume's ownership from the image on first
-  use, which already works with no extra step. A **bind-mounted**
-  `DATA_PATH` is never `chown`'d automatically, so the first time you point
-  it at a host directory (and again after upgrading an older deployment onto
-  this non-root image), you must run, once:
+  see `Dockerfile.webserver` and `Dockerfile.dataservice`). A **fresh named**
+  volume works with no extra step: both images ship an empty `/data`
+  directory owned by `65532:65532` (a `COPY --chown` in each Dockerfile), and
+  Docker seeds a brand-new named volume's ownership from the image's own
+  mount point on first use. A **named volume created by an older image
+  build** (before that `COPY --chown` existed) is still root-owned, and
+  upgrading onto this image alone doesn't fix it — see
+  [docs/troubleshooting.md](troubleshooting.md) for the fix. A
+  **bind-mounted** `DATA_PATH` is never `chown`'d automatically by Docker
+  either way, so the first time you point it at a host directory you must
+  run, once (`scripts/bootstrap-host.sh` does this automatically when run as
+  root — see [docs/deployment.md](deployment.md)):
 
   ```
   chown -R 65532:65532 <DATA_PATH>
@@ -340,10 +348,12 @@ when the stack is brought up with `--profile public`.
   text.
 - **This is a secret.** It lives only in the production `.env` file, which
   is excluded from Git. Never print it, paste it into an issue, or commit it.
-- **Obtaining a value**: Cloudflare Zero Trust dashboard → **Networks** →
-  **Tunnels** → create a tunnel → copy the token it shows you. Full setup
-  steps belong to [docs/infrastructure.md](infrastructure.md) — this entry
-  only documents the variable itself.
+- **Obtaining a value**: creating a new tunnel from scratch is covered in
+  [docs/infrastructure.md](infrastructure.md#creating-the-tunnel); rotating
+  the token on an existing tunnel is covered in
+  [docs/disaster-recovery.md](disaster-recovery.md#rotating-the-cloudflare-tunnel-token)
+  (the authoritative page for the current dashboard path, since it does get
+  reorganized over time). This entry only documents the variable itself.
 - **Example** (obviously not real): `CLOUDFLARE_TUNNEL_TOKEN=example-fake-token-do-not-use`
 - **If missing**: defaults to an empty string. Deliberately defaulted rather
   than required, so a plain local `docker compose up` (no `--profile
@@ -392,13 +402,19 @@ believed at all.
   length, such as `172.30.99.0/24`), comma-separated.
 - **Not a secret.**
 - **Example**: `TRUSTED_PROXY_CIDRS=172.30.99.0/24`
-- **If missing**: `docker-compose.yml` supplies `172.30.99.0/24` — the
-  Compose network's own pinned subnet (see the `networks:` block at the
-  bottom of `docker-compose.yml`), which is exactly where `cloudflared`
-  connects from when the `public` profile is active. Running the webserver
-  binary directly (outside Compose) with this unset means **no network is
-  trusted at all**, even if `TRUST_PROXY_HEADERS=true` — the code has no
-  built-in fallback of its own, only Compose supplies one.
+- **If missing**: `docker-compose.yml` supplies `172.30.99.10/32` —
+  `cloudflared`'s own fixed address on the Compose network (see its
+  `networks:` entry in `docker-compose.yml`), not the whole subnet. A single
+  address rather than the whole `172.30.99.0/24` matters because the
+  webserver's port is published on `0.0.0.0`: Docker's userland proxy can
+  deliver LAN-originated traffic to the container with the bridge
+  gateway (which sits inside that /24) as the peer address, so trusting the
+  whole subnet would let anything that can reach the published port at all
+  impersonate a Cloudflare hop — a single `/32` only ever matches the one
+  peer that is actually `cloudflared`. Running the webserver binary directly
+  (outside Compose) with this unset means **no network is trusted at all**,
+  even if `TRUST_PROXY_HEADERS=true` — the code has no built-in fallback of
+  its own, only Compose supplies one.
 - **If set but every entry is malformed**: each bad entry is skipped and
   logged individually; if nothing valid remains and
   `TRUST_PROXY_HEADERS=true`, a warning names the situation explicitly ("proxy
@@ -504,10 +520,11 @@ Read by `scripts/export-logs.sh`. Where the follower writes `access.jsonl`,
 ### `CONTAINER_NAME`
 
 Read independently by **two** scripts with the same default:
-`scripts/export-logs.sh` (which container to follow the logs of) and
-`scripts/update.sh` (which container to poll for a healthy status after an
-update). They are not linked to each other — setting one does not set the
-other.
+`scripts/export-logs.sh` (the webserver container to follow the logs of —
+see `DATASERVICE_CONTAINER_NAME` below for the dataservice side of that same
+script) and `scripts/update.sh` (which container to poll for a healthy
+status after an update). They are not linked to each other — setting one
+does not set the other.
 
 - **Format**: a Docker container name.
 - **Not a secret.**
@@ -521,6 +538,26 @@ other.
   deploy succeeded under a different container name.
 - **When to change it**: only for a second, differently named stack on the
   same host (a staging copy) — not for normal operation.
+
+### `DATASERVICE_CONTAINER_NAME`
+
+Read only by `scripts/export-logs.sh`, the dataservice-side counterpart to
+`CONTAINER_NAME` above — the follower now runs two independent reconnect
+loops, one per container, so each needs its own name.
+
+- **Format**: a Docker container name.
+- **Not a secret.**
+- **Example**: `DATASERVICE_CONTAINER_NAME=itchgrep-dataservice`
+- **If missing**: defaults to `itchgrep-dataservice`, matching the
+  `container_name:` pinned in `docker-compose.yml`.
+- **If wrong**: the same "cannot inspect" retry-then-give-up behavior as
+  `CONTAINER_NAME` above, but scoped to the dataservice follower only — the
+  script treats either follower giving up as a reason to stop both and exit
+  non-zero (see `scripts/export-logs.sh`'s own comment on `main`), so a wrong
+  value here still takes down webserver log capture too, not just the
+  dataservice's.
+- **When to change it**: only for a second, differently named stack on the
+  same host — not for normal operation.
 
 ### `RECONNECT_DELAY_SECONDS`
 

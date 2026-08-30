@@ -36,27 +36,13 @@ Install each of these, then run its verify command and compare the output.
 | Tool | Why you need it | Verify command | Expected output |
 | --- | --- | --- | --- |
 | Go 1.27 or later | Compiles and runs both binaries | `go version` | `go version go1.27.0` (or higher) |
-| The `templ` CLI, pinned to the exact version this repo uses | Generates Go code from the `.templ` template files — the build fails without this step, see below | `templ version` | `v0.3.1020` |
+| The `templ` CLI, pinned to the exact version this repo uses | Generates Go code from the `.templ` template files — the build fails without this step, see below | `templ version` | Matches the version in `go.mod`'s `github.com/a-h/templ` line (`v0.3.1020` as of this writing) |
 | Docker Engine and the Docker Compose plugin | Runs the project the same way production does, in containers | `docker --version` and `docker compose version` | A version number for each, no error |
 | [Task](https://taskfile.dev) (the `go-task` CLI) | Optional, but the fastest way to run the two binaries locally without containers — this guide uses it | `task --version` | A version number, no error |
 
-To install the pinned `templ` CLI (the version must match `go.mod`, or
-generated code can silently disagree with what the rest of the build
-expects):
-
-COMMAND: `go install github.com/a-h/templ/cmd/templ@v0.3.1020`
-Purpose: Installs the `templ` code generator at the exact version this
-repository's `go.mod` requires.
-When to use: Once, during initial setup, or again if `templ version`
-reports a different version than `v0.3.1020`.
-Prerequisites: Go installed and `go` on your `PATH`.
-Expected result: No output on success; `templ version` afterward prints
-`v0.3.1020`. The binary lands in `$(go env GOPATH)/bin` — make sure that
-directory is on your `PATH`, or `templ` won't be found as a command.
-Common failures: `command not found: templ` after install means
-`$(go env GOPATH)/bin` isn't on your `PATH` — add it and open a new
-terminal. A network error means no internet access to `proxy.golang.org`.
-How to undo or recover: Re-run the same command; it's safe to repeat.
+Installing the pinned `templ` CLI needs `go.mod` to read the version from,
+so that step is folded into "2. Generate the templates" below, right after
+the clone — see there for the exact command.
 
 Task installs the same way, pinned to whatever the latest release is (it has
 no version this project depends on):
@@ -68,7 +54,8 @@ When to use: Once, during initial setup.
 Prerequisites: Go installed and `go` on your `PATH`.
 Expected result: No output on success; `task --version` afterward prints a
 version number.
-Common failures: Same `PATH` issue as `templ` above.
+Common failures: Same `PATH` issue as `templ`'s install step in "2. Generate
+the templates" below.
 How to undo or recover: Re-run the same command.
 
 ## 1. Clone the repository
@@ -96,15 +83,44 @@ generator turns each one into a matching `_templ.go` file the rest of the
 program actually compiles against. Those generated files are deliberately
 excluded from Git (see `.gitignore`), so a fresh clone doesn't have them yet.
 
+First, install the pinned `templ` CLI (the version must match `go.mod`, or
+generated code can silently disagree with what the rest of the build
+expects), from inside the cloned repository so `go list` can read `go.mod`:
+
+COMMAND:
+```sh
+templ_version="$(go list -m -f '{{.Version}}' github.com/a-h/templ)"
+go install "github.com/a-h/templ/cmd/templ@${templ_version}"
+```
+Purpose: Installs the `templ` code generator at exactly the version this
+repository's `go.mod` requires — the same derivation `Dockerfile.webserver`
+and CI use, so it can never drift out of sync with what the rest of the
+build expects (see [docs/dependencies.md](dependencies.md#the-templ-cli)).
+When to use: Once, right after cloning, or again any time `templ version`
+reports a version different from `go.mod`'s.
+Prerequisites: Go installed and `go` on your `PATH`; run from inside the
+cloned repository (step 1).
+Expected result: No output on success; `templ version` afterward matches
+`go list -m -f '{{.Version}}' github.com/a-h/templ`. The binary lands in
+`$(go env GOPATH)/bin` — make sure that directory is on your `PATH`, or
+`templ` won't be found as a command.
+Common failures: `command not found: templ` after install means
+`$(go env GOPATH)/bin` isn't on your `PATH` — add it and open a new
+terminal. A network error means no internet access to `proxy.golang.org`.
+How to undo or recover: Re-run the same command; it's safe to repeat.
+
+Then generate the templates themselves:
+
 COMMAND: `task templ`
 Purpose: Runs `templ generate`, producing the `_templ.go` files the build
 needs.
 When to use: Immediately after cloning, and again any time you edit a
 `.templ` file.
-Prerequisites: The `templ` CLI installed (see Prerequisites above).
+Prerequisites: The `templ` CLI installed (previous step).
 Expected result:
 ```
 task: [templ] templ generate
+(✓) Post-generation event received, processing... [ updates=N needsRestart=true needsBrowserReload=true ]
 (✓) Complete [ updates=N duration=…ms ]
 ```
 Common failures: `command not found: templ` — see the `templ` install step

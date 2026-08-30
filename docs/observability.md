@@ -6,7 +6,7 @@ For what the two containers are and how they're deployed, see [docs/infrastructu
 
 ## Log pipeline, end to end
 
-Both `itchgrep-webserver` and the `dataservice` container write everything to their own standard output (stdout) as plain text or single-line JSON. Nothing inside either container writes to a log file — `internal/logging.Init("", true)` is called with `logToStdout: true` in both `cmd/webserver/main.go` and `cmd/dataservice/main.go`, so there is no log file to read from inside the (distroless, shell-less) container itself.
+Both `itchgrep-webserver` and the `dataservice` container write everything to their own standard output (stdout) as plain text or single-line JSON. Nothing inside either container writes to a log file — `internal/logging.Init()` takes no arguments and always writes to stdout; both `cmd/webserver/main.go` and `cmd/dataservice/main.go` call it the same way, so there is no log file to read from inside the (distroless, shell-less) container itself.
 
 The line then travels through four stages before it's durable:
 
@@ -20,11 +20,12 @@ The line then travels through four stages before it's durable:
        max-file: "3"
    ```
    That's 10 MB per file, 3 files kept, per service — 30 MB total per service. Without a cap, Docker's default `json-file` driver keeps every line ever written, growing without bound. This 30 MB is deliberately just a hand-off buffer, not the log's actual home — see the next stage.
-3. **The host-side follower, `scripts/export-logs.sh`.** A shell script that runs continuously on the Unraid host (outside Docker Compose, installed as an Unraid User Scripts entry — see [docs/deployment.md](deployment.md)) and follows `docker logs -f --tail 0 itchgrep-webserver` forever, reconnecting on any disconnect. It reads each line and, based on the JSON `"kind"` field, appends it to one of three files.
+3. **The host-side follower, `scripts/export-logs.sh`.** A shell script that runs continuously on the Unraid host (outside Docker Compose, installed as an Unraid User Scripts entry — see [docs/deployment.md](deployment.md)) and follows **both** containers forever, each in its own independent reconnecting loop: `docker logs -f --tail 0 itchgrep-webserver` and `docker logs -f --tail 0 itchgrep-dataservice`. The webserver stream is split by its JSON `"kind"` field into three files; the dataservice stream — which carries no `"kind"` discriminator, just plain `INFO:`/`WARN:`/`ERRO:` text — goes entirely to a fourth file. Either follower giving up (the container stays unreachable for about 5 minutes) stops both and exits the whole script non-zero, so a silent half-captured state is never mistaken for a healthy one.
 4. **Durable, rotated files** under `/mnt/user/appdata/itchgrep/logs/` (the default `LOG_EXPORT_DIR`):
-   - `access.jsonl` — one JSON line per served request (`"kind":"access"`).
-   - `security.jsonl` — one JSON line per request the scanner-probe filter blocked (`"kind":"probe"`).
-   - `app.log` — everything else: the plain `INFO:`/`WARN:`/`ERRO:` text lines.
+   - `access.jsonl` — one JSON line per served request (`"kind":"access"`), from the webserver.
+   - `security.jsonl` — one JSON line per request the scanner-probe filter blocked (`"kind":"probe"`), from the webserver.
+   - `app.log` — everything else the webserver logs: the plain `INFO:`/`WARN:`/`ERRO:` text lines.
+   - `crawler.log` — every line the dataservice logs (crawl progress, coverage figures, 429 counts, self-heal messages), unsplit.
 
    These are rotated daily and kept 30 days by `logrotate`, using `scripts/itchgrep-logrotate.conf`:
    ```
@@ -39,7 +40,7 @@ The line then travels through four stages before it's durable:
    ```
    Because Unraid's `/etc` is a tmpfs ramdisk (wiped on every reboot), a `logrotate.d` config dropped in by hand would silently disappear at the next array start. `scripts/export-logs.sh` works around this by reinstalling this file to `/etc/logrotate.d/itchgrep` on every single run, so one User Scripts entry keeps both the follower and the 30-day retention guarantee alive.
 
-**Only the dataservice's own log stream is NOT captured by `export-logs.sh`** — the script follows only `itchgrep-webserver` (its `CONTAINER_NAME` default). The dataservice's crawl logs (progress, coverage, 429 counts) live only in Docker's own 30 MB-capped `json-file` buffer unless you read them directly with `docker logs`. This is a gap: a dataservice container recreated (e.g. by `docker compose up -d --build`) loses everything Docker had buffered for it. See [docs/open-questions.md](open-questions.md) if this is worth fixing.
+**Both containers are captured.** `export-logs.sh` follows `itchgrep-webserver` (`CONTAINER_NAME`) and `itchgrep-dataservice` (`DATASERVICE_CONTAINER_NAME`) independently — see [docs/configuration.md](configuration.md#dataservice_container_name). This closes what used to be a gap: the dataservice's crawl logs (progress, coverage, 429 counts, self-heal messages) previously lived only in Docker's own 30 MB-capped `json-file` buffer and were lost whenever that container was recreated (for example, by `docker compose up -d --build`). They're now durable in `crawler.log` the same way the webserver's logs are.
 
 ## Structured log kinds
 
@@ -64,6 +65,8 @@ Written by `internal/web/logmiddleware.go`'s `RequestLogger` middleware, one lin
 ### Probe records (`"kind":"probe"`)
 
 Written by `internal/web/probes.go`'s `ProbeFilter`, which runs ahead of routing and the access logger. It matches the shape of commodity vulnerability scanner sweeps — paths like `/wp-admin`, `/.env`, `/phpmyadmin`, anything ending `.php` — and answers with a bare 404 before the request reaches anything else. Fields are the same as an access record minus `query`, `route`, `status`, and `bytes` (a probe is always a bare 404, so those would be constant). This is the origin-side backstop for the same traffic the Cloudflare WAF rule blocks at the edge — see [docs/infrastructure.md](infrastructure.md).
+
+Probe traffic draws from the **same per-client rate-limit budget** as real requests — `ProbeFilter` charges a token before writing the JSON record and answering the 404, using the same `Limiter` instance the rate-limited route group uses. This means a sustained scanner sweep from one client is throttled the same way a real client hammering the site would be, and its record-writing (a disk write per hit) is bounded by that same budget rather than unlimited.
 
 ### Privacy posture: what is and isn't stored
 
@@ -134,6 +137,8 @@ jq -s -c '
 ## Health checks
 
 `GET /healthz` and `HEAD /healthz` (`internal/web/healthz.go`) answer `200 ok` (plain text, `Cache-Control: no-store`) the moment the HTTP router is up — with **no dependency on data having loaded**. This is deliberate: on a first deployment, nothing has crawled yet and the cache can legitimately stay unready for hours; a health check that failed on that condition would have Docker restart-loop a webserver that is working exactly as designed. `/results` and other data-dependent routes report that state themselves, with a `503`.
+
+`GET /readyz` and `HEAD /readyz` are `/healthz`'s opposite number: they DO depend on the cache, answering `200 ready` only once a published dataset has actually loaded and `503 no data` for as long as it hasn't. This exists for an operator or an external uptime monitor that wants to tell "the process is up" apart from "the site actually has something to serve" — a distinction `/healthz` deliberately can't make. It's mounted beside `/healthz` (outside the rate-limited group, and inside `probes.go`'s `liveRoutes` so it's never mistaken for a scanner probe) but **deliberately not wired into `docker-compose.yml`'s `healthcheck:` stanza**, which stays on `/healthz` for the same reason `/healthz` itself has no data dependency: a freshly started `--profile public` stack's `cloudflared` (gated on `service_healthy`) must still come up while the first crawl is in progress, not wait on it.
 
 `docker-compose.yml`'s healthcheck stanza only exists on the `webserver` service:
 
