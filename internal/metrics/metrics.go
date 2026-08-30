@@ -247,19 +247,29 @@ func (c *Counters) toTraffic() models.Traffic {
 	}
 }
 
+// PersistNow writes the current counters to disk immediately, outside the
+// snapshotter's own ticker. cmd/webserver calls this once on graceful
+// shutdown, after srv.Shutdown returns, so a clean stop never loses a count -
+// only a hard kill (docker kill -9, an OOM) still loses up to the
+// snapshotter's interval, same as before this existed.
+func (c *Counters) PersistNow() error {
+	if c == nil {
+		return nil
+	}
+	return storage.PutTraffic(c.toTraffic())
+}
+
 // StartSnapshotter persists the counters every interval and, when the probe
 // count moved since the last tick, logs one aggregate line for it - the
 // backstop's only visible trace, since ProbeFilter itself logs nothing per
-// request. There is no graceful shutdown today, so a restart loses up to one
-// interval of counts; worth noting here rather than adding signal handling
-// for this alone.
+// request.
 func (c *Counters) StartSnapshotter(every time.Duration) {
 	go func() {
 		var lastProbes uint64
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
 		for range ticker.C {
-			if err := storage.PutTraffic(c.toTraffic()); err != nil {
+			if err := c.PersistNow(); err != nil {
 				logging.Error("Failed to persist traffic counters: %v", err)
 			}
 			if p := c.probes.Load(); p != lastProbes {

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestCrawler(total int64, cfg crawlConfig) *crawler {
@@ -21,6 +23,35 @@ func newTestCrawler(total int64, cfg crawlConfig) *crawler {
 }
 
 func asset(id string) models.Asset { return models.Asset{GameId: id} }
+
+// TestShutdownCheckpointsTheActiveCrawler exercises the mechanism
+// cmd/dataservice's main uses on SIGINT/SIGTERM: activeCrawler.Load() finding
+// the crawl in progress and forcing an out-of-band checkpoint, without
+// waiting for checkpointInterval or a slice to finish.
+func TestShutdownCheckpointsTheActiveCrawler(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	c := newTestCrawler(100, crawlConfig{})
+	c.record([]models.Asset{asset("a"), asset("b")}, nil, 0)
+
+	activeCrawler.Store(c)
+	defer activeCrawler.Store(nil)
+
+	found := activeCrawler.Load()
+	require.NotNil(t, found)
+	found.checkpoint(true) // force: skips checkpointInterval, which a real shutdown cannot wait out
+
+	cp, _, err := storage.GetCheckpoint()
+	require.NoError(t, err)
+	assert.Len(t, cp.Assets, 2)
+}
+
+// TestNoActiveCrawlerMeansNothingToCheckpoint covers the far more common
+// shutdown case: no crawl running, so activeCrawler.Load() must report that
+// rather than pointing at a stale crawler from an earlier run.
+func TestNoActiveCrawlerMeansNothingToCheckpoint(t *testing.T) {
+	assert.Nil(t, activeCrawler.Load())
+}
 
 func TestRecordCountsOnlyUnseenAssets(t *testing.T) {
 	// Assets carry ~9 tags each, so the same asset turns up in many slices.

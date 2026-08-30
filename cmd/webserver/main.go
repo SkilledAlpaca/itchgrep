@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"itchgrep/internal/cache"
 	"itchgrep/internal/config"
@@ -9,7 +11,9 @@ import (
 	"itchgrep/internal/web"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -23,9 +27,38 @@ import (
 const initialCacheLoadRetryInterval = 15 * time.Second
 
 // trafficSnapshotInterval is how often the traffic counters are written to
-// disk. There is no graceful shutdown today, so a restart loses at most this
-// much - worth noting rather than adding signal handling for this alone.
+// disk on the normal timer. A clean stop (SIGTERM, SIGINT) now writes one
+// final snapshot on the way out and loses nothing; only a hard kill (docker
+// kill -9, an OOM) still loses up to this much.
 const trafficSnapshotInterval = 5 * time.Minute
+
+// resolvePort reads PORT the same way the server and the -healthcheck flag
+// both need to, so the two can never drift onto different ports.
+func resolvePort() string {
+	port := fmt.Sprintf(":%s", os.Getenv("PORT"))
+	if port == ":" {
+		port = ":8080" // Default port to listen on
+	}
+	return port
+}
+
+// checkHealthz is what the "-healthcheck" flag runs: a GET against the
+// server's own /healthz, since the distroless runtime image has no shell and
+// no curl for docker-compose.yml's healthcheck stanza to exec instead. A
+// short client timeout rather than context.Background() - a healthcheck that
+// can hang as long as the server does defeats the point of having one.
+func checkHealthz(port string, timeout time.Duration) error {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1%s/healthz", port))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz returned %d", resp.StatusCode)
+	}
+	return nil
+}
 
 func initializeCache() *cache.Cache {
 	pageSizeStr := os.Getenv("PAGE_SIZE")
@@ -60,6 +93,20 @@ func initializeCache() *cache.Cache {
 }
 
 func main() {
+	// -healthcheck is what docker-compose.yml's healthcheck stanza execs
+	// (distroless has no shell or curl to do this from outside the binary).
+	// Checked before anything else in main - logging, cache load, the real
+	// listener - so it never pays for any of that and never touches the
+	// logging package's global state that the real server run below does.
+	healthcheck := flag.Bool("healthcheck", false, "check this process's own /healthz over HTTP and exit 0 or 1, instead of starting the server")
+	flag.Parse()
+	if *healthcheck {
+		if err := checkHealthz(resolvePort(), 3*time.Second); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// LOGGING
 	logging.Init("", true)
 
@@ -114,6 +161,11 @@ func main() {
 	r.Head("/sitemap.xml", h.HandleSitemap)
 	r.Get("/opensearch.xml", web.HandleOpenSearch)
 	r.Head("/opensearch.xml", web.HandleOpenSearch)
+	// Outside the rate-limited group like every other route above: a liveness
+	// probe must never come back 429, or Docker reads a busy server as a dead
+	// one and restarts it into the exact traffic spike that made it busy.
+	r.Get("/healthz", web.HandleHealthz)
+	r.Head("/healthz", web.HandleHealthz)
 
 	r.Group(func(r chi.Router) {
 		r.Use(web.NewLimiter().Middleware)
@@ -144,10 +196,7 @@ func main() {
 	r.NotFound(web.Handle404)
 
 	// SERVER
-	port := fmt.Sprintf(":%s", os.Getenv("PORT"))
-	if port == ":" {
-		port = ":8080" // Default port to listen on
-	}
+	port := resolvePort()
 	logging.Info("Server started at port %s", port)
 
 	// Explicit timeouts rather than http.ListenAndServe's defaults, which are
@@ -173,7 +222,43 @@ func main() {
 		// maxLoggedPath, maxLoggedUA in internal/web/logmiddleware.go).
 		MaxHeaderBytes: 64 << 10,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		logging.Fatal("Server failed: %v", err)
+
+	// Cancelled on SIGINT (Ctrl-C locally) or SIGTERM (what `docker stop` and
+	// `docker compose down` actually send) so a stop asks for a graceful
+	// shutdown instead of every in-flight request being cut off mid-response.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		// The listener itself failed (e.g. the port is already taken) - never
+		// reached on a normal shutdown, since Shutdown below makes
+		// ListenAndServe return http.ErrServerClosed instead.
+		if err != nil && err != http.ErrServerClosed {
+			logging.Fatal("Server failed: %v", err)
+		}
+	case <-ctx.Done():
+		logging.Info("Shutdown signal received, draining connections...")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			// Best-effort past this point - Shutdown only fails if the
+			// deadline hit before every connection finished draining, and the
+			// process is exiting either way.
+			logging.Error("Graceful shutdown did not finish cleanly: %v", err)
+		}
+
+		// Written once, on the way out, so a clean stop never loses a count -
+		// see trafficSnapshotInterval above.
+		if err := m.PersistNow(); err != nil {
+			logging.Error("Failed to persist traffic counters on shutdown: %v", err)
+		}
+		logging.Info("Shutdown complete")
 	}
 }

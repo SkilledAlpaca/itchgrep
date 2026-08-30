@@ -150,6 +150,11 @@ services:
     volumes:
       - "${DATA_PATH:-itchgrep-data}:/data"
     logging: *logging
+    # Deliberately no healthcheck: stanza. Its only endpoint is the crawl
+    # trigger, and there is no cheap liveness signal that does not also depend
+    # on crawl outcome - a failed or slow crawl must not mark this container
+    # unhealthy and restart-loop it mid-crawl, throwing away hours of progress
+    # every time.
 
   webserver:
     build:
@@ -199,6 +204,16 @@ services:
       # Read-write, not read-only: bleve takes a lock file inside the index
       # directory when opening it, even for search-only use.
       - "${DATA_PATH:-itchgrep-data}:/data"
+    # Exec form, not a shell string: distroless has no shell to run it in, so
+    # the check is the webserver binary's own "-healthcheck" flag, which GETs
+    # its own /healthz and exits 0 or 1 (see cmd/webserver/main.go). This is
+    # what cloudflared's `condition: service_healthy` below actually waits on.
+    healthcheck:
+      test: ["CMD", "/server", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     # The service this bound exists for: internal/web/logmiddleware.go writes
     # a network-truncated client IP and a query-present boolean on every
     # request (internal/web/probes.go does the same, plus the full path, for
@@ -258,8 +273,13 @@ services:
       # would break a plain local `docker compose up` for anyone who has no
       # tunnel. Unset, cloudflared exits immediately saying so.
       TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    # condition: service_healthy, not the bare form - previously cloudflared
+    # could start and route public traffic at a webserver container that
+    # existed but had not actually bound its port yet. This waits on the
+    # webserver's own healthcheck: stanza above instead.
     depends_on:
-      - webserver
+      webserver:
+        condition: service_healthy
     logging: *logging
 
 volumes:

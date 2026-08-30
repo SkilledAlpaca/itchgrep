@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRecordRequestUnderRace(t *testing.T) {
@@ -150,6 +151,28 @@ func TestNilCountersAreNoOps(t *testing.T) {
 		_ = c.Snapshot()
 	})
 	assert.Equal(t, Snapshot{}, c.Snapshot())
+}
+
+// TestPersistNowWritesCountersImmediately covers the shutdown path in
+// cmd/webserver/main.go: a graceful stop calls this directly, outside
+// StartSnapshotter's own ticker, and expects the write to have actually
+// landed by the time the process exits.
+func TestPersistNowWritesCountersImmediately(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	c := New()
+	c.RecordRequest(routeIndex, false, 200)
+	require.NoError(t, c.PersistNow())
+
+	restored := Restore()
+	assert.EqualValues(t, 1, restored.Snapshot().Total)
+}
+
+func TestPersistNowOnNilCountersIsANoOp(t *testing.T) {
+	var c *Counters
+	assert.NotPanics(t, func() {
+		assert.NoError(t, c.PersistNow())
+	})
 }
 
 func TestSnapshotAddsRestoredTotalsToLiveOnes(t *testing.T) {

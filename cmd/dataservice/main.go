@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"itchgrep/internal/config"
 	"itchgrep/internal/fetcher"
@@ -10,10 +11,12 @@ import (
 	"itchgrep/pkg/money"
 	"net/http"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/blevesearch/bleve"
@@ -23,6 +26,13 @@ import (
 // a background goroutine, and two concurrent scrapes would both write the
 // same storage.IndexDirName directory and corrupt the index.
 var scrapeInProgress atomic.Bool
+
+// activeCrawler points at the crawler currently running, if any, so a
+// shutdown signal can ask it for one last checkpoint before the process
+// exits. Set only inside fetchAndStoreAssets, on every exit path via defer;
+// scrapeInProgress already guarantees at most one crawl runs at a time, so
+// there is never more than one crawler to point at.
+var activeCrawler atomic.Pointer[crawler]
 
 func main() {
 	logging.Init("", true)
@@ -56,8 +66,55 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		logging.Fatal("Server failed to start: %v", err)
+
+	// Cancelled on SIGINT (Ctrl-C locally) or SIGTERM (what `docker stop` and
+	// `docker compose down` actually send), mirroring cmd/webserver/main.go.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			logging.Fatal("Server failed to start: %v", err)
+		}
+	case <-ctx.Done():
+		logging.Info("Shutdown signal received")
+
+		// The HTTP server only ever serves /trigger-fetch, which returns as
+		// soon as it has spawned the crawl goroutine - so there is nothing
+		// long-running to wait out here, and a short deadline is enough.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logging.Error("HTTP server shutdown did not finish cleanly: %v", err)
+		}
+		cancel()
+
+		// A crawl itself is NOT waited on here - it can run for six hours, and
+		// this process has ~10s to exit. Instead, if one is running, ask it
+		// for one last checkpoint so a resume picks up from close to where
+		// this run actually stopped rather than from whatever
+		// checkpointInterval last wrote on its own schedule. checkpoint()
+		// takes the crawler's own mutex for the duration, so this is safe
+		// alongside the crawl loop's own checkpoint(false) calls - both
+		// serialise on the same lock - rather than a race that would need
+		// restructuring the crawler to avoid.
+		//
+		// Best-effort, not airtight: activeCrawler is cleared by a defer right
+		// at the end of fetchAndStoreAssets, after DeleteCheckpoint has already
+		// run on a successful publish. A signal landing in that narrow,
+		// few-instructions-wide window would rewrite a checkpoint file for a
+		// crawl that just finished and already published - harmless (the next
+		// run would just resume a "complete" checkpoint and republish
+		// immediately) but worth naming rather than assuming away.
+		if c := activeCrawler.Load(); c != nil {
+			logging.Info("Crawl in progress; writing a final checkpoint before exit")
+			c.checkpoint(true)
+		}
 	}
 }
 
@@ -275,6 +332,10 @@ func fetchAndStoreAssets() error {
 		doneSlices:   make(map[string]struct{}, len(slices)),
 		runStart:     time.Now(),
 	}
+	// Published for the shutdown handler in main to find, and cleared on
+	// every exit path below via defer - see activeCrawler's own doc comment.
+	activeCrawler.Store(c)
+	defer activeCrawler.Store(nil)
 	c.resume(cfg.checkpointMaxAge)
 	// Computed after resume, not at PlanSlices: on a resumed run doneSlices is
 	// now populated, and pages already accounted for by the checkpoint must

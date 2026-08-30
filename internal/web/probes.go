@@ -57,6 +57,7 @@ var liveRoutes = map[string]bool{
 	"/opensearch.xml": true,
 	"/robots.txt":     true,
 	"/favicon.ico":    true,
+	"/healthz":        true,
 }
 
 // isProbe reports whether path matches the shape of the scanner sweep.
