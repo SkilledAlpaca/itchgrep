@@ -139,8 +139,11 @@ services:
       # here - see the SCRAPE_MAX_PAGES comment above. Setting it here would
       # always win over the code's own smoke-test shrink to 25, since the
       # code only applies that shrink when MAX_TAGS is unset in the process
-      # environment. Export MAX_TAGS in the shell (or an .env file) if a
-      # production run needs to override cmd/dataservice's default of 1000.
+      # environment. There is no pass-through line here, so exporting MAX_TAGS
+      # in the shell or .env has NO effect on a compose run; if a production
+      # run needs to override cmd/dataservice's default of 1000, add a
+      # literal MAX_TAGS: "<value>" line to this block for that run and
+      # remove it afterwards.
       # Rediscover the tag universe when the cached tags.json is older than this.
       TAG_CACHE_MAX_AGE: "${TAG_CACHE_MAX_AGE:-168h}"
       # Ignore a crawl checkpoint older than this. A checkpoint lets a run
