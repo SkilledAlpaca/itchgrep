@@ -211,7 +211,7 @@ func TestPublishIndexKeepsThePreviousIndexWhenNothingIsStaged(t *testing.T) {
 }
 
 // TestPublishIndexRecoversAnInterruptedPublish is the regression test for
-// idx 30: a process killed between PublishIndex's two renames leaves
+// A process killed between PublishIndex's two renames leaves
 // published missing and previous holding the last known-good index. The
 // next PublishIndex call - not a special recovery path, just the ordinary
 // call the next crawl or self-heal rebuild makes - must restore that index
@@ -278,7 +278,7 @@ func TestEnsureWritableCreatesTheDataDirectory(t *testing.T) {
 }
 
 // TestEnsureWritableFailsOnAnUnwritableDirectory is the regression test for
-// idx 7: a bind-mounted DATA_PATH never chown'd to the container's nonroot
+// A bind-mounted DATA_PATH never chown'd to the container's nonroot
 // uid must be caught by this probe in milliseconds, not six hours into a
 // crawl at buildIndex's own bleve.New call. Skipped when running as root
 // (uid 0), since root ignores directory permission bits on most platforms
@@ -301,7 +301,7 @@ func TestEnsureWritableFailsOnAnUnwritableDirectory(t *testing.T) {
 }
 
 // TestCleanupOrphanedTempFilesRemovesOldOnesOnly is the regression test for
-// idx 28: a process killed between os.CreateTemp and the rename in
+// A process killed between os.CreateTemp and the rename in
 // writeAtomic leaves a "*.tmp-*" file behind forever, since nothing else
 // ever globs for that pattern. cleanupOrphanedTempFiles must remove one old
 // enough to be abandoned while leaving a fresh one alone - a write genuinely
@@ -385,7 +385,7 @@ func TestGetHistoryOnEmptyStorageIsEmptyNotAnError(t *testing.T) {
 }
 
 // TestGetHistoryOnACorruptFileMovesItAsideAndStartsFresh is the regression
-// test for idx 29: history.json existing but failing to parse (a torn write,
+// test for the corrupt-file recovery path: history.json existing but failing to parse (a torn write,
 // a bad sector) used to be a real error GetHistory returned - and since
 // PutHistory calls GetHistory before every write, that made the corruption
 // permanent: no crawl could ever record history again. It must instead move
@@ -423,7 +423,7 @@ func TestPutHistoryStillWritesAfterACorruptFile(t *testing.T) {
 }
 
 // TestGetTrafficOnACorruptFileMovesItAsideAndLogsLoudly is the traffic.json
-// half of idx 29: unlike history.json, a corrupt traffic.json already fell
+// half of the same recovery contract: unlike history.json, a corrupt traffic.json already fell
 // back to zero counters (metrics.Restore discards any GetTraffic error) -
 // the bug was that it did so in total silence, with nothing in any log to
 // explain why /stats reset. GetTraffic itself must now move the bad file
@@ -443,7 +443,7 @@ func TestGetTrafficOnACorruptFileMovesItAsideAndLogsLoudly(t *testing.T) {
 }
 
 // TestGetTrafficOnAMissingFileDoesNotRenameAnything guards against the
-// obvious way to get idx 29 wrong: os.ErrNotExist (the ordinary first-boot
+// obvious way to get that recovery wrong: os.ErrNotExist (the ordinary first-boot
 // case) must never be treated as corruption - there is nothing to rename.
 func TestGetTrafficOnAMissingFileDoesNotRenameAnything(t *testing.T) {
 	dir := useTempDir(t)

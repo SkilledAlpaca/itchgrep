@@ -56,7 +56,7 @@ func TestLimiterDisabledWhenRateIsZero(t *testing.T) {
 	}
 }
 
-// TestLimiterCapsTheBucketMapAtMaxBuckets is the regression test for idx 11:
+// TestLimiterCapsTheBucketMapAtMaxBuckets is the regression test for the bounded-map contract:
 // evictLoop alone cannot bound the map against an attacker minting a fresh
 // identity every request faster than the 5-minute eviction sweep can reap
 // them. Once the map is already at maxBuckets, a brand new identity must

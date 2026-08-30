@@ -101,7 +101,7 @@ func TestProbeFilterLetsRealRoutesThrough(t *testing.T) {
 }
 
 // TestProbeFilterDrawsOnTheSharedLimiterBudget is the regression test for
-// idx 2: a probe must now cost the same rate-limiter token a real request
+// A probe must cost the same rate-limiter token a real request
 // does, so a scanner sweep cannot write to disk faster than the limiter
 // would ever let a legitimate client go. Proven here by exhausting a
 // single-token budget with one probe, then showing the same identity's next
@@ -122,7 +122,7 @@ func TestProbeFilterDrawsOnTheSharedLimiterBudget(t *testing.T) {
 }
 
 // TestProbeFilterStopsWritingOnceItsBudgetIsExhausted covers the other half
-// of idx 2: once a client's rate-limiter budget is spent, ProbeFilter must
+// of the same rule: once a client's rate-limiter budget is spent, ProbeFilter must
 // stop paying for the JSON marshal and disk write on every further hit -
 // otherwise a sustained sweep still writes unboundedly even though it is now
 // "rate limited" in name only. The response must stay a 404 either way; only

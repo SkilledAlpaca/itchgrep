@@ -68,7 +68,7 @@ func selfHealIndexFormat() error {
 // webserver holds it open for the life of its process (internal/cache/cache.go),
 // and scorch's bbolt lock defaults to an indefinite wait - a second opener
 // with no timeout blocks forever, taking scheduleCrawls and /trigger-fetch
-// down with it. See idx 0/1 in the adversarial review that caught this.
+// down with it.
 //
 // index_meta.json is checked first, off disk with no lock involved at all: a
 // missing directory, an unreadable or unparseable meta file, or a

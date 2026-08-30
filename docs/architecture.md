@@ -51,7 +51,6 @@ pkg/
 scripts/           host-side operations scripts (not part of either binary):
                     bootstrap-host.sh, export-logs.sh, update.sh,
                     itchgrep-logrotate.conf — see deployment.md
-tasks/             planning and design notes, not shipped code
 .github/workflows/ CI — see ci-cd.md
 data/              default DATA_DIR for a local `go run`; gitignored
 ```

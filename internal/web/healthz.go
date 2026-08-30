@@ -29,8 +29,7 @@ func HandleHealthz(w http.ResponseWriter, r *http.Request) {
 // started `--profile public` stack's cloudflared (gated on
 // service_healthy) still comes up while the crawl is in progress. /readyz
 // exists for an operator, or an external uptime monitor, that wants to tell
-// "the process is up" apart from "the site actually has something to serve"
-// - see idx 10 in the adversarial review that asked for it.
+// "the process is up" apart from "the site actually has something to serve".
 //
 // Mounted beside /healthz, outside the rate-limited group and inside
 // probes.go's liveRoutes (so it is never mistaken for a scanner probe) - the

@@ -33,7 +33,7 @@ func TestHealthzIsNeverAProbe(t *testing.T) {
 	assert.False(t, isProbe("/healthz"))
 }
 
-// TestHandleReadyzAnswersNoDataBeforeTheCacheHasLoaded is idx 10's core
+// TestHandleReadyzAnswersNoDataBeforeTheCacheHasLoaded is /readyz's core
 // case: unlike /healthz, /readyz must actually reflect whether a dataset has
 // ever loaded, so an operator (or an external monitor) can tell "the process
 // is up" apart from "there is something to serve".

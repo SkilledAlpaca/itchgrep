@@ -47,9 +47,9 @@ more reliable than this list going stale. As observed in this repository:
   logging limit."
 - A commit message stands alone: someone reading only `git log --oneline`
   should understand what changed and why without opening the diff.
-- There's no fixed branch-naming scheme enforced by tooling; branch names
-  used during development have included a short slug and a date (for
-  example, `refine/2026-08-29`).
+- There's no fixed branch-naming scheme enforced by tooling; a short slug
+  describing the change (for example, `fix/crawl-backoff` or
+  `docs/deploy-runbook`) works well.
 
 ## What must pass before a change lands
 
