@@ -53,6 +53,17 @@ type Asset struct {
 	// Free information: the crawl already fetches those pages as one of four
 	// orderings and previously discarded their sequence.
 	InvRecency int64
+
+	// FirstSeen is when this game id first appeared in a publish, carried
+	// forward publish over publish once set. Zero means unknown - either the
+	// asset predates this field, or (for a genuinely new asset) the crawl has
+	// not published since it arrived.
+	//
+	// Stamped once, at publish (cmd/dataservice), by diffing against the
+	// previous publish's assets.json - never collected per-slice, so a
+	// checkpoint resumed mid-crawl is unaffected and CheckpointVersion does not
+	// need bumping for this field.
+	FirstSeen time.Time
 }
 
 // unranked is where assets with no recency rank sort: after every asset that
@@ -67,6 +78,17 @@ func (a Asset) RecencyRank() int64 {
 		return unranked
 	}
 	return a.InvRecency
+}
+
+// FirstSeenUnix is the indexable form of FirstSeen: zero maps to zero rather
+// than to time.Time{}.Unix()'s year-one sentinel, so "unknown" is one value a
+// numeric range or sort can treat consistently instead of a large negative
+// number that happens to mean the same thing.
+func (a Asset) FirstSeenUnix() int64 {
+	if a.FirstSeen.IsZero() {
+		return 0
+	}
+	return a.FirstSeen.Unix()
 }
 
 // Free reports whether the asset can be had for nothing.
@@ -129,6 +151,13 @@ const (
 	SortPrice     = "price"     // cheapest first, across currencies
 	SortRecent    = "recent"    // itch.io's own newest ordering, as far as it reaches
 )
+
+// SortNew orders by FirstSeenUnix descending: newest arrivals first. Not one
+// of the ?sort= values a URL can select - it backs the /new page alone, which
+// offers exactly one ordering and no control to change it - but it lives
+// beside the rest of the vocabulary because the same resolvedSort/sortOrder
+// machinery in internal/cache implements it.
+const SortNew = "new"
 
 func (a Asset) String() string {
 	return fmt.Sprintf("GameId: %s, Title: %s, Author: %s, Description: %s, Link: %s, ThumbUrl: %s, Price: %s, InvPopularity: %d", a.GameId, a.Title, a.Author, a.Description, a.Link, a.ThumbUrl, a.Price, a.InvPopularity)
@@ -197,6 +226,11 @@ type IndexedAsset struct {
 	InvPopularity int64
 	RecencyRank   int64
 
+	// FirstSeenUnix is Asset.FirstSeenUnix(), duplicated onto the document
+	// because bleve can only filter and sort on what it indexed. Zero, like the
+	// field it mirrors, means unknown rather than "just arrived".
+	FirstSeenUnix int64
+
 	// PriceUSD is what the asset costs in dollars, per the exchange-rate
 	// snapshot in force when the index was built. It exists because "under $5"
 	// and "cheapest first" both need one number that compares across the
@@ -238,6 +272,7 @@ func NewIndexedAsset(a Asset, priceUSD float64) IndexedAsset {
 		SortTitle:     strings.ToLower(strings.TrimSpace(a.Title)),
 		InvPopularity: a.InvPopularity,
 		RecencyRank:   a.RecencyRank(),
+		FirstSeenUnix: a.FirstSeenUnix(),
 		PriceUSD:      priceUSD,
 	}
 }

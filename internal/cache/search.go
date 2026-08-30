@@ -37,6 +37,18 @@ type SearchOptions struct {
 	Price  string // "", or one of the models.Pricing* values
 	Sort   string // one of the Sort* constants; empty picks a sensible default
 	Page   int64
+
+	// MinFirstSeen filters to assets whose FirstSeenUnix is at least this
+	// value. Zero means no filter - most callers do not care when an asset
+	// first appeared, and a document stamped FirstSeenUnix 0 (unknown) would
+	// otherwise need special-casing to stay included by default.
+	MinFirstSeen int64
+
+	// Limit, when set, is the exact number of hits to fetch in one pass,
+	// overriding pageSize for the size of the single bleve request. It exists
+	// for /new, which shows a fixed-size page with no "next" to ask for -
+	// every other caller pages through pageSize and leaves this zero.
+	Limit int64
 }
 
 // Results is one page of assets plus the context the UI needs around them: how
@@ -55,7 +67,7 @@ type Results struct {
 // scores identically and "best match" degenerates into index order.
 func (o SearchOptions) resolvedSort() string {
 	switch o.Sort {
-	case models.SortPopular, models.SortTitle, models.SortPrice, models.SortRecent:
+	case models.SortPopular, models.SortTitle, models.SortPrice, models.SortRecent, models.SortNew:
 		return o.Sort
 	case models.SortRelevance:
 		if o.Query == "" {
@@ -75,7 +87,7 @@ func (o SearchOptions) resolvedSort() string {
 // answer than a search.
 func (o SearchOptions) filtered() bool {
 	return o.Query != "" || len(o.Tags) > 0 || len(o.ExcludeTags) > 0 ||
-		o.Price != "" || o.Author != ""
+		o.Price != "" || o.Author != "" || o.MinFirstSeen > 0
 }
 
 // Find answers a search, a filtered browse, or the plain front page.
@@ -159,7 +171,11 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	}
 
 	from := int((opts.Page - 1) * c.pageSize)
-	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts), int(c.pageSize), from, false)
+	size := int(c.pageSize)
+	if opts.Limit > 0 {
+		size = int(opts.Limit)
+	}
+	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts), size, from, false)
 	searchRequest.SortBy(sortOrder(opts.resolvedSort()))
 	searchRequest.AddFacet("tags", bleve.NewFacetRequest("TagSlugs", maxFacetTags))
 
@@ -241,6 +257,13 @@ func buildQuery(opts SearchOptions) query.Query {
 	}
 	if pq := priceQuery(opts.Price); pq != nil {
 		conjuncts = append(conjuncts, pq)
+	}
+	if opts.MinFirstSeen > 0 {
+		min := float64(opts.MinFirstSeen)
+		inclusive := true
+		rq := bleve.NewNumericRangeInclusiveQuery(&min, nil, &inclusive, nil)
+		rq.SetField("FirstSeenUnix")
+		conjuncts = append(conjuncts, rq)
 	}
 
 	var exclusions []query.Query
@@ -390,6 +413,11 @@ func sortOrder(sort string) []string {
 		// the popularity tiebreak is doing real work here rather than settling
 		// the occasional draw.
 		return []string{"RecencyRank", "InvPopularity"}
+	case models.SortNew:
+		// Descending, unlike RecencyRank above: a later FirstSeenUnix is a
+		// newer arrival, whereas a smaller InvRecency is. Assets stamped on the
+		// same publish tie on FirstSeenUnix, hence the same popularity tiebreak.
+		return []string{"-FirstSeenUnix", "InvPopularity"}
 	default:
 		return []string{"-_score", "InvPopularity"}
 	}
@@ -465,6 +493,9 @@ func describe(opts SearchOptions) string {
 	}
 	if opts.Price != "" {
 		parts = append(parts, opts.Price)
+	}
+	if opts.MinFirstSeen > 0 {
+		parts = append(parts, fmt.Sprintf("first seen >= %d", opts.MinFirstSeen))
 	}
 	parts = append(parts, "sorted by "+opts.resolvedSort())
 	return strings.Join(parts, ", ")

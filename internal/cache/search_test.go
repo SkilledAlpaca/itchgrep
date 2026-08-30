@@ -23,11 +23,13 @@ func fixtures() []models.Asset {
 		{GameId: "1", Title: "Pixel Art Tileset", Author: "ana", Description: "tiles",
 			Tags: []string{"2d", "pixel-art", "tileset"}, InvPopularity: 1},
 		{GameId: "2", Title: "Zebra Sprite Pack", Author: "bo", Description: "animals",
-			Tags: []string{"2d", "sprites"}, Price: "$4.95", InvPopularity: 2, InvRecency: 7},
+			Tags: []string{"2d", "sprites"}, Price: "$4.95", InvPopularity: 2, InvRecency: 7,
+			FirstSeen: time.Unix(2000, 0)},
 		{GameId: "3", Title: "Ambient Music Loops", Author: "cy", Description: "audio",
 			Tags: []string{"music"}, Price: "9.97€", InvPopularity: 3},
 		{GameId: "4", Title: "Pixel Art Icons", Author: "dee", Description: "icons",
-			Tags: []string{"2d", "pixel-art", "icons"}, InvPopularity: 4, InvRecency: 2},
+			Tags: []string{"2d", "pixel-art", "icons"}, InvPopularity: 4, InvRecency: 2,
+			FirstSeen: time.Unix(3000, 0)},
 		{GameId: "5", Title: "Art Deco Fonts", Author: "el", Description: "typefaces",
 			Tags: []string{"fonts"}, Price: "$1", InvPopularity: 5},
 	}
@@ -399,6 +401,43 @@ func TestAnUnclosedQuoteIsOrdinaryText(t *testing.T) {
 	got, err := c.Find(SearchOptions{Query: `"pixel art`, Page: 1})
 	require.NoError(t, err)
 	assert.NotEmpty(t, ids(got))
+}
+
+func TestFirstSeenFilterExcludesUnstamped(t *testing.T) {
+	// Only 2 and 4 carry a FirstSeen in the fixtures; everything else is old
+	// stock (or predates the feature) and must not show up as an arrival.
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{MinFirstSeen: 1, Page: 1})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"2", "4"}, ids(got))
+}
+
+func TestFirstSeenSortIsNewestFirst(t *testing.T) {
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{MinFirstSeen: 1, Sort: models.SortNew, Page: 1})
+	require.NoError(t, err)
+	// 4 was stamped later (3000) than 2 (2000).
+	assert.Equal(t, []string{"4", "2"}, ids(got))
+}
+
+func TestFirstSeenCutoffExcludesEarlierArrivals(t *testing.T) {
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{MinFirstSeen: 2500, Page: 1})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"4"}, ids(got))
+}
+
+func TestLimitOverridesPageSizeForASinglePass(t *testing.T) {
+	// /new asks for a fixed-size page independent of the configured page size,
+	// since it has no "next" to request.
+	c := newLoadedCache(t, 1)
+
+	got, err := c.Find(SearchOptions{MinFirstSeen: 1, Limit: 36, Page: 1})
+	require.NoError(t, err)
+	assert.Len(t, got.Assets, 2, "both stamped assets fit within Limit despite a page size of 1")
 }
 
 func TestAHitWithNoAssetBehindItIsDroppedNotRendered(t *testing.T) {

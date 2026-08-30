@@ -185,6 +185,20 @@ func fetchAndStoreAssets() {
 		return
 	}
 
+	// Read before this run's index is built, not just before PutAssets
+	// overwrites assets.json: stampFirstSeen has to run before NewIndexedAsset
+	// converts assets below, or the index just about to be published would
+	// carry no FirstSeen at all and /new would stay empty for one full cycle
+	// after every genuine arrival.
+	previousAssets, err := storage.GetAssets()
+	if err != nil {
+		// First ever publish, or an index from before this file existed.
+		// Diffing against nothing makes every asset "new", which is the
+		// honest answer for a dataset that never had a predecessor.
+		previousAssets = nil
+	}
+	stampFirstSeen(previousAssets, assets, time.Now().UTC())
+
 	// CREATING INDEX
 	//
 	// Built at the staging path, which sits beside the published index so that
@@ -291,17 +305,6 @@ func fetchAndStoreAssets() {
 	}
 	logging.Info("Successfully published index")
 
-	// Read before PutAssets overwrites this file: once it does, the previous
-	// publish's game ids are gone for good, and NewAssets/RemovedAssets below
-	// would have nothing left to diff against.
-	previousAssets, err := storage.GetAssets()
-	if err != nil {
-		// First ever publish, or an index from before this file existed.
-		// Diffing against nothing makes every asset "new", which is the
-		// honest answer for a dataset that never had a predecessor.
-		previousAssets = nil
-	}
-
 	logging.Info("Storing assets")
 	if err := storage.PutAssets(assets); err != nil {
 		logging.Error("Failed to put assets: %v", err)
@@ -351,6 +354,28 @@ func fetchAndStoreAssets() {
 	// behind, the next run would resume a finished crawl and skip every slice.
 	if err := storage.DeleteCheckpoint(); err != nil {
 		logging.Warning("Failed to delete crawl checkpoint: %v", err)
+	}
+}
+
+// stampFirstSeen carries FirstSeen forward from the previous publish, id by
+// id, and marks genuine newcomers with publishedAt.
+//
+// An id present in both publishes keeps whatever FirstSeen it already had,
+// including zero: old stock that predates this feature, or that arrived
+// before the previous publish ever recorded one, must never be relabelled as
+// new just because this happens to be the run that looked. Only an id absent
+// from the previous publish is a newcomer, so only those get stamped.
+func stampFirstSeen(previous, current []models.Asset, publishedAt time.Time) {
+	prevFirstSeen := make(map[string]time.Time, len(previous))
+	for _, a := range previous {
+		prevFirstSeen[a.GameId] = a.FirstSeen
+	}
+	for i := range current {
+		if fs, ok := prevFirstSeen[current[i].GameId]; ok {
+			current[i].FirstSeen = fs
+			continue
+		}
+		current[i].FirstSeen = publishedAt
 	}
 }
 

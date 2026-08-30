@@ -1,0 +1,40 @@
+package templates
+
+import "itchgrep/pkg/models"
+import "itchgrep/pkg/money"
+
+// ArrivalsPage renders /new: up to maxNewAssets FirstSeen-stamped assets,
+// newest first, with no pagination and no sidebar - a page, not another way
+// to slice the catalogue.
+//
+// "This week" in the heading is a label, not a promise the data always keeps:
+// the crawl runs roughly weekly but not on a guaranteed clock, so the
+// paragraph beneath it names the actual crawl the arrivals were stamped by
+// rather than leaving the heading as the only claim about the window.
+templ ArrivalsPage(assets []models.Asset, rates money.Rates, age Freshness, coverage Coverage) {
+	@Masthead(age, coverage)
+	<div id="page-content">
+		<div class="prose">
+			<h2>New this week</h2>
+			if len(assets) == 0 {
+				<p>
+					ITCHGREP started recording when an asset first appears with
+					this release, so nothing has been marked as new yet. The
+					next weekly crawl is the first one that can.
+				</p>
+			} else if age.Known() {
+				<p>
+					Assets first seen by the crawl completed
+					<time datetime={ age.DateTime() } title={ age.Absolute() }>{ age.Label() }</time>{ "." }
+				</p>
+			}
+		</div>
+		if len(assets) > 0 {
+			<div id="asset-list">
+				for _, asset := range assets {
+					@AssetCard(Filters{}, asset, rates)
+				}
+			</div>
+		}
+	</div>
+}

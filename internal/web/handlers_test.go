@@ -9,9 +9,11 @@ import (
 
 	"itchgrep/internal/cache"
 	"itchgrep/internal/metrics"
+	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
 
+	"github.com/blevesearch/bleve"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,9 +30,11 @@ func newTestRouter() (*chi.Mux, *handler) {
 	r.Get("/results", h.HandleResults)
 	r.Get("/about", h.HandleAbout)
 	r.Get("/stats", h.HandleStats)
+	r.Get("/new", h.HandleNew)
 	r.Head("/", h.HandleIndex)
 	r.Head("/about", h.HandleAbout)
 	r.Head("/stats", h.HandleStats)
+	r.Head("/new", h.HandleNew)
 	r.NotFound(Handle404)
 	return r, h
 }
@@ -250,6 +254,43 @@ func TestStatsPageCarriesNoPerClientInformation(t *testing.T) {
 	assert.NotContains(t, lower, "probe")
 	assert.NotContains(t, lower, "429")
 	assert.NotContains(t, lower, "5xx")
+}
+
+func TestNewIsUncachedAndUnavailableBeforeTheCacheLoads(t *testing.T) {
+	// Same rule as every other page: a server still waiting on its first load
+	// answers 503, and that answer must never be cached.
+	r, _ := newTestRouter()
+	w := get(t, r, "/new")
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	assert.Contains(t, w.Body.String(), "<title>", "the shell must still render")
+}
+
+func TestNewExplainsAnEmptyIndexRatherThanShowingNothing(t *testing.T) {
+	// A loaded index built before this feature shipped has no FirstSeen at
+	// all, so every query for one comes back empty. That must read as "wait
+	// for the next crawl", not as a blank page that looks broken.
+	t.Setenv("DATA_DIR", t.TempDir())
+	assets := []models.Asset{{GameId: "1", Title: "Old Stock"}}
+	require.NoError(t, storage.PutAssets(assets))
+
+	index, err := bleve.New(storage.IndexPath(), storage.IndexMapping())
+	require.NoError(t, err)
+	for _, a := range assets {
+		require.NoError(t, index.Index(a.GameId, models.NewIndexedAsset(a, 0)))
+	}
+	require.NoError(t, index.Close())
+
+	c := cache.NewCache(36)
+	require.NoError(t, c.RefreshDataCache())
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/new", h.HandleNew)
+
+	w := get(t, r, "/new")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "next weekly crawl")
 }
 
 func TestStatsResponseIsCachedBriefly(t *testing.T) {

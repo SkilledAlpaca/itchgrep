@@ -3,6 +3,7 @@ package main
 import (
 	"itchgrep/pkg/models"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -210,6 +211,45 @@ func TestAnEarlierRecencySightingWins(t *testing.T) {
 
 	c.record([]models.Asset{asset("a")}, nil, 6)
 	assert.Equal(t, int64(2), c.recency["a"], "a later sighting must not push it back")
+}
+
+func TestStampFirstSeenMarksOnlyGenuineNewcomers(t *testing.T) {
+	previous := []models.Asset{
+		{GameId: "old-stamped", FirstSeen: time.Unix(1000, 0)},
+		{GameId: "old-stock"}, // FirstSeen zero: predates the feature
+	}
+	publishedAt := time.Unix(5000, 0)
+	current := []models.Asset{
+		{GameId: "old-stamped"},
+		{GameId: "old-stock"},
+		{GameId: "brand-new"},
+	}
+
+	stampFirstSeen(previous, current, publishedAt)
+
+	byID := map[string]models.Asset{}
+	for _, a := range current {
+		byID[a.GameId] = a
+	}
+	assert.Equal(t, time.Unix(1000, 0), byID["old-stamped"].FirstSeen,
+		"a non-zero FirstSeen must carry forward unchanged")
+	assert.True(t, byID["old-stock"].FirstSeen.IsZero(),
+		"old stock with no recorded FirstSeen must never be relabelled as new")
+	assert.Equal(t, publishedAt, byID["brand-new"].FirstSeen,
+		"only an id absent from the previous publish is a genuine newcomer")
+}
+
+func TestStampFirstSeenWithNoPreviousPublishMarksEverythingNew(t *testing.T) {
+	// The very first publish after this feature ships, or after any publish
+	// that lost assets.json, has nothing to diff against.
+	publishedAt := time.Unix(9000, 0)
+	current := []models.Asset{{GameId: "a"}, {GameId: "b"}}
+
+	stampFirstSeen(nil, current, publishedAt)
+
+	for _, a := range current {
+		assert.Equal(t, publishedAt, a.FirstSeen)
+	}
 }
 
 func TestRecencyIsStampedOntoAssetsAtTheEnd(t *testing.T) {

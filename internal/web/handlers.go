@@ -36,6 +36,11 @@ const statsMaxAge = 60
 // longer the input, and no legitimate search needs more than this.
 const maxQueryLen = 200
 
+// maxNewAssets caps /new. It is a page, not a feed - there is no "load more"
+// - so this has to be generous enough to feel complete on its own rather than
+// a teaser for a list the page never offers the rest of.
+const maxNewAssets = 72
+
 // maxTagLen bounds one tag slug. itch.io's longest is well under this.
 const maxTagLen = 64
 
@@ -233,6 +238,33 @@ func (h *handler) find(filters templates.Filters, page int64) (templates.Results
 		// that can only return nothing.
 		HasMore: page*h.cache.PageSize() < found.Total,
 	}, nil
+}
+
+// HandleNew serves /new: the newest arrivals the crawl has stamped a
+// FirstSeen for, most recent first, capped rather than paged.
+//
+// MinFirstSeen: 1 is "FirstSeenUnix > 0" - every genuine arrival has a real
+// Unix second in it, so anything at or above 1 is stamped and anything at 0
+// is the unknown old stock this page must never show. Limit bypasses the
+// configured page size entirely: this page has no further page to request, so
+// its cap is a property of the page, not of pagination.
+func (h *handler) HandleNew(w http.ResponseWriter, r *http.Request) {
+	found, err := h.cache.Find(cache.SearchOptions{
+		MinFirstSeen: 1,
+		Sort:         models.SortNew,
+		Limit:        maxNewAssets,
+		Page:         1,
+	})
+	if err != nil {
+		logging.Error("Error rendering /new: %s", err)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(statusFor(err))
+		templates.Layout("New — ITCHGREP", templates.ArrivalsPage(nil, h.cache.Rates(), h.freshness(), h.coverage())).Render(r.Context(), w)
+		return
+	}
+
+	h.cacheable(w)
+	templates.Layout("New — ITCHGREP", templates.ArrivalsPage(found.Assets, h.cache.Rates(), h.freshness(), h.coverage())).Render(r.Context(), w)
 }
 
 // parseFilters reads the filter state out of a request.

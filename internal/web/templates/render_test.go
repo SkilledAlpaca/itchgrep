@@ -321,6 +321,28 @@ func TestTheAuthorOnACardFiltersToThatAuthor(t *testing.T) {
 	assert.Contains(t, html, `href="/?author=ana"`)
 }
 
+func TestArrivalsPageRendersCardsNewestFirst(t *testing.T) {
+	assets := []models.Asset{
+		{GameId: "1", Title: "Freshly Arrived", Link: "https://a.itch.io/f"},
+	}
+	age := NewFreshness(time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), 0)
+	html := render(t, ArrivalsPage(assets, money.Fallback(), age, Coverage{}))
+
+	assert.Contains(t, html, "New this week")
+	assert.Contains(t, html, "Freshly Arrived")
+	assert.Contains(t, html, "2 days ago", "the window is stated from the actual crawl time, not asserted blindly")
+}
+
+func TestArrivalsPageExplainsAnEmptyIndex(t *testing.T) {
+	// An index built before this feature shipped has nothing stamped yet. That
+	// has to read as "wait for the next crawl", not as a page that looks
+	// broken or forgot to render its results.
+	html := render(t, ArrivalsPage(nil, money.Fallback(), Freshness{}, Coverage{}))
+
+	assert.Contains(t, html, "next weekly crawl")
+	assert.NotContains(t, html, `id="asset-list"`)
+}
+
 func TestChangingCurrencyKeepsEveryOtherFilter(t *testing.T) {
 	// The currency picker is a form, so anything it does not carry as a hidden
 	// field is discarded the moment somebody uses it.
