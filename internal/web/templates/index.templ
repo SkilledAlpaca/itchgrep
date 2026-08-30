@@ -40,6 +40,15 @@ templ IndexAge(f Freshness, c Coverage) {
 	}
 }
 
+// FeedLink is the results page's feed auto-discovery tag: a reader that
+// supports it offers to subscribe without the visitor hunting for a URL.
+// Relative like every other internal link the templates package writes - the
+// browser resolves it against the page it is embedded in - unlike the feed
+// document's own self-referential id and links, which must be absolute.
+templ FeedLink(f Filters) {
+	<link rel="alternate" type="application/atom+xml" title={ feedTitle(f) } href={ f.FeedURL() }/>
+}
+
 templ Masthead(age Freshness, coverage Coverage) {
 	<header class="masthead">
 		// The age and coverage sit under the wordmark rather than at the foot

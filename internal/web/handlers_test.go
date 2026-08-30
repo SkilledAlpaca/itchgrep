@@ -1,10 +1,13 @@
 package web
 
 import (
+	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"itchgrep/internal/cache"
@@ -31,6 +34,7 @@ func newTestRouter() (*chi.Mux, *handler) {
 	r.Get("/about", h.HandleAbout)
 	r.Get("/stats", h.HandleStats)
 	r.Get("/new", h.HandleNew)
+	r.Get("/feed", h.HandleFeed)
 	r.Head("/", h.HandleIndex)
 	r.Head("/about", h.HandleAbout)
 	r.Head("/stats", h.HandleStats)
@@ -297,4 +301,203 @@ func TestStatsResponseIsCachedBriefly(t *testing.T) {
 	r, _ := newTestRouter()
 	w := get(t, r, "/stats")
 	assert.Equal(t, "public, max-age=60", w.Header().Get("Cache-Control"))
+}
+
+// atomFeedXML is an independent decode target for the rendered feed body - it
+// mirrors the public shape of an Atom document without depending on the
+// templates package's own encoding types, so a successful parse here proves
+// something an external feed reader would also accept, not just that Go's
+// encoder can read back its own struct.
+type atomFeedXML struct {
+	XMLName xml.Name       `xml:"feed"`
+	ID      string         `xml:"id"`
+	Title   string         `xml:"title"`
+	Updated string         `xml:"updated"`
+	Links   []atomLinkXML  `xml:"link"`
+	Entries []atomEntryXML `xml:"entry"`
+}
+
+type atomLinkXML struct {
+	Rel  string `xml:"rel,attr"`
+	Type string `xml:"type,attr"`
+	Href string `xml:"href,attr"`
+}
+
+type atomEntryXML struct {
+	ID     string `xml:"id"`
+	Title  string `xml:"title"`
+	Author struct {
+		Name string `xml:"name"`
+	} `xml:"author"`
+	Updated string      `xml:"updated"`
+	Link    atomLinkXML `xml:"link"`
+	Summary struct {
+		Type string `xml:"type,attr"`
+		Text string `xml:",chardata"`
+	} `xml:"summary"`
+}
+
+// loadedFeedCache builds a cache over a fixture set shaped for the feed
+// tests: 60 genuine arrivals (one more than maxFeedEntries, to exercise the
+// cap), one differently-tagged arrival (for filter passthrough), and one
+// asset with no FirstSeen at all - old stock that must never appear in a
+// feed no matter what else it matches.
+func loadedFeedCache(t *testing.T) *cache.Cache {
+	t.Helper()
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	var assets []models.Asset
+	for i := 1; i <= 60; i++ {
+		assets = append(assets, models.Asset{
+			GameId:        fmt.Sprintf("new-%d", i),
+			Title:         fmt.Sprintf("Arrival %d", i),
+			Author:        "ana",
+			Description:   "a pack of assets",
+			Link:          fmt.Sprintf("https://ana.itch.io/arrival-%d", i),
+			Price:         "$1.00",
+			Tags:          []string{"2d"},
+			InvPopularity: int64(i),
+			// Strictly increasing, so arrival 60 is always the newest.
+			FirstSeen: time.Unix(int64(1_700_000_000+i), 0),
+		})
+	}
+	assets = append(assets,
+		models.Asset{
+			GameId: "music-1", Title: "Ambient Loops", Author: "cy",
+			Description: "audio", Link: "https://cy.itch.io/ambient",
+			Tags: []string{"music"}, InvPopularity: 1,
+			// Older than every "Arrival N" fixture, so it never displaces
+			// arrival-60 as the newest entry - it only needs FirstSeen > 0 to
+			// qualify for the feed at all.
+			FirstSeen: time.Unix(1_600_000_000, 0),
+		},
+		models.Asset{
+			GameId: "old-1", Title: "Old Stock", Author: "zz",
+			Link: "https://zz.itch.io/old", Tags: []string{"2d"}, InvPopularity: 1,
+			// FirstSeen left zero: predates the feature, must stay out of /feed.
+		},
+	)
+
+	require.NoError(t, storage.PutAssets(assets))
+
+	index, err := bleve.New(storage.IndexPath(), storage.IndexMapping())
+	require.NoError(t, err)
+	batch := index.NewBatch()
+	for _, a := range assets {
+		require.NoError(t, batch.Index(a.GameId, models.NewIndexedAsset(a, 0)))
+	}
+	require.NoError(t, index.Batch(batch))
+	require.NoError(t, index.Close())
+
+	c := cache.NewCache(36)
+	require.NoError(t, c.RefreshDataCache())
+	return c
+}
+
+func TestFeedIsUncachedAndUnavailableBeforeTheCacheLoads(t *testing.T) {
+	// Same rule as every other page: a server still waiting on its first load
+	// answers 503, and that answer must never be cached.
+	r, _ := newTestRouter()
+	w := get(t, r, "/feed")
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+}
+
+func TestFeedIsValidAtomCappedAtFiftyNewestArrivals(t *testing.T) {
+	c := loadedFeedCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/feed", h.HandleFeed)
+
+	w := get(t, r, "/feed")
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/atom+xml; charset=utf-8", w.Header().Get("Content-Type"))
+	assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"))
+
+	var feed atomFeedXML
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &feed), "the rendered body must be parseable Atom")
+
+	require.Len(t, feed.Entries, 50, "capped at maxFeedEntries even though 61 assets carry a FirstSeen")
+	assert.Equal(t, "https://ana.itch.io/arrival-60", feed.Entries[0].ID, "newest arrival first")
+	assert.Equal(t, "Arrival 60", feed.Entries[0].Title)
+	assert.Equal(t, "ana", feed.Entries[0].Author.Name)
+	assert.Equal(t, "https://ana.itch.io/arrival-60", feed.Entries[0].Link.Href)
+	assert.Equal(t, "alternate", feed.Entries[0].Link.Rel)
+	assert.Equal(t, time.Unix(1_700_000_060, 0).UTC().Format(time.RFC3339), feed.Entries[0].Updated)
+	assert.Contains(t, feed.Entries[0].Summary.Text, "a pack of assets", "description carried through")
+	assert.Contains(t, feed.Entries[0].Summary.Text, "$1.00", "price appended to the summary")
+
+	for _, e := range feed.Entries {
+		assert.NotEqual(t, "https://zz.itch.io/old", e.ID, "old stock with no FirstSeen must never appear in a feed")
+	}
+
+	assert.Equal(t, feed.Entries[0].Updated, feed.Updated, "feed-level updated is the newest entry's FirstSeen")
+
+	var self, alt bool
+	for _, l := range feed.Links {
+		switch l.Rel {
+		case "self":
+			self = true
+			assert.Equal(t, "https://itchgrep.com/feed", l.Href)
+			assert.Equal(t, "application/atom+xml", l.Type)
+		case "alternate":
+			alt = true
+			assert.Equal(t, "https://itchgrep.com/", l.Href)
+		}
+	}
+	assert.True(t, self, "feed must carry a self link")
+	assert.True(t, alt, "feed must carry a link back to the html page it describes")
+	assert.Equal(t, "https://itchgrep.com/feed", feed.ID)
+}
+
+func TestFeedFiltersPassThroughFromTheQueryString(t *testing.T) {
+	// Any share URL's query string has to be a valid feed query: the same
+	// tags that narrow /?tags=music narrow /feed?tags=music.
+	c := loadedFeedCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/feed", h.HandleFeed)
+
+	w := get(t, r, "/feed?tags=music")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var feed atomFeedXML
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &feed))
+
+	require.Len(t, feed.Entries, 1)
+	assert.Equal(t, "https://cy.itch.io/ambient", feed.Entries[0].ID)
+}
+
+func TestEmptyFeedIsValidNotAnError(t *testing.T) {
+	// A filter matching nothing is a legitimate subscription state - a
+	// birdwatcher's saved search for a rare tag combination sits empty for
+	// months at a time - so this must render 200 and an empty, still-parseable
+	// feed rather than treat "no matches" as a failure.
+	c := loadedFeedCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/feed", h.HandleFeed)
+
+	w := get(t, r, "/feed?q=nonexistentnonsense")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var feed atomFeedXML
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &feed))
+	assert.Empty(t, feed.Entries)
+	assert.NotEmpty(t, feed.Updated, "an empty feed still needs a valid updated timestamp")
+	assert.Equal(t, c.DataUpdatedTime().UTC().Format(time.RFC3339), feed.Updated,
+		"falls back to the newest crawl time when there is no entry to take it from")
+}
+
+func TestIndexAdvertisesTheFeedForTheCurrentFilters(t *testing.T) {
+	// The auto-discovery link has to describe the page it is on, not always
+	// the unfiltered feed - otherwise subscribing from a filtered search would
+	// silently hand a reader everything instead.
+	r, _ := newTestRouter()
+	w := get(t, r, "/?tags=2d")
+
+	body := w.Body.String()
+	assert.Contains(t, body, `<link rel="alternate" type="application/atom+xml"`)
+	assert.Contains(t, body, `href="/feed?tags=2d"`)
 }

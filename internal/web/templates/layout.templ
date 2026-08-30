@@ -1,6 +1,19 @@
 package templates
 
+// Layout is the plain page shell: every route that has no per-page head
+// content (feed discovery, canonical links, ...) renders through this rather
+// than through LayoutHead with an explicit nil, so most handlers do not have
+// to know the extension point exists.
 templ Layout(title string, content templ.Component) {
+	@LayoutHead(title, nil, content)
+}
+
+// LayoutHead is the page shell with room for extra <head> markup - currently
+// just the results page's feed auto-discovery link. A second templ function
+// rather than a variadic or options struct: templ components have no
+// zero-argument-omission of their own, and head being nil-checked here keeps
+// every other caller's Layout(title, content) call unchanged.
+templ LayoutHead(title string, head templ.Component, content templ.Component) {
 	<!DOCTYPE html>
 	<html lang="en">
 		<head>
@@ -13,6 +26,9 @@ templ Layout(title string, content templ.Component) {
 			</title>
 			<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2314161a'/%3E%3Ctext x='8' y='12' font-family='monospace' font-size='11' font-weight='bold' text-anchor='middle' fill='%237ee787'%3E%3E%3C/text%3E%3C/svg%3E"/>
 			<link href="/static/app.css" rel="stylesheet"/>
+			if head != nil {
+				@head
+			}
 			<!-- htmx must run first: app.js's htmx:beforeSwap/htmx:afterSwap
 			     listeners are meaningless before htmx registers the events they
 			     hook. Both are deferred, and defer preserves document order, so

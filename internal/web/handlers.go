@@ -44,6 +44,19 @@ const maxNewAssets = 72
 // maxTagLen bounds one tag slug. itch.io's longest is well under this.
 const maxTagLen = 64
 
+// maxFeedEntries caps /feed for the same reason maxNewAssets caps /new: a
+// feed has no pagination a reader would ever ask for a further page through,
+// so the cap has to be generous enough that a normal poll interval never
+// truncates it rather than a teaser for a list the feed never offers the
+// rest of.
+const maxFeedEntries = 50
+
+// feedMaxAge is longer than fragmentMaxAge: a feed reader polls on a
+// schedule of its own choosing rather than a person reloading a page, and the
+// underlying data only changes once a crawl publishes - see fragmentMaxAge
+// for the same reasoning applied to a shorter window.
+const feedMaxAge = 3600
+
 // maxAuthorLen bounds an author parameter. itch.io display names are far
 // shorter; this only exists to keep a hand-written URL from becoming a long
 // term lookup.
@@ -155,12 +168,15 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		logging.Error("Error rendering index: %s", err)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(statusFor(err))
-		templates.Layout(pageTitle(filters), templates.Index(filters, templates.Results{Page: page}, h.freshness(), h.coverage())).Render(r.Context(), w)
+		templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters), templates.Index(filters, templates.Results{Page: page}, h.freshness(), h.coverage())).Render(r.Context(), w)
 		return
 	}
 
 	h.cacheable(w)
-	templates.Layout(pageTitle(filters), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
+	// LayoutHead, not Layout: this is the one page a feed for the current
+	// filters makes sense on, so it carries the auto-discovery link every
+	// other page has no reason to.
+	templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
 }
 
 // HandleResults serves one page of results as a fragment.
@@ -265,6 +281,50 @@ func (h *handler) HandleNew(w http.ResponseWriter, r *http.Request) {
 
 	h.cacheable(w)
 	templates.Layout("New — ITCHGREP", templates.ArrivalsPage(found.Assets, h.cache.Rates(), h.freshness(), h.coverage())).Render(r.Context(), w)
+}
+
+// HandleFeed serves /feed: an Atom document for the current filters.
+// parseFilters is reused exactly, so any share URL's query string is a valid
+// feed query - the same tags, author and price narrowing the results page
+// would apply. Entries are bounded to genuine arrivals the same way /new is
+// (MinFirstSeen: 1), newest first, capped rather than paged, because a feed
+// reader has no notion of "load more" to offer.
+func (h *handler) HandleFeed(w http.ResponseWriter, r *http.Request) {
+	filters := parseFilters(r, h.cache.Rates())
+
+	found, err := h.cache.Find(cache.SearchOptions{
+		Query:        filters.Query,
+		Tags:         filters.Tags,
+		ExcludeTags:  filters.NotTags,
+		Author:       filters.Author,
+		Price:        filters.Price,
+		MinFirstSeen: 1,
+		Sort:         models.SortNew,
+		Limit:        maxFeedEntries,
+		Page:         1,
+	})
+	if err != nil {
+		logging.Error("Error rendering /feed: %s", err)
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "Feed temporarily unavailable", statusFor(err))
+		return
+	}
+
+	body, err := templates.NewFeed(filters, found.Assets, h.cache.Rates(), h.cache.DataUpdatedTime()).Render()
+	if err != nil {
+		// xml.Marshal on this struct only fails on a value it cannot encode,
+		// which nothing here supplies - but the response has already
+		// promised atom+xml, so a failure here must not fall through to
+		// writing one anyway.
+		logging.Error("Error encoding /feed: %s", err)
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "Feed temporarily unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", feedMaxAge))
+	w.Write(body)
 }
 
 // parseFilters reads the filter state out of a request.

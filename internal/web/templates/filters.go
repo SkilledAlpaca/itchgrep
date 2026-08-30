@@ -124,6 +124,19 @@ func (f Filters) FragmentURL(page int64) string {
 	return "/results?" + v.Encode()
 }
 
+// FeedURL is the /feed address for these filters, in the same canonical
+// parameter order ShareURL uses. Sort is never carried onto it even when set:
+// the feed's ordering is always newest-arrival-first, so encoding a sort that
+// the feed itself ignores would only make two URLs cache-key the same feed.
+func (f Filters) FeedURL() string {
+	v := f.Values()
+	v.Del("sort")
+	if len(v) == 0 {
+		return "/feed"
+	}
+	return "/feed?" + v.Encode()
+}
+
 // Any reports whether anything is filtering the catalogue, which is what
 // decides whether the "clear all" control is worth rendering.
 //

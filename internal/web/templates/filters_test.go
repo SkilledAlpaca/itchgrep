@@ -95,6 +95,26 @@ func TestFragmentURLCarriesThePage(t *testing.T) {
 	assert.Equal(t, "/results?page=3&q=pixel+art&tags=2d", f.FragmentURL(3))
 }
 
+func TestFeedURLOfNothingIsTheBarePath(t *testing.T) {
+	assert.Equal(t, "/feed", Filters{}.FeedURL())
+}
+
+func TestFeedURLCarriesTheSameFiltersAsShareURL(t *testing.T) {
+	// A feed reader has to be able to subscribe to exactly what a results page
+	// shows: same tags, same query, in the same canonical order ShareURL uses.
+	f := Filters{Query: "pixel art"}.WithTag("2d").WithTag("free")
+	assert.Equal(t, "/feed?q=pixel+art&tags=2d%2Cfree", f.FeedURL())
+	assert.Equal(t, "/?q=pixel+art&tags=2d%2Cfree", f.ShareURL())
+}
+
+func TestFeedURLNeverCarriesSort(t *testing.T) {
+	// The feed's ordering is always newest-arrival-first regardless of what a
+	// results page is sorted by, so encoding it would only make two URLs
+	// cache-key the same feed differently.
+	f := Filters{Sort: models.SortTitle}
+	assert.NotContains(t, f.FeedURL(), "sort=")
+}
+
 func TestResolvedSortDependsOnWhetherAnythingWasSearchedFor(t *testing.T) {
 	// With no query every document scores the same, so "best match" would be an
 	// arbitrary order presented as a ranking.

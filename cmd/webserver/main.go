@@ -114,6 +114,7 @@ func main() {
 		r.Get("/about", h.HandleAbout)
 		r.Get("/stats", h.HandleStats)
 		r.Get("/new", h.HandleNew)
+		r.Get("/feed", h.HandleFeed)
 		// chi routes by method, so without this a HEAD is a 405 - and HEAD is
 		// what uptime monitors, link checkers and preview fetchers send first.
 		// net/http discards the body of a HEAD response itself, so the same
@@ -122,6 +123,7 @@ func main() {
 		r.Head("/about", h.HandleAbout)
 		r.Head("/stats", h.HandleStats)
 		r.Head("/new", h.HandleNew)
+		r.Head("/feed", h.HandleFeed)
 	})
 	r.NotFound(web.Handle404)
 
