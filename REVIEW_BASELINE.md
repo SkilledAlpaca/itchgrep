@@ -14,7 +14,7 @@ Baseline commit: `0808278` on branch `refine/2026-08-29`.
 | Non-generated Go LOC | `find . -name '*.go' ! -name '*_templ.go' \| xargs wc -l` | 12,139 |
 | Direct dependencies | `go.mod` require (non-indirect) | 8 |
 | Total require lines | `go.mod` | 33 |
-| Image sizes | `docker build` Dockerfile.webserver / Dockerfile.dataservice | pending measurement (recorded in final report) |
+| Image sizes | `docker build` Dockerfile.webserver / Dockerfile.dataservice | webserver 48.4 MB, dataservice 47.4 MB |
 
 ## Required configuration (from docker-compose.yml / .env.example)
 
