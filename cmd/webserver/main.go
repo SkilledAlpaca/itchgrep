@@ -84,8 +84,8 @@ func main() {
 	// table to match against. See internal/web/probes.go for why this exists
 	// alongside the Cloudflare WAF rule rather than instead of it - it is the
 	// backstop for whatever reaches the origin directly.
-	r.Use(web.ProbeFilter(m, web.TrustProxyHeaders()))
-	r.Use(web.RequestLogger(web.TrustProxyHeaders(), m))
+	r.Use(web.ProbeFilter(m, web.TrustProxyHeaders(), web.TrustedProxyCIDRs()))
+	r.Use(web.RequestLogger(web.TrustProxyHeaders(), web.TrustedProxyCIDRs(), m))
 
 	// The same variable the dataservice schedules from, so the masthead can say
 	// when the next rebuild is due. Read here rather than guessed from the gap
@@ -165,6 +165,13 @@ func main() {
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		// net/http defaults to 1MB of request headers, which no legitimate
+		// request here needs - a search query, a tag slug and a handful of
+		// cookies fit comfortably under this, and a smaller ceiling is that
+		// much less an attacker-controlled request line can turn into before
+		// truncation even gets a chance to bound what reaches the log (see
+		// maxLoggedPath, maxLoggedUA in internal/web/logmiddleware.go).
+		MaxHeaderBytes: 64 << 10,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		logging.Fatal("Server failed: %v", err)

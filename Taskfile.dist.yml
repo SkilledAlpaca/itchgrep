@@ -44,7 +44,10 @@ tasks:
   scrape:
     desc: Trigger a scrape on a running dataservice
     cmds:
-      - curl -sS -X GET "localhost:8080/trigger-fetch" && echo
+      # POST only: handleFetchTrigger rejects GET, since a state-changing,
+      # unauthenticated endpoint answering GET is triggerable by a stray
+      # <img src=...> on any page a browser on the same host loads.
+      - curl -sS -X POST "localhost:8080/trigger-fetch" && echo
 
   smoke:
     desc: Exercise the whole pipeline in a couple of minutes against a scratch dir
@@ -58,7 +61,7 @@ tasks:
     cmds:
       - defer: rm -rf ./data-smoke
       - go run ./cmd/dataservice &
-      - sleep 3 && curl -sS "localhost:8080/trigger-fetch" && echo
+      - sleep 3 && curl -sS -X POST "localhost:8080/trigger-fetch" && echo
       - wait
 
   # --------------------------------

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -255,6 +256,30 @@ func TestResultsRejectAnInvalidPage(t *testing.T) {
 	r, _ := newTestRouter()
 	assert.Equal(t, http.StatusBadRequest, get(t, r, "/results?page=0").Code)
 	assert.Equal(t, http.StatusBadRequest, get(t, r, "/results?page=abc").Code)
+}
+
+func TestResultsRejectAPageLargeEnoughToOverflowTheOffsetMath(t *testing.T) {
+	// (page-1)*pageSize overflows int64 for a page this large, wrapping
+	// negative and reaching the cache's slicing arithmetic as a negative
+	// start/from - previously a panic, not a 400.
+	r, _ := newTestRouter()
+	assert.Equal(t, http.StatusBadRequest, get(t, r, "/?page=256204778801521552").Code)
+	assert.Equal(t, http.StatusBadRequest, get(t, r, "/results?page=256204778801521552").Code)
+
+	// Just over the cap, and at it, so the boundary itself is pinned down
+	// rather than just an extreme value on one side of it.
+	assert.Equal(t, http.StatusBadRequest, get(t, r, fmt.Sprintf("/results?page=%d", maxPage+1)).Code)
+}
+
+func TestStatusForReservesBadRequestForAnUnreachableCase(t *testing.T) {
+	// ErrNotReady is the one error a visitor can cause (asking before the
+	// first crawl has loaded) and it gets its own 503. Everything else out of
+	// cache.Find - a corrupt segment, an IO failure - is the server's fault,
+	// not the request's, and must count against 5xx monitoring rather than
+	// hide as a 400. The invalid-page case that used to reach here never does
+	// any more: pageParam rejects it before the cache is touched.
+	assert.Equal(t, http.StatusServiceUnavailable, statusFor(cache.ErrNotReady))
+	assert.Equal(t, http.StatusInternalServerError, statusFor(errors.New("corrupt segment")))
 }
 
 func TestQueryIsClamped(t *testing.T) {

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -92,10 +93,10 @@ func isProbe(path string) bool {
 // routes to a separate file from the access stream, so the access log stays
 // clean while the probe traffic itself remains fully recorded.
 //
-// trustProxy is threaded through to ClientIP for the same reason as
-// RequestLogger: the limiter, the access log, and this filter must all agree
-// on where a client's identity comes from.
-func ProbeFilter(m *metrics.Counters, trustProxy bool) func(http.Handler) http.Handler {
+// trustProxy and trustedCIDRs are threaded through to ClientIP for the same
+// reason as RequestLogger: the limiter, the access log, and this filter must
+// all agree on where a client's identity comes from.
+func ProbeFilter(m *metrics.Counters, trustProxy bool, trustedCIDRs []*net.IPNet) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isProbe(r.URL.Path) {
@@ -104,9 +105,9 @@ func ProbeFilter(m *metrics.Counters, trustProxy bool) func(http.Handler) http.H
 				record := probeRecord{
 					Ts:     time.Now().UTC().Format(time.RFC3339Nano),
 					Kind:   "probe",
-					IP:     AnonymizeIP(ClientIP(r, trustProxy)),
+					IP:     AnonymizeIP(ClientIP(r, trustProxy, trustedCIDRs)),
 					Method: r.Method,
-					Path:   r.URL.Path,
+					Path:   truncate(r.URL.Path, maxLoggedPath),
 					UA:     truncateUA(r.UserAgent()),
 				}
 				line, err := json.Marshal(record)

@@ -14,6 +14,15 @@
 // the same directory and renaming it into place: rename is atomic within a
 // filesystem, so a reader sees either the whole previous file or the whole new
 // one.
+//
+// That reader-visible atomicity is a different guarantee from crash
+// durability. The rename makes the new name appear all-or-nothing to a
+// concurrent reader the instant it happens, in memory; whether the rename
+// itself has reached disk yet is a separate question, answered only by
+// fsyncing the directory it happened in. writeAtomic does both: the reader
+// guarantee always holds, and the durability guarantee holds unless the
+// platform cannot sync a directory at all, which is logged rather than
+// treated as a write failure.
 package storage
 
 import (
@@ -23,6 +32,7 @@ import (
 	"itchgrep/pkg/models"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"itchgrep/internal/logging"
@@ -106,7 +116,45 @@ func writeAtomic(name string, data []byte) error {
 	if err := os.Rename(tmpName, filepath.Join(dir, name)); err != nil {
 		return fmt.Errorf("os.Rename: %w", err)
 	}
+	// The rename is now visible to concurrent readers - that guarantee never
+	// depended on this. This closes the separate crash window: without it,
+	// the rename can still be sitting in the directory's own write-back cache
+	// when the machine loses power, and a reboot can find the old name back
+	// in its place.
+	syncDir(dir)
 	return nil
+}
+
+// dirSyncUnsupportedOnce keeps syncDirFailed from logging on every single
+// write - some platforms and filesystems cannot fsync a directory at all, and
+// on those this would otherwise fire on every PutAssets, PutTraffic, etc.
+var dirSyncUnsupportedOnce sync.Once
+
+// syncDir fsyncs dir so that a rename already completed inside it is durable
+// across a crash, not just visible to concurrent readers.
+//
+// Best-effort: a platform or filesystem that cannot sync a directory is
+// logged once and otherwise ignored, never returned as a write failure. The
+// concurrent-reader guarantee writeAtomic exists for does not depend on this
+// succeeding; only the crash-durability guarantee does, and there is nothing
+// a caller could do differently in response short of refusing to persist
+// anything at all.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		logDirSyncUnsupported(err)
+		return
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		logDirSyncUnsupported(err)
+	}
+}
+
+func logDirSyncUnsupported(err error) {
+	dirSyncUnsupportedOnce.Do(func() {
+		logging.Warning("Directory sync unavailable (%v); writes remain atomic for concurrent readers but are not guaranteed durable across a crash", err)
+	})
 }
 
 func writeJSON(name string, v any) error {

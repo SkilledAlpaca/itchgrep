@@ -123,10 +123,20 @@ templ AssetCard(f Filters, asset models.Asset, rates money.Rates) {
 			aria-pressed="false"
 			aria-label={ "Save " + asset.Title }
 		>☆</button>
-		<a class="asset-link" href={ templ.SafeURL(asset.Link) } target="_blank" rel="noopener">
+		// templ.URL, not templ.SafeURL: asset.Link and asset.ThumbUrl are
+		// scraped verbatim from itch.io's own markup, not constructed by this
+		// site, so they are exactly the untrusted input templ.SafeURL's type
+		// assertion is meant to gate - a javascript: href in either would
+		// otherwise survive unchanged. templ.URL sanitizes instead, rendering
+		// anything outside http(s)/mailto as templ's about:invalid sentinel.
+		<a class="asset-link" href={ templ.URL(asset.Link) } target="_blank" rel="noopener">
+			// src is rendered as a plain string attribute by templ, not one of
+			// its recognised URL attributes, so the sanitized value is
+			// converted back to string explicitly rather than left as the
+			// templ.SafeURL the generated code for src cannot accept.
 			if asset.ThumbUrl != "" {
 				<img
-					src={ asset.ThumbUrl }
+					src={ string(templ.URL(asset.ThumbUrl)) }
 					alt={ fmt.Sprintf("Thumbnail for %s", asset.Title) }
 					loading="lazy"
 					decoding="async"

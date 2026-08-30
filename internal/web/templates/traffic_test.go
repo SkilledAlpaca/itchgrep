@@ -60,6 +60,19 @@ func TestPeakIsFlooredAtOneOnAQuietDay(t *testing.T) {
 	assert.EqualValues(t, 1, tr.Peak())
 }
 
+func TestTrafficExposesEveryBreakdownBucket(t *testing.T) {
+	// One accessor per bucket metrics.Counters tracks, so stats.templ can
+	// render a row for each without reaching into the snapshot directly.
+	snap := metrics.Snapshot{New: 1, Feed: 2, Tag: 3, Saved: 4, Other: 5}
+	tr := NewTraffic(snap, now)
+
+	assert.EqualValues(t, 1, tr.New())
+	assert.EqualValues(t, 2, tr.Feed())
+	assert.EqualValues(t, 3, tr.Tag())
+	assert.EqualValues(t, 4, tr.Saved())
+	assert.EqualValues(t, 5, tr.Other())
+}
+
 func TestPeakIsTheTallestBar(t *testing.T) {
 	nowHour := now.Unix() / 3600
 	snap := metrics.Snapshot{

@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -226,6 +227,19 @@ func TestFacetsCountTheWholeMatchSetNotThePage(t *testing.T) {
 	assert.NotContains(t, counts, "2d", "an applied tag is shown as a chip, not offered again")
 }
 
+func TestNoFacetsSkipsTheSidebarButNotTheMatches(t *testing.T) {
+	// /new and /feed have no sidebar to fill in, so the facet bleve would
+	// otherwise compute over the whole match set is a pass with no reader -
+	// this must not affect which assets come back, only whether the tag
+	// counts do.
+	c := newLoadedCache(t, 36)
+
+	got, err := c.Find(SearchOptions{Tags: []string{"2d"}, NoFacets: true, Page: 1})
+	require.NoError(t, err)
+	assert.Empty(t, got.Tags, "no facet was requested, so there is nothing to report")
+	assert.Equal(t, []string{"1", "2", "4"}, ids(got), "the match set itself is unaffected")
+}
+
 func TestGlobalTagCountsAreOrderedAndStable(t *testing.T) {
 	got := countTags(fixtures())
 	require.NotEmpty(t, got)
@@ -246,6 +260,28 @@ func TestPagingIsBounded(t *testing.T) {
 	past, err := c.Find(SearchOptions{Page: 99})
 	require.NoError(t, err)
 	assert.Empty(t, past.Assets)
+}
+
+func TestBrowseSurvivesAPageNumberThatOverflowsTheOffsetMath(t *testing.T) {
+	// internal/web's pageParam rejects a page this large before it can reach
+	// the cache, but this is the belt-and-braces guard for any other caller:
+	// (page-1)*pageSize overflows int64 and wraps negative, which must not
+	// reach the slice expression as a negative start.
+	c := newLoadedCache(t, 2)
+
+	got, err := c.Find(SearchOptions{Page: math.MaxInt64})
+	require.NoError(t, err)
+	assert.Empty(t, got.Assets, "an overflowed page has nothing to show")
+}
+
+func TestSearchSurvivesAPageNumberThatOverflowsTheOffsetMath(t *testing.T) {
+	// Same overflow as browse, on the filtered path that goes through bleve
+	// instead of a plain slice.
+	c := newLoadedCache(t, 2)
+
+	got, err := c.Find(SearchOptions{Tags: []string{"2d"}, Page: math.MaxInt64})
+	require.NoError(t, err)
+	assert.Empty(t, got.Assets, "an overflowed page has nothing to show")
 }
 
 func TestExcludedTagsRemoveRatherThanNarrow(t *testing.T) {
@@ -531,4 +567,39 @@ func TestLikeOnASourceWithNoTagsMatchesNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got.Assets)
 	assert.Equal(t, "No Tags At All", got.LikeTitle, "the title is still known even though nothing matched")
+}
+
+func TestDescribeNeverIncludesTheQueryText(t *testing.T) {
+	// The log line must be traceable to what shaped a search, never to what a
+	// visitor typed - see internal/web/logmiddleware.go for the same rule
+	// applied to the access log.
+	got := describe(SearchOptions{Query: "some secret search phrase", Page: 1})
+	assert.NotContains(t, got, "some secret search phrase")
+	assert.Contains(t, got, "query present")
+}
+
+func TestDescribeNeverIncludesTheAuthorValue(t *testing.T) {
+	got := describe(SearchOptions{Author: "a real person's itch.io handle", Page: 1})
+	assert.NotContains(t, got, "a real person's itch.io handle")
+	assert.Contains(t, got, "author filter present")
+}
+
+func TestDescribeReportsShapeWhenNothingIsSet(t *testing.T) {
+	got := describe(SearchOptions{Page: 1})
+	assert.NotContains(t, got, "query present")
+	assert.NotContains(t, got, "author filter present")
+	assert.Contains(t, got, "page 1")
+	assert.Contains(t, got, "sorted by")
+}
+
+func TestDescribeReportsTagsPriceAndPage(t *testing.T) {
+	// Tags and price come from a fixed vocabulary the site itself offers as
+	// buttons and chips, not free text a visitor typed - unlike the query and
+	// the author, they are fine to log as-is.
+	got := describe(SearchOptions{
+		Tags: []string{"2d", "pixel-art"}, Price: models.PricingFree, Page: 3,
+	})
+	assert.Contains(t, got, "tags 2d+pixel-art")
+	assert.Contains(t, got, models.PricingFree)
+	assert.Contains(t, got, "page 3")
 }

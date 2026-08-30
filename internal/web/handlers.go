@@ -69,6 +69,15 @@ const maxAuthorLen = 120
 // rather than to restrain any real id.
 const maxGameIdLen = 32
 
+// maxPage bounds ?page=. No real result set is long enough to need it, and
+// without a cap (page-1)*pageSize overflows int64 for a large enough input,
+// wrapping negative and reaching the cache's slicing arithmetic as a negative
+// start/from - a panic, not a 400, for what is otherwise an ordinary
+// out-of-range request. cache.browse and cache.search each guard their own
+// arithmetic too, belt-and-braces, but this is the cheap rejection that keeps
+// a hostile page number from reaching the cache at all.
+const maxPage = 10000
+
 type handler struct {
 	cache *cache.Cache
 
@@ -135,7 +144,7 @@ func pageParam(r *http.Request) (int64, bool) {
 		return 1, true
 	}
 	parsed, err := strconv.ParseInt(p, 10, 64)
-	if err != nil || parsed < 1 {
+	if err != nil || parsed < 1 || parsed > maxPage {
 		return 0, false
 	}
 	return parsed, true
@@ -284,6 +293,10 @@ func (h *handler) HandleNew(w http.ResponseWriter, r *http.Request) {
 		Sort:         models.SortNew,
 		Limit:        maxNewAssets,
 		Page:         1,
+		// This page has no sidebar - nothing ever reads Results.Tags here -
+		// so the facet bleve would otherwise compute over the whole match
+		// set is work with no reader.
+		NoFacets: true,
 	})
 	if err != nil {
 		logging.Error("Error rendering /new: %s", err)
@@ -317,6 +330,9 @@ func (h *handler) HandleFeed(w http.ResponseWriter, r *http.Request) {
 		Sort:         models.SortNew,
 		Limit:        maxFeedEntries,
 		Page:         1,
+		// An Atom feed has no sidebar either - see the same field on
+		// HandleNew above.
+		NoFacets: true,
 	})
 	if err != nil {
 		logging.Error("Error rendering /feed: %s", err)
@@ -496,11 +512,21 @@ func pageTitle(f templates.Filters) string {
 	}
 }
 
+// statusFor maps a cache.Find error onto a response status.
+//
+// Everything that is not ErrNotReady is a server fault - a corrupt segment or
+// an IO failure out of bleve, not a mistake in what the visitor asked for.
+// The one error that used to reach here from a bad request, an invalid page
+// number, never gets this far: HandleIndex, HandleResults and HandleTag all
+// call pageParam and answer 400 themselves before touching the cache, so by
+// the time an error comes back from Find it is always the cache's fault, not
+// the request's - and hiding that behind 400 would keep it out of 5xx
+// monitoring, which is exactly the failure this exists to stop.
 func statusFor(err error) int {
 	if errors.Is(err, cache.ErrNotReady) {
 		return http.StatusServiceUnavailable
 	}
-	return http.StatusBadRequest
+	return http.StatusInternalServerError
 }
 
 // renderProblem answers a failed fetch with a rendered notice rather than a

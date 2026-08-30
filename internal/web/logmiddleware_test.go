@@ -46,6 +46,41 @@ func TestAnonymizeIP(t *testing.T) {
 	}
 }
 
+func TestTruncateBoundsAnAttackerControlledString(t *testing.T) {
+	assert.Equal(t, "short", truncate("short", 256))
+	assert.Equal(t, strings.Repeat("a", 10), truncate(strings.Repeat("a", 500), 10))
+	assert.Equal(t, "", truncate("anything", 0))
+}
+
+func TestTruncateUAKeepsItsOwnLimit(t *testing.T) {
+	long := strings.Repeat("a", maxLoggedUA+50)
+	assert.Len(t, truncateUA(long), maxLoggedUA)
+	assert.Equal(t, "Mozilla/5.0", truncateUA("Mozilla/5.0"))
+}
+
+// TestRequestLoggerBoundsAPathologicallyLongPath is the point of
+// maxLoggedPath: the UA was already bounded, but the path was not, so a near-
+// 1MB request line used to become a near-1MB log line.
+func TestRequestLoggerBoundsAPathologicallyLongPath(t *testing.T) {
+	lines := captureEvents(t)
+	m := metrics.New()
+	r := chi.NewRouter()
+	r.Use(RequestLogger(false, nil, m))
+	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	longPath := "/" + strings.Repeat("a", maxLoggedPath+1000)
+	req := httptest.NewRequest(http.MethodGet, longPath, nil)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	if assert.Len(t, *lines, 1) {
+		var rec accessRecord
+		assert.NoError(t, json.Unmarshal([]byte((*lines)[0]), &rec))
+		assert.Len(t, rec.Path, maxLoggedPath)
+	}
+}
+
 func TestStatusZeroIsTreatedAsOK(t *testing.T) {
 	// A handler that never calls WriteHeader still answers 200 once bytes go
 	// out - WrapResponseWriter's Status() stays 0 in that case, and the log
@@ -65,7 +100,7 @@ func TestStatusZeroIsTreatedAsOK(t *testing.T) {
 func TestRoutePatternIsOnlyPopulatedAfterDispatch(t *testing.T) {
 	m := metrics.New()
 	r := chi.NewRouter()
-	r.Use(RequestLogger(false, m))
+	r.Use(RequestLogger(false, nil, m))
 	r.Get("/results", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -84,7 +119,7 @@ func TestRoutePatternIsOnlyPopulatedAfterDispatch(t *testing.T) {
 func TestRequestLoggerRecordsAgainstTheSharedCounters(t *testing.T) {
 	m := metrics.New()
 	r := chi.NewRouter()
-	r.Use(RequestLogger(false, m))
+	r.Use(RequestLogger(false, nil, m))
 	r.Get("/results", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -103,7 +138,7 @@ func TestRequestLoggerEmitsAccessRecordWithoutTheQueryValue(t *testing.T) {
 	lines := captureEvents(t)
 	m := metrics.New()
 	r := chi.NewRouter()
-	r.Use(RequestLogger(false, m))
+	r.Use(RequestLogger(false, nil, m))
 	r.Get("/results", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

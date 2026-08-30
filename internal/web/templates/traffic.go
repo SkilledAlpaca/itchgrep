@@ -29,6 +29,11 @@ func (t Traffic) Results() uint64  { return t.snap.Results }
 func (t Traffic) About() uint64    { return t.snap.About }
 func (t Traffic) Stats() uint64    { return t.snap.Stats }
 func (t Traffic) Static() uint64   { return t.snap.Static }
+func (t Traffic) New() uint64      { return t.snap.New }
+func (t Traffic) Feed() uint64     { return t.snap.Feed }
+func (t Traffic) Tag() uint64      { return t.snap.Tag }
+func (t Traffic) Saved() uint64    { return t.snap.Saved }
+func (t Traffic) Other() uint64    { return t.snap.Other }
 func (t Traffic) Searches() uint64 { return t.snap.Searches }
 
 // Uptime is how long this process has been running - not how long counting

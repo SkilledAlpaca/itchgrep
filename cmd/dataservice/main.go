@@ -29,20 +29,68 @@ func main() {
 
 	go scheduleCrawls(config.CrawlInterval())
 
-	http.HandleFunc("/trigger-fetch", handleFetchTrigger)
+	// An explicit mux rather than http.HandleFunc against DefaultServeMux: the
+	// default mux is package-global, so anything any imported package
+	// registers on it becomes reachable here too. An explicit mux is the only
+	// way to know the full set of routes this process serves.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/trigger-fetch", handleFetchTrigger)
+
 	port := fmt.Sprintf(":%s", os.Getenv("PORT")) // as per cloud run standard
 	if port == ":" {
 		port = ":8080"
 	}
 	logging.Info("Server listening on port %s", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
+
+	// Explicit timeouts rather than http.ListenAndServe's defaults, which are
+	// none at all: a client that opens a connection and then sends its
+	// request one byte at a time holds a goroutine and a file descriptor
+	// indefinitely (Slowloris). This process has no reverse proxy of its own
+	// in front of it on the compose network - webserver and cloudflared both
+	// talk to it directly - so it cannot assume one absorbs that for it.
+	srv := &http.Server{
+		Addr:              port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		logging.Fatal("Server failed to start: %v", err)
 	}
 }
 
+// crawlAction is what decideCrawlAction tells scheduleCrawls to do on one
+// tick.
+type crawlAction int
+
+const (
+	actionNone crawlAction = iota
+	actionCrawl
+)
+
+// decideCrawlAction is the pure per-tick decision scheduleCrawls acts on,
+// pulled out of the loop so it can be tested without a filesystem or a real
+// crawl. hasData is false exactly when publishedAge found nothing to read -
+// no crawl has ever published on this volume.
+func decideCrawlAction(hasData bool, age, interval time.Duration) crawlAction {
+	if !hasData {
+		// startScrape's CompareAndSwap guard already prevents two crawls
+		// racing for the same index directory, so there is no reason to wait
+		// for anything else to start the first one.
+		return actionCrawl
+	}
+	if age >= interval {
+		return actionCrawl
+	}
+	return actionNone
+}
+
 // scheduleCrawls rebuilds the index whenever the published one is older than
 // interval, and is what stops a long-running deployment freezing at whatever
-// the first crawl produced.
+// the first crawl produced. It also runs the very first crawl on a fresh
+// volume - there is no separate bootstrap step.
 //
 // The decision is made from the age of the data on disk rather than from a
 // ticker started at boot. A ticker would restart its count on every container
@@ -60,20 +108,66 @@ func scheduleCrawls(interval time.Duration) {
 	// promptly after a restart, and so the log says something on a cadence a
 	// human watching it can make sense of.
 	const checkEvery = 15 * time.Minute
+	// consecutiveFailures drives the backoff below: a crawl that keeps
+	// failing (itch.io markup change, a persistent COVERAGE_FLOOR trip) must
+	// not be retried at the normal cadence, or it becomes continuous crawling
+	// against itch.io until they block the origin.
+	consecutiveFailures := 0
 	for {
 		age, err := publishedAge()
-		switch {
-		case err != nil:
-			// No data yet. The initial crawl is the indexer's job, and starting
-			// a second one here would race it for the same index directory.
-			logging.Info("No published index yet; leaving the first crawl to the bootstrap")
-		case age >= interval:
-			if startScrape() {
+		hasData := err == nil
+
+		if decideCrawlAction(hasData, age, interval) == actionCrawl {
+			if !hasData {
+				logging.Info("No published index yet; starting the first crawl")
+			} else {
 				logging.Info("Index is %v old, past the %v limit; rebuilding", age.Truncate(time.Minute), interval)
 			}
+
+			// Waited on synchronously, unlike the HTTP trigger, so this loop
+			// knows whether the crawl it just started succeeded and can back
+			// off before trying again.
+			done := make(chan error, 1)
+			if startScrape(func(err error) { done <- err }) {
+				if crawlErr := <-done; crawlErr != nil {
+					consecutiveFailures++
+					delay := backoffDelay(consecutiveFailures, interval)
+					logging.Error("crawl failed (attempt %d, next retry in %s): %v", consecutiveFailures, delay, crawlErr)
+					time.Sleep(delay)
+					continue
+				}
+				consecutiveFailures = 0
+			}
+			// startScrape returning false means a /trigger-fetch call beat
+			// the scheduler to it; that run's outcome is not this loop's to
+			// track, so fall through to the normal check interval.
 		}
 		time.Sleep(checkEvery)
 	}
+}
+
+// backoffDelay is how long scheduleCrawls waits before retrying after
+// consecutiveFailures scheduled crawls in a row have failed. Progression: 15
+// minutes, 1 hour, 6 hours, then the crawl interval itself - a failure that
+// persists past three attempts is not a transient one (a stalled run, a
+// dropped connection), it is something like a markup change that needs a
+// human, and hammering itch.io every few hours while that gets fixed is worse
+// than waiting for the normal cadence.
+//
+// Never returns more than interval: a short CRAWL_INTERVAL configured for
+// testing must not be defeated by a backoff step longer than the interval
+// itself.
+func backoffDelay(consecutiveFailures int, interval time.Duration) time.Duration {
+	steps := [...]time.Duration{15 * time.Minute, time.Hour, 6 * time.Hour}
+
+	delay := interval
+	if consecutiveFailures >= 1 && consecutiveFailures <= len(steps) {
+		delay = steps[consecutiveFailures-1]
+	}
+	if interval > 0 && delay > interval {
+		delay = interval
+	}
+	return delay
 }
 
 // publishedAge is how long ago the current dataset was published. It reads the
@@ -90,7 +184,12 @@ func publishedAge() (time.Duration, error) {
 // startScrape begins a crawl unless one is already running, reporting whether
 // it did. Shared by the HTTP trigger and the scheduler so that both honour the
 // same guard - two crawls would write the same index directory and corrupt it.
-func startScrape() bool {
+//
+// onDone, if non-nil, receives the crawl's outcome once it finishes. The HTTP
+// trigger has already responded to its caller before the crawl even starts
+// and passes nil; the scheduler passes a callback and blocks on it so it can
+// drive the failure backoff in scheduleCrawls.
+func startScrape(onDone func(error)) bool {
 	if !scrapeInProgress.CompareAndSwap(false, true) {
 		return false
 	}
@@ -98,19 +197,26 @@ func startScrape() bool {
 		// Released on every exit path of fetchAndStoreAssets, including its
 		// early returns on error.
 		defer scrapeInProgress.Store(false)
-		fetchAndStoreAssets()
+		err := fetchAndStoreAssets()
+		if onDone != nil {
+			onDone(err)
+		}
 	}()
 	return true
 }
 
 func handleFetchTrigger(w http.ResponseWriter, r *http.Request) {
-	// Ensure that we only accept GET requests
-	if r.Method != http.MethodGet {
+	// POST only. This is a state-changing action - it starts a crawl that can
+	// run for hours - and GET must stay side-effect-free: a GET is what any
+	// <img src=...> on any web page, or any scanner sweeping a LAN, sends
+	// with no user intent behind it at all.
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	if !startScrape() {
+	if !startScrape(nil) {
 		http.Error(w, "A scrape is already in progress", http.StatusConflict)
 		return
 	}
@@ -120,14 +226,19 @@ func handleFetchTrigger(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "Asset fetch and store initiated")
 }
 
-func fetchAndStoreAssets() {
+// fetchAndStoreAssets runs one crawl end to end: fetch, index, publish. It
+// returns nil only once a new index and assets.json have actually been
+// published; every other path - a fetch failure, a coverage-floor trip, an
+// indexing error, a publish failure - returns a non-nil error so the caller
+// (scheduleCrawls) can back off instead of retrying immediately.
+func fetchAndStoreAssets() error {
 	cfg := loadCrawlConfig()
 
 	// FETCHING ASSETS
 	totalAssets, err := fetcher.GetAssetCount()
 	if err != nil {
 		logging.Error("Failed to get asset count: %v", err)
-		return
+		return fmt.Errorf("fetcher.GetAssetCount: %w", err)
 	}
 
 	// The root view's first page also tells us how many items a page holds,
@@ -136,18 +247,18 @@ func fetchAndStoreAssets() {
 	firstPage, outcome := fetcher.FetchAssetPage(root, 1)
 	if outcome != fetcher.FetchOK {
 		logging.Error("Failed to fetch first page, terminating.")
-		return
+		return fmt.Errorf("fetching first page: outcome %v", outcome)
 	}
 	itemsPerPage := firstPage.NumItems
 	if itemsPerPage <= 0 {
 		logging.Error("First page reported %d items per page, terminating.", itemsPerPage)
-		return
+		return fmt.Errorf("first page reported %d items per page", itemsPerPage)
 	}
 
 	tags, err := loadOrDiscoverTags(cfg)
 	if err != nil {
 		logging.Error("Failed to obtain tag universe: %v", err)
-		return
+		return fmt.Errorf("loadOrDiscoverTags: %w", err)
 	}
 
 	slices := fetcher.PlanSlices(tags, itemsPerPage)
@@ -182,7 +293,7 @@ func fetchAndStoreAssets() {
 	if coverage < cfg.coverageFloor {
 		logging.Error("Coverage %.1f%% is below COVERAGE_FLOOR %.1f%%; refusing to publish. The previous index is left in place.",
 			coverage*100, cfg.coverageFloor*100)
-		return
+		return fmt.Errorf("coverage %.1f%% below COVERAGE_FLOOR %.1f%%", coverage*100, cfg.coverageFloor*100)
 	}
 
 	// Read before this run's index is built, not just before PutAssets
@@ -209,7 +320,7 @@ func fetchAndStoreAssets() {
 	staging := storage.StagingIndexPath()
 	if err := os.RemoveAll(staging); err != nil {
 		logging.Error("Failed to clear stale staging index at %s: %v", staging, err)
-		return
+		return fmt.Errorf("clearing stale staging index: %w", err)
 	}
 	newIndex, err := bleve.New(staging, storage.IndexMapping())
 	// On any failure below, the half-built index must not be left where the
@@ -218,7 +329,7 @@ func fetchAndStoreAssets() {
 	defer os.RemoveAll(staging)
 	if err != nil {
 		logging.Error("Failed to create index: %v", err)
-		return
+		return fmt.Errorf("bleve.New: %w", err)
 	}
 
 	logging.Info("Created new empty index at %s", staging)
@@ -269,7 +380,7 @@ func fetchAndStoreAssets() {
 		if err := b.Index(asset.GameId, asset); err != nil {
 			newIndex.Close() // clean up the failed new index
 			logging.Error("Failed to index asset, cancelling indexing: %v", err)
-			return
+			return fmt.Errorf("indexing asset %s: %w", asset.GameId, err)
 		}
 		assetsIndexed++
 		if i%1500 == 0 && i != 0 { // we index in batches of 1500
@@ -277,7 +388,7 @@ func fetchAndStoreAssets() {
 			if err := newIndex.Batch(b); err != nil {
 				newIndex.Close()
 				logging.Error("Failed to write batch at asset %d, cancelling indexing: %v", i, err)
-				return
+				return fmt.Errorf("writing batch at asset %d: %w", i, err)
 			}
 			b.Reset()
 		}
@@ -285,11 +396,11 @@ func fetchAndStoreAssets() {
 	if err := newIndex.Batch(b); err != nil { // the remainder
 		newIndex.Close()
 		logging.Error("Failed to write the final batch, cancelling indexing: %v", err)
-		return
+		return fmt.Errorf("writing final batch: %w", err)
 	}
 	if err := newIndex.Close(); err != nil {
 		logging.Error("Failed to close the new index, refusing to publish it: %v", err)
-		return
+		return fmt.Errorf("closing new index: %w", err)
 	}
 	logging.Info("Successfully indexed %d assets", assetsIndexed)
 
@@ -301,14 +412,14 @@ func fetchAndStoreAssets() {
 	logging.Info("Publishing index to %s", storage.IndexPath())
 	if err := storage.PublishIndex(); err != nil {
 		logging.Error("Failed to publish index: %v", err)
-		return
+		return fmt.Errorf("storage.PublishIndex: %w", err)
 	}
 	logging.Info("Successfully published index")
 
 	logging.Info("Storing assets")
 	if err := storage.PutAssets(assets); err != nil {
 		logging.Error("Failed to put assets: %v", err)
-		return
+		return fmt.Errorf("storage.PutAssets: %w", err)
 	}
 	logging.Info("Successfully stored assets")
 
@@ -355,6 +466,8 @@ func fetchAndStoreAssets() {
 	if err := storage.DeleteCheckpoint(); err != nil {
 		logging.Warning("Failed to delete crawl checkpoint: %v", err)
 	}
+
+	return nil
 }
 
 // stampFirstSeen carries FirstSeen forward from the previous publish, id by
@@ -617,7 +730,13 @@ func plannedPages(slices []fetcher.Slice, done map[string]struct{}, itemsPerPage
 // A checkpoint serialises every asset collected so far (~26 MB at full
 // coverage), so writing one per slice would spend more time uploading than
 // crawling; writing one per hour would make the feature pointless.
-const checkpointInterval = 3 * time.Minute
+//
+// At 3 minutes, a ~6 hour crawl wrote roughly 120 checkpoints: 3-4 GB of
+// fsync'd full rewrites, each one taken with the crawler mutex held. 10
+// minutes cuts that to ~36 checkpoints - about a third of the write volume -
+// while only widening the worst case (everything since the last checkpoint,
+// lost on a kill) from 3 minutes of re-crawling to 10.
+const checkpointInterval = 10 * time.Minute
 
 // resume restores a partially-complete crawl. It is best-effort: any problem
 // means starting fresh, which costs time but is never wrong.

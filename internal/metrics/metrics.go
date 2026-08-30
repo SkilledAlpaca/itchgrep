@@ -5,9 +5,11 @@
 // is no log file to read - the lines live in Docker's json-file driver,
 // reachable only via the Docker socket, which the distroless image has no
 // client for and must never be given. Parsing would also mean re-reading text
-// containing client IPs and raw query strings on every page view, one bug
-// away from rendering PII on a public page. Counters cannot leak what they
-// never store.
+// containing client IPs on every page view, one bug away from rendering PII
+// on a public page - and there is no raw query text in that stream to leak in
+// the first place; see internal/cache/search.go's describe(), which logs only
+// whether a query was present, never its content. Counters cannot leak what
+// they never store.
 //
 // It is a separate package from internal/web, rather than living alongside
 // the handlers, so the dependency stays one-directional: cmd -> web ->
@@ -29,15 +31,23 @@ import (
 const hoursInDay = 24
 
 // The route patterns RecordRequest classifies by, matching chi's own
-// registration in cmd/webserver/main.go exactly - anything else, including an
-// empty pattern for an unmatched path, falls through uncounted-by-route
-// though it still adds to Total.
+// registration in cmd/webserver/main.go exactly. Every route in that file's
+// rate-limited group has one of these - see
+// TestEveryRateLimitedRouteHasABreakdownClassification in metrics_test.go,
+// which asserts that list is a subset of this one - and everything else
+// (robots.txt, sitemap.xml, an unmatched path, ...) falls into routeOther, so
+// the /stats breakdown is exhaustive by construction rather than an
+// approximation that quietly stops summing to Total.
 const (
 	routeIndex   = "/"
 	routeResults = "/results"
 	routeAbout   = "/about"
 	routeStats   = "/stats"
 	routeStatic  = "/static/*"
+	routeNew     = "/new"
+	routeFeed    = "/feed"
+	routeTag     = "/tag/{slug}"
+	routeSaved   = "/saved"
 )
 
 // Counters is the live, concurrently-updated state. sync/atomic for the
@@ -55,6 +65,7 @@ type Counters struct {
 	base Snapshot
 
 	total, index, results, about, stats, static atomic.Uint64
+	newRoute, feed, tag, saved, other           atomic.Uint64
 	searches                                    atomic.Uint64
 	probes                                      atomic.Uint64 // internal only: feeds the aggregate log line, never the page
 
@@ -70,6 +81,7 @@ type Snapshot struct {
 	FirstSeen time.Time
 
 	Total, Index, Results, About, Stats, Static uint64
+	New, Feed, Tag, Saved, Other                uint64
 	Searches                                    uint64
 
 	Hours [hoursInDay]models.HourBucket
@@ -98,6 +110,7 @@ func Restore() *Counters {
 	c.base = Snapshot{
 		Total: t.Total, Index: t.Index, Results: t.Results,
 		About: t.About, Stats: t.Stats, Static: t.Static,
+		New: t.New, Feed: t.Feed, Tag: t.Tag, Saved: t.Saved, Other: t.Other,
 		Searches: t.Searches,
 	}
 
@@ -138,13 +151,30 @@ func (c *Counters) RecordRequest(routePattern string, filtered bool, status int)
 		c.stats.Add(1)
 	case routeStatic:
 		c.static.Add(1)
+	case routeNew:
+		c.newRoute.Add(1)
+	case routeFeed:
+		c.feed.Add(1)
+	case routeTag:
+		c.tag.Add(1)
+	case routeSaved:
+		c.saved.Add(1)
+	default:
+		// Everything not classified above - robots.txt, sitemap.xml,
+		// opensearch.xml, security.txt, an unmatched path arriving as "" -
+		// so the breakdown on /stats is exhaustive by construction: every
+		// request lands in exactly one named bucket, never silently in none
+		// of them.
+		c.other.Add(1)
 	}
 
 	// A search is a query actually answered against the catalogue, not merely
-	// a hit on a route that can carry one - "/" and "/results" both render
-	// results, and a failed lookup (503 while the index loads, 400 on a bad
-	// page) served nothing to count.
-	if filtered && status < 400 && (routePattern == routeIndex || routePattern == routeResults) {
+	// a hit on a route that can carry one - "/", "/results" and "/tag/{slug}"
+	// (a filtered browse via its own query string, such as ?page=2 or a
+	// currency choice) all render results, and a failed lookup (503 while the
+	// index loads, 400 on a bad page) served nothing to count.
+	if filtered && status < 400 &&
+		(routePattern == routeIndex || routePattern == routeResults || routePattern == routeTag) {
 		c.searches.Add(1)
 		c.bumpHour(time.Now())
 	}
@@ -195,6 +225,11 @@ func (c *Counters) Snapshot() Snapshot {
 		About:     c.base.About + c.about.Load(),
 		Stats:     c.base.Stats + c.stats.Load(),
 		Static:    c.base.Static + c.static.Load(),
+		New:       c.base.New + c.newRoute.Load(),
+		Feed:      c.base.Feed + c.feed.Load(),
+		Tag:       c.base.Tag + c.tag.Load(),
+		Saved:     c.base.Saved + c.saved.Load(),
+		Other:     c.base.Other + c.other.Load(),
 		Searches:  c.base.Searches + c.searches.Load(),
 		Hours:     hours,
 	}
@@ -206,6 +241,7 @@ func (c *Counters) toTraffic() models.Traffic {
 		FirstSeen: s.FirstSeen,
 		Total:     s.Total, Index: s.Index, Results: s.Results,
 		About: s.About, Stats: s.Stats, Static: s.Static,
+		New: s.New, Feed: s.Feed, Tag: s.Tag, Saved: s.Saved, Other: s.Other,
 		Searches: s.Searches,
 		Hours:    s.Hours,
 	}

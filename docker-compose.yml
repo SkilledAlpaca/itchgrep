@@ -7,15 +7,22 @@
 #
 # Brings up:
 #   1. dataservice  - scrapes itch.io, builds the bleve index, publishes both
-#   2. indexer      - one-shot job: triggers the scrape, waits for the result
-#   3. webserver    - http://localhost:62686 (starts immediately; serves 503
+#   2. webserver    - http://localhost:62686 (starts immediately; serves 503
 #                     until an index exists, then picks it up within ~5s)
 #
-# All three share the `itchgrep-data` volume, mounted at /data. That directory
-# IS the storage layer: assets.json, tags.json, checkpoint.json and
-# index.bleve/. There is no object store and no emulator - the previous
-# fake-gcs-server container existed only to stand in for GCS, which this
-# workload never needed (one writer, no ACLs, no listing, no lifecycle rules).
+# There is no separate bootstrap step. dataservice crawls on its own, the
+# moment it starts, whenever no index has ever been published on the volume or
+# the published one is older than CRAWL_INTERVAL - see scheduleCrawls in
+# cmd/dataservice/main.go. A prior version of this file ran a one-shot
+# "indexer" sidecar to kick off that first crawl; it was removed once
+# scheduleCrawls grew the same CompareAndSwap guard against a double-start
+# that the sidecar existed to route around.
+#
+# Both share the `itchgrep-data` volume, mounted at /data. That directory IS
+# the storage layer: assets.json, tags.json, checkpoint.json and index.bleve/.
+# There is no object store and no emulator - the previous fake-gcs-server
+# container existed only to stand in for GCS, which this workload never needed
+# (one writer, no ACLs, no listing, no lifecycle rules).
 #
 # The first run crawls the whole itch.io asset catalogue (~108,000 assets) at a
 # deliberately polite 2 requests/second, so expect an hour or more. It cannot be
@@ -25,7 +32,19 @@
 # which is then cached as tags.json.
 # Later runs reuse the volume and skip the crawl.
 #
-# Re-scrape:  FORCE_REINDEX=true docker compose up indexer
+# Hand-trigger a re-crawl right now, without waiting for CRAWL_INTERVAL:
+#
+#   curl -X POST http://127.0.0.1:62685/trigger-fetch
+#
+# POST only, and bound to loopback on the host (see the dataservice ports:
+# entry below) - it starts a multi-hour crawl with no further confirmation, so
+# neither a stray GET nor another device on the LAN should be able to trigger
+# it. To force a full re-index rather than the usual incremental crawl, either
+# stop the stack, delete index.bleve/ from the volume (NOT the whole volume -
+# that also throws away tags.json and checkpoint.json), and start it again; or
+# just POST the trigger, since a crawl always rebuilds the index from scratch
+# regardless of what is already published.
+#
 # Wipe data:  docker compose down -v
 # Faster (at the cost of politeness):  SCRAPE_RPS=5 docker compose up
 
@@ -48,11 +67,27 @@ x-logging: &logging
     max-size: "10m"
     max-file: "3"
 
+# restart: unless-stopped brings a service back after it exits for any reason
+# other than an explicit `docker compose stop` - a crash, or the whole host
+# rebooting. dataservice, webserver and cloudflared all carry it, because
+# without it a reboot leaves cloudflared (which sets it independently of this
+# file's convention) reconnecting the tunnel to an origin that never came back
+# up, and the public site serves 502s while the tunnel dashboard reports
+# healthy.
+#
+# Never add it to a one-shot container that is meant to run once and exit 0.
+# Compose does not distinguish that from a crash for restart-policy purposes,
+# so unless-stopped would restart it forever. This file used to define exactly
+# such a container - a curl-based "indexer" sidecar that triggered the first
+# crawl - which is why it never carried the policy; it no longer exists (see
+# the header comment above), but the next one-shot job added here should stay
+# just as bare.
 services:
   dataservice:
     build:
       context: .
       dockerfile: Dockerfile.dataservice
+    restart: unless-stopped
     environment:
       # The storage directory. Everything the crawl produces lands here.
       DATA_DIR: /data
@@ -68,7 +103,12 @@ services:
       # Caps total pages fetched across every view. Unset means a full crawl.
       # Set it to a small number to smoke-test the whole pipeline in a couple
       # of minutes instead of the better part of an hour. Produces a PARTIAL
-      # index, so it also disarms COVERAGE_FLOOR and shrinks tag discovery.
+      # index, so it also disarms COVERAGE_FLOOR and shrinks tag discovery of
+      # the MAX_TAGS below - which is why MAX_TAGS itself is deliberately not
+      # set here: a value pinned in this file's environment: block would take
+      # precedence over that shrink from inside the container, and the smoke
+      # test would spend ~17 minutes discovering tags before fetching a single
+      # page of the partial run it was meant to finish in a couple of minutes.
       SCRAPE_MAX_PAGES: "${SCRAPE_MAX_PAGES:-}"
       # Stop crawling once this fraction of the catalogue has been collected.
       # The last few percent costs disproportionately many requests.
@@ -90,81 +130,39 @@ services:
       # page. Assets appear in ~5 views each, so without this the overlap
       # dominates the crawl.
       SLICE_MIN_YIELD: "${SLICE_MIN_YIELD:-0.05}"
-      # How many tags discovery may visit. One request each, so this is the
-      # main cost of a cold start.
-      MAX_TAGS: "${MAX_TAGS:-1000}"
+      # MAX_TAGS (how many tags discovery may visit) is deliberately not set
+      # here - see the SCRAPE_MAX_PAGES comment above. Setting it here would
+      # always win over the code's own smoke-test shrink to 25, since the
+      # code only applies that shrink when MAX_TAGS is unset in the process
+      # environment. Export MAX_TAGS in the shell (or an .env file) if a
+      # production run needs to override cmd/dataservice's default of 1000.
       # Rediscover the tag universe when the cached tags.json is older than this.
       TAG_CACHE_MAX_AGE: "${TAG_CACHE_MAX_AGE:-168h}"
       # Ignore a crawl checkpoint older than this. A checkpoint lets a run
       # killed part way through resume instead of restarting from zero.
       CHECKPOINT_MAX_AGE: "${CHECKPOINT_MAX_AGE:-24h}"
     ports:
-      - "62685:8080" # GET http://localhost:62685/trigger-fetch to re-scrape
+      # Bound to loopback, not 0.0.0.0: /trigger-fetch takes no authentication
+      # and starts a multi-hour crawl, so this port must not be reachable from
+      # the LAN - only from the host itself. POST http://127.0.0.1:62685/trigger-fetch
+      # to re-scrape (see the header comment above).
+      - "127.0.0.1:62685:8080"
     volumes:
       - "${DATA_PATH:-itchgrep-data}:/data"
     logging: *logging
-
-  # One-shot orchestration so `docker compose up` is the only command needed.
-  indexer:
-    image: curlimages/curl:latest
-    depends_on:
-      - dataservice
-    environment:
-      FORCE_REINDEX: "${FORCE_REINDEX:-false}"
-      INDEXER_TIMEOUT_SECONDS: "${INDEXER_TIMEOUT_SECONDS:-43200}"
-    volumes:
-      # Read-only: this container only needs to see whether the crawl has
-      # published yet.
-      - "${DATA_PATH:-itchgrep-data}:/data:ro"
-    entrypoint:
-      - sh
-      - -eu
-      - -c
-      - |
-        ASSETS=/data/assets.json
-
-        if [ "$${FORCE_REINDEX}" != "true" ] && [ -f "$${ASSETS}" ]; then
-          echo "[indexer] assets.json already present, skipping scrape"
-          exit 0
-        fi
-
-        echo "[indexer] waiting for dataservice..."
-        until curl -s -o /dev/null http://dataservice:8080/; do sleep 2; done
-
-        echo "[indexer] triggering itch.io scrape (~6 hours at the default 2 req/s)"
-        # 409 means a scrape is already running - that is fine, fall through
-        # and poll for its result rather than failing.
-        code=$$(curl -s -o /dev/null -w '%{http_code}' http://dataservice:8080/trigger-fetch)
-        echo "[indexer] trigger returned HTTP $${code}"
-        if [ "$${code}" != "200" ] && [ "$${code}" != "409" ]; then
-          echo "[indexer] unexpected response from dataservice; check: docker compose logs dataservice"
-          exit 1
-        fi
-
-        # The dataservice publishes the index first, then assets.json, so
-        # assets.json appearing means the whole set is ready.
-        # A full crawl takes about six hours at the default rate, so the old
-        # two-hour limit reported failure on every healthy first run while the
-        # crawl carried on regardless. Twelve gives a slow network or a lowered
-        # SCRAPE_RPS room without waiting forever on a genuinely stuck one.
-        elapsed=0
-        limit=$${INDEXER_TIMEOUT_SECONDS}
-        until [ -f "$${ASSETS}" ]; do
-          if [ "$${elapsed}" -ge "$${limit}" ]; then
-            echo "[indexer] timed out after $${limit}s; check: docker compose logs dataservice"
-            exit 1
-          fi
-          sleep 15
-          elapsed=$$((elapsed + 15))
-          echo "[indexer] still scraping... $${elapsed}s elapsed"
-        done
-
-        echo "[indexer] data is on the volume, webserver will pick it up"
 
   webserver:
     build:
       context: .
       dockerfile: Dockerfile.webserver
+    restart: unless-stopped
+    # Pinned rather than left to Compose's default "<project>-webserver-1"
+    # naming: scripts/export-logs.sh follows this container's logs by name,
+    # and a project-name-derived default is one COMPOSE_PROJECT_NAME rename
+    # away from breaking that follower silently. The old "-1" suffix Compose
+    # would otherwise append is gone for good, not just pinned to 1 - a
+    # second webserver replica is not something this stack supports anyway.
+    container_name: itchgrep-webserver
     environment:
       DATA_DIR: /data
       PAGE_SIZE: "36"
@@ -187,6 +185,14 @@ services:
       # proxy the inverse is true: leave it off and every visitor shares one
       # bucket, because every request arrives from the same address.
       TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
+      # Peers CF-Connecting-IP / X-Forwarded-For are honoured from. Empty
+      # means trust nobody, which is the only safe default for a stack that
+      # can also be reached with no Cloudflare in front of it at all - the
+      # local-only `docker compose up`. The default here names the compose
+      # network's own pinned subnet (see the `networks:` block at the end of
+      # this file), since that is exactly where cloudflared connects from
+      # when the `public` profile is in use.
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-172.30.99.0/24}"
     ports:
       - "62686:8080"
     volumes:
@@ -202,16 +208,19 @@ services:
     # LOG_EXPORT_DIR, so this 30 MB cap only has to survive the gap between a
     # request and the follower draining it.
     logging: *logging
-    # Deliberately NOT gated on the indexer completing. The webserver tolerates
-    # having no data - it serves 503 and retries the load in the background -
-    # and it re-checks storage per request (throttled to once every few
-    # seconds), so it picks up a newly published index on its own.
+    # Deliberately NOT gated on dataservice's first crawl finishing - there is
+    # nothing here to gate on: dataservice starts crawling on its own and
+    # nothing in this file waits for it. The webserver tolerates having no
+    # data - it serves 503 and retries the load in the background - and it
+    # re-checks storage per request (throttled to once every few seconds), so
+    # it picks up a newly published index on its own.
     #
     # So on any run after the first it serves the PREVIOUS index immediately
-    # while a re-scrape runs, then swaps atomically when the new one lands.
-    # Gating on the indexer bought nothing and cost an hour of downtime per
-    # scrape - and made `docker compose up -d` block for the whole crawl,
-    # because Compose cannot return until a service_completed_successfully
+    # while a re-scrape runs, then swaps atomically when the new one lands. A
+    # prior version of this file gated webserver on a one-shot "indexer"
+    # sidecar's completion instead; that bought nothing and cost an hour of
+    # downtime per scrape, and made `docker compose up -d` block for the whole
+    # crawl, because Compose cannot return until a service_completed_successfully
     # dependency finishes.
 
   # Public entrypoint for itchgrep.com. Opt-in, so a local `docker compose up`
@@ -230,7 +239,11 @@ services:
   #
   # NEVER route a hostname at the dataservice. `/trigger-fetch` takes no
   # authentication, so a public route to it — on any port — hands anyone a
-  # button that starts a multi-hour crawl.
+  # button that starts a multi-hour crawl. Requiring POST (see
+  # cmd/dataservice/main.go's handleFetchTrigger) stops a mere page load or a
+  # scanner sweep from hitting it by accident, but that is not authentication
+  # - a hostname routed here would still let any visitor who finds it fire the
+  # button on purpose.
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: [public]
@@ -251,3 +264,15 @@ services:
 
 volumes:
   itchgrep-data:
+
+# Pinned instead of left to Docker's automatic allocation, so TRUSTED_PROXY_CIDRS
+# above can name the exact subnet cloudflared connects from - the compose
+# network's peer address is how the webserver decides whether to believe
+# CF-Connecting-IP at all - rather than trusting whatever subnet Docker
+# happened to hand out on this host, which can shift across a daemon restart
+# or a second stack on the same machine.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.99.0/24

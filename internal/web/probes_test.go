@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"itchgrep/internal/metrics"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLiveRoutesAreNeverProbes(t *testing.T) {
@@ -53,7 +55,7 @@ func TestOrdinaryUnknownPathsAreNotProbes(t *testing.T) {
 
 func TestProbeFilterAnswersBareTextPlain404(t *testing.T) {
 	m := metrics.New()
-	handler := ProbeFilter(m, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := ProbeFilter(m, false, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("must not reach the wrapped handler")
 	}))
 
@@ -70,9 +72,25 @@ func TestProbeFilterAnswersBareTextPlain404(t *testing.T) {
 	assert.EqualValues(t, 0, m.Snapshot().Total)
 }
 
+func TestProbeFilterBoundsAPathologicallyLongPath(t *testing.T) {
+	lines := captureEvents(t)
+	handler := ProbeFilter(metrics.New(), false, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("must not reach the wrapped handler")
+	}))
+
+	longPath := "/wp-" + strings.Repeat("a", maxLoggedPath+1000) + ".php"
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, longPath, nil))
+
+	require.Len(t, *lines, 1)
+	var rec probeRecord
+	require.NoError(t, json.Unmarshal([]byte((*lines)[0]), &rec))
+	assert.Len(t, rec.Path, maxLoggedPath)
+}
+
 func TestProbeFilterLetsRealRoutesThrough(t *testing.T) {
 	reached := false
-	handler := ProbeFilter(metrics.New(), false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := ProbeFilter(metrics.New(), false, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
 	}))
 
@@ -90,8 +108,8 @@ func TestProbeFilterEmitsOneProbeRecordAndNoAccessRecord(t *testing.T) {
 	lines := captureEvents(t)
 	m := metrics.New()
 	r := chi.NewRouter()
-	r.Use(ProbeFilter(m, false))
-	r.Use(RequestLogger(false, m))
+	r.Use(ProbeFilter(m, false, nil))
+	r.Use(RequestLogger(false, nil, m))
 	// chi only builds its middleware chain once a route is registered - see
 	// Mux.ServeHTTP's mx.handler == nil fast path - so a live route must be
 	// present even though this test never requests it.

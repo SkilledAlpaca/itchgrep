@@ -56,6 +56,14 @@ type SearchOptions struct {
 	// an error, so a stale or hand-edited link degrades the same way an
 	// unknown tag does.
 	Like string
+
+	// NoFacets skips the tag facet bleve would otherwise compute over the
+	// whole match set. It exists for /new and /feed, which render a fixed
+	// list with no sidebar to fill in - the facet costs a pass over up to
+	// maxFacetTags terms regardless of whether anything reads Results.Tags
+	// afterwards, so a caller that never will should say so up front rather
+	// than pay for it and discard the answer.
+	NoFacets bool
 }
 
 // Results is one page of assets plus the context the UI needs around them: how
@@ -158,13 +166,21 @@ func (c *Cache) browse(page int64) (Results, error) {
 	}
 
 	start := (page - 1) * c.pageSize
-	end := start + c.pageSize
-	if start >= int64(len(c.data)) {
+	// start < 0 covers a page number large enough to overflow this
+	// multiplication and wrap negative - pageParam rejects that before a
+	// request ever reaches here (see maxPage), but this guard is what keeps a
+	// negative start from reaching the slice below and panicking, for any
+	// caller that did not go through pageParam.
+	if start < 0 || start >= int64(len(c.data)) {
 		// Out of range: an empty page (not an error) is how infinite scroll on
 		// the client knows to stop requesting further pages.
 		return Results{Total: int64(len(c.data)), Tags: c.tagCounts}, nil
 	}
-	if end > int64(len(c.data)) {
+	end := start + c.pageSize
+	if end < start || end > int64(len(c.data)) {
+		// end < start is the same overflow, one multiplication later: start
+		// was small enough to pass the guard above, but adding pageSize wrapped
+		// past int64's range.
 		end = int64(len(c.data))
 	}
 	return Results{
@@ -201,14 +217,26 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 		likeTags = source.Tags
 	}
 
-	from := int((opts.Page - 1) * c.pageSize)
+	from64 := (opts.Page - 1) * c.pageSize
+	if from64 < 0 {
+		// A page number large enough to overflow that multiplication wraps
+		// negative. pageParam rejects it before a request reaches here (see
+		// maxPage), but bleve's SearchRequestOptions has no defined behaviour
+		// for a negative from, so any other caller gets the same "out of
+		// range" empty page browse() gives rather than whatever bleve would
+		// do with it.
+		return Results{LikeTitle: likeTitle}, nil
+	}
+	from := int(from64)
 	size := int(c.pageSize)
 	if opts.Limit > 0 {
 		size = int(opts.Limit)
 	}
 	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts, likeTags), size, from, false)
 	searchRequest.SortBy(sortOrder(opts.resolvedSort()))
-	searchRequest.AddFacet("tags", bleve.NewFacetRequest("TagSlugs", maxFacetTags))
+	if !opts.NoFacets {
+		searchRequest.AddFacet("tags", bleve.NewFacetRequest("TagSlugs", maxFacetTags))
+	}
 
 	searchResult, err := c.index.Search(searchRequest)
 	if err != nil {
@@ -533,12 +561,17 @@ func countTags(assets []models.Asset) []models.Tag {
 	return out
 }
 
-// describe renders a request for the log line, so a slow or empty search can be
-// traced back to everything that shaped it rather than just its query string.
+// describe renders a request's shape for the log line, so a slow or empty
+// search can be traced back to what shaped it - without ever writing what a
+// visitor typed. The query and the author are visitor-entered content, so
+// only their presence is logged, never the value; tags, price, sort and page
+// come from a fixed vocabulary or the site's own controls, not free text, and
+// are logged as-is the same way the access log's query-present boolean (see
+// internal/web/logmiddleware.go) draws the same line for the same reason.
 func describe(opts SearchOptions) string {
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 6)
 	if opts.Query != "" {
-		parts = append(parts, fmt.Sprintf("query %q", opts.Query))
+		parts = append(parts, "query present")
 	}
 	if len(opts.Tags) > 0 {
 		parts = append(parts, "tags "+strings.Join(opts.Tags, "+"))
@@ -547,7 +580,7 @@ func describe(opts SearchOptions) string {
 		parts = append(parts, "without "+strings.Join(opts.ExcludeTags, "+"))
 	}
 	if opts.Author != "" {
-		parts = append(parts, "by "+opts.Author)
+		parts = append(parts, "author filter present")
 	}
 	if opts.Price != "" {
 		parts = append(parts, opts.Price)
@@ -558,6 +591,7 @@ func describe(opts SearchOptions) string {
 	if opts.Like != "" {
 		parts = append(parts, "like "+opts.Like)
 	}
+	parts = append(parts, fmt.Sprintf("page %d", opts.Page))
 	parts = append(parts, "sorted by "+opts.resolvedSort())
 	return strings.Join(parts, ", ")
 }

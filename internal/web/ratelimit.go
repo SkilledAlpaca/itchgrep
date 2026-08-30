@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -42,7 +43,8 @@ type Limiter struct {
 	burst float64
 
 	// trustProxy makes the client identity come from CF-Connecting-IP or
-	// X-Forwarded-For instead of the socket address.
+	// X-Forwarded-For instead of the socket address, when the request also
+	// arrived from one of trustedCIDRs - see ClientIP.
 	//
 	// Off by default, and that default matters: those headers are attacker
 	// controlled unless something upstream overwrites them, so trusting them on
@@ -50,25 +52,29 @@ type Limiter struct {
 	// request and bypass the limit entirely. Behind Cloudflare the opposite is
 	// true - every request arrives from the tunnel, so without this the whole
 	// internet shares one bucket.
-	trustProxy bool
+	trustProxy   bool
+	trustedCIDRs []*net.IPNet
 }
 
 // NewLimiter reads its configuration from the environment: RATE_LIMIT_RPS
-// (default 5), RATE_LIMIT_BURST (default 20) and TRUST_PROXY_HEADERS (default
-// false). A non-positive rate disables limiting entirely.
+// (default 5), RATE_LIMIT_BURST (default 20), TRUST_PROXY_HEADERS (default
+// false) and TRUSTED_PROXY_CIDRS (see ClientIP; required once
+// TRUST_PROXY_HEADERS is true). A non-positive rate disables limiting
+// entirely.
 func NewLimiter() *Limiter {
 	l := &Limiter{
-		buckets:    make(map[string]*bucket),
-		rate:       envFloat("RATE_LIMIT_RPS", 5),
-		burst:      envFloat("RATE_LIMIT_BURST", 20),
-		trustProxy: TrustProxyHeaders(),
+		buckets:      make(map[string]*bucket),
+		rate:         envFloat("RATE_LIMIT_RPS", 5),
+		burst:        envFloat("RATE_LIMIT_BURST", 20),
+		trustProxy:   TrustProxyHeaders(),
+		trustedCIDRs: TrustedProxyCIDRs(),
 	}
 	if l.rate <= 0 {
 		logging.Warning("RATE_LIMIT_RPS is %v: rate limiting is disabled", l.rate)
 		return l
 	}
-	logging.Info("Rate limit: %.1f req/s, burst %.0f, trusting proxy headers: %v",
-		l.rate, l.burst, l.trustProxy)
+	logging.Info("Rate limit: %.1f req/s, burst %.0f, trusting proxy headers: %v (%d trusted network(s))",
+		l.rate, l.burst, l.trustProxy, len(l.trustedCIDRs))
 	go l.evictLoop()
 	return l
 }
@@ -92,7 +98,7 @@ func (l *Limiter) evictLoop() {
 // derivation itself lives in ClientIP - so ratelimit_test.go keeps working
 // unchanged.
 func (l *Limiter) client(r *http.Request) string {
-	return ClientIP(r, l.trustProxy)
+	return ClientIP(r, l.trustProxy, l.trustedCIDRs)
 }
 
 // allow reports whether this client may make a request now.

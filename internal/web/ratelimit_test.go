@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,17 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testLimiter(rate, burst float64, trustProxy bool) *Limiter {
+func testLimiter(rate, burst float64, trustProxy bool, trustedCIDRs []*net.IPNet) *Limiter {
 	return &Limiter{
-		buckets:    make(map[string]*bucket),
-		rate:       rate,
-		burst:      burst,
-		trustProxy: trustProxy,
+		buckets:      make(map[string]*bucket),
+		rate:         rate,
+		burst:        burst,
+		trustProxy:   trustProxy,
+		trustedCIDRs: trustedCIDRs,
 	}
 }
 
 func TestLimiterAllowsTheBurstThenRefuses(t *testing.T) {
-	l := testLimiter(1, 3, false)
+	l := testLimiter(1, 3, false, nil)
 
 	for i := 0; i < 3; i++ {
 		assert.True(t, l.allow("1.2.3.4"), "request %d is within the burst", i+1)
@@ -29,7 +31,7 @@ func TestLimiterAllowsTheBurstThenRefuses(t *testing.T) {
 }
 
 func TestLimiterRefillsOverTime(t *testing.T) {
-	l := testLimiter(10, 1, false)
+	l := testLimiter(10, 1, false, nil)
 	require.True(t, l.allow("1.2.3.4"))
 	require.False(t, l.allow("1.2.3.4"))
 
@@ -40,14 +42,14 @@ func TestLimiterRefillsOverTime(t *testing.T) {
 }
 
 func TestLimiterIsPerClient(t *testing.T) {
-	l := testLimiter(1, 1, false)
+	l := testLimiter(1, 1, false, nil)
 	require.True(t, l.allow("1.1.1.1"))
 	require.False(t, l.allow("1.1.1.1"))
 	assert.True(t, l.allow("2.2.2.2"), "one noisy client must not lock out another")
 }
 
 func TestLimiterDisabledWhenRateIsZero(t *testing.T) {
-	l := testLimiter(0, 0, false)
+	l := testLimiter(0, 0, false, nil)
 	for i := 0; i < 50; i++ {
 		require.True(t, l.allow("1.2.3.4"))
 	}
@@ -57,7 +59,7 @@ func TestClientIdentityIgnoresProxyHeadersByDefault(t *testing.T) {
 	// The headers are attacker-controlled on a directly-exposed server, so
 	// honouring them by default would let anyone mint a new identity per
 	// request and bypass the limit entirely.
-	l := testLimiter(1, 1, false)
+	l := testLimiter(1, 1, false, cidrs(t, "10.0.0.0/24"))
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.1:5000"
@@ -70,7 +72,7 @@ func TestClientIdentityIgnoresProxyHeadersByDefault(t *testing.T) {
 func TestClientIdentityUsesProxyHeadersWhenTrusted(t *testing.T) {
 	// Behind Cloudflare every request arrives from the tunnel, so without this
 	// the entire internet shares one bucket.
-	l := testLimiter(1, 1, true)
+	l := testLimiter(1, 1, true, cidrs(t, "10.0.0.0/24"))
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.1:5000"
@@ -83,8 +85,22 @@ func TestClientIdentityUsesProxyHeadersWhenTrusted(t *testing.T) {
 	assert.Equal(t, "8.8.8.8", l.client(r2), "the left-most entry is the origin client")
 }
 
+func TestClientIdentityIgnoresProxyHeadersFromAnUntrustedPeer(t *testing.T) {
+	// Trusting the header is not enough on its own: the socket address it
+	// arrived over also has to be inside a configured network, or a LAN
+	// client hitting the published port directly could still mint an
+	// identity by simply sending the header itself.
+	l := testLimiter(1, 1, true, cidrs(t, "10.0.0.0/24"))
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "203.0.113.9:5000"
+	r.Header.Set("CF-Connecting-IP", "9.9.9.9")
+
+	assert.Equal(t, "203.0.113.9", l.client(r), "outside every trusted network, so the header is not honored")
+}
+
 func TestMiddlewareRefusesWithRetryAfterAndNoStore(t *testing.T) {
-	l := testLimiter(1, 1, false)
+	l := testLimiter(1, 1, false, nil)
 	h := l.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

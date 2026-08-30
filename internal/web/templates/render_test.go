@@ -65,6 +65,25 @@ func TestStatsLinksToAboutAsAPlainNavigation(t *testing.T) {
 		"stats must navigate to /about, not swap it in place")
 }
 
+func TestStatsPageRendersEveryBreakdownRow(t *testing.T) {
+	// The breakdown is exhaustive at the counter (see internal/metrics), and
+	// this asserts the page actually shows every bucket rather than stopping
+	// short of the ones added alongside routeOther.
+	snap := metrics.Snapshot{New: 12, Feed: 34, Tag: 56, Saved: 78, Other: 90}
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, time.Now()), History{}))
+
+	assert.Contains(t, html, "New arrivals page")
+	assert.Contains(t, html, "12")
+	assert.Contains(t, html, "Feed requests")
+	assert.Contains(t, html, "34")
+	assert.Contains(t, html, "Tag pages")
+	assert.Contains(t, html, "56")
+	assert.Contains(t, html, "Saved page")
+	assert.Contains(t, html, "78")
+	assert.Contains(t, html, ">Other<")
+	assert.Contains(t, html, "90")
+}
+
 func TestEmptyHistoryRendersNoSection(t *testing.T) {
 	// A deploy before this feature shipped, or one with no crawl since, has
 	// nothing recorded - the section must not appear at all rather than
@@ -409,6 +428,31 @@ func TestSavedPageShellHasAnEmptyGridAndACardTemplate(t *testing.T) {
 	templateStart := strings.Index(html, "<template")
 	require.True(t, gridStart >= 0 && templateStart > gridStart,
 		"the grid must be empty of cards; the template lives outside it")
+}
+
+func TestAssetLinkAndThumbAreSanitizedAgainstAScriptScheme(t *testing.T) {
+	// asset.Link and asset.ThumbUrl are scraped verbatim from itch.io's own
+	// markup, not constructed by this site - exactly the untrusted input that
+	// must go through templ.URL's sanitization rather than templ.SafeURL's
+	// bare type assertion. A javascript: href or src must never survive
+	// unchanged into the rendered page.
+	//
+	// The data-link and data-thumb attributes are a different matter: app.js
+	// reads those to rebuild a saved card without ever navigating the browser
+	// to them, so the raw value legitimately survives there - only the two
+	// navigable attributes are asserted on here.
+	r := sampleResults()
+	r.Assets = []models.Asset{
+		{GameId: "1", Title: "Hostile Listing",
+			Link:     `javascript:alert(1)`,
+			ThumbUrl: `javascript:alert(2)`},
+	}
+	html := render(t, AssetPage(Filters{}, r))
+
+	assert.NotContains(t, html, `href="javascript:`)
+	assert.NotContains(t, html, `src="javascript:`)
+	assert.Contains(t, html, `href="about:invalid`, "templ.URL's sanitization sentinel replaces the unsafe href scheme")
+	assert.Contains(t, html, `src="about:invalid`, "templ.URL's sanitization sentinel replaces the unsafe src scheme")
 }
 
 func TestEveryCardOffersASimilarLink(t *testing.T) {

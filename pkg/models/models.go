@@ -298,7 +298,12 @@ type Traffic struct {
 	FirstSeen time.Time
 
 	Total, Index, Results, About, Stats, Static uint64
-	Searches                                    uint64
+	// New, Feed, Tag and Saved were added after the first release of this
+	// struct - a traffic.json written before then has none of these keys, and
+	// json.Unmarshal leaves them at zero rather than failing, so an old file
+	// still loads; the counters it never tracked simply start counting now.
+	New, Feed, Tag, Saved, Other uint64
+	Searches                     uint64
 
 	Hours [24]HourBucket
 }

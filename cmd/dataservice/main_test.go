@@ -266,3 +266,43 @@ func TestRecencyIsStampedOntoAssetsAtTheEnd(t *testing.T) {
 	// An asset with no rank must sort after every asset that has one.
 	assert.Greater(t, c.assets[0].RecencyRank(), c.assets[1].RecencyRank())
 }
+
+func TestDecideCrawlActionStartsTheFirstCrawlWithNoData(t *testing.T) {
+	// hasData is false exactly when publishedAge found no assets.json on a
+	// fresh DATA_DIR - previously this left the first crawl to a separate
+	// bootstrap sidecar; startScrape's CompareAndSwap guard already prevents
+	// two crawls racing for the index directory, so scheduleCrawls can just
+	// start it itself regardless of age or interval.
+	assert.Equal(t, actionCrawl, decideCrawlAction(false, 0, time.Hour))
+	assert.Equal(t, actionCrawl, decideCrawlAction(false, 999*time.Hour, time.Hour))
+}
+
+func TestDecideCrawlActionRebuildsOnlyOnceStale(t *testing.T) {
+	assert.Equal(t, actionNone, decideCrawlAction(true, 30*time.Minute, time.Hour),
+		"an index younger than the interval must not trigger a rebuild")
+	assert.Equal(t, actionCrawl, decideCrawlAction(true, time.Hour, time.Hour),
+		"age equal to the interval is due, not merely close")
+	assert.Equal(t, actionCrawl, decideCrawlAction(true, 2*time.Hour, time.Hour))
+}
+
+func TestBackoffDelayProgression(t *testing.T) {
+	const interval = 168 * time.Hour
+
+	assert.Equal(t, 15*time.Minute, backoffDelay(1, interval))
+	assert.Equal(t, time.Hour, backoffDelay(2, interval))
+	assert.Equal(t, 6*time.Hour, backoffDelay(3, interval))
+	assert.Equal(t, interval, backoffDelay(4, interval),
+		"a failure this persistent falls back to the normal crawl cadence")
+	assert.Equal(t, interval, backoffDelay(5, interval),
+		"it must not keep growing past the crawl interval")
+}
+
+func TestBackoffDelayNeverExceedsAShortInterval(t *testing.T) {
+	// A short CRAWL_INTERVAL configured for testing must not be defeated by a
+	// backoff step longer than the interval itself.
+	const interval = 5 * time.Minute
+
+	assert.Equal(t, interval, backoffDelay(1, interval))
+	assert.Equal(t, interval, backoffDelay(3, interval))
+	assert.Equal(t, interval, backoffDelay(4, interval))
+}

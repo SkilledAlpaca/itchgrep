@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"time"
 
@@ -40,13 +41,25 @@ type accessRecord struct {
 // otherwise unbounded.
 const maxLoggedUA = 256
 
-// truncateUA bounds an attacker-controlled header to maxLoggedUA bytes.
-// Shared by the access and probe records so both stay bounded the same way.
-func truncateUA(ua string) string {
-	if len(ua) <= maxLoggedUA {
-		return ua
+// maxLoggedPath caps the Path field the same way: it too is attacker
+// controlled, and MaxHeaderBytes on the server (see cmd/webserver) bounds the
+// headers but not the request line's path, so without this a near-1MB
+// request line becomes a near-1MB log line.
+const maxLoggedPath = 512
+
+// truncate bounds an attacker-controlled string to max bytes. Shared by the
+// UA and path fields of both the access and probe records so all four stay
+// bounded the same way.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
 	}
-	return ua[:maxLoggedUA]
+	return s[:max]
+}
+
+// truncateUA bounds an attacker-controlled header to maxLoggedUA bytes.
+func truncateUA(ua string) string {
+	return truncate(ua, maxLoggedUA)
 }
 
 // RequestLogger logs one line per request that reaches routing - which,
@@ -59,11 +72,12 @@ func truncateUA(ua string) string {
 // streaming render depends on - across HTTP/1.1 and HTTP/2, and chi is
 // already a dependency.
 //
-// trustProxy controls where the logged client identity comes from; see
-// ClientIP. It is passed in rather than read from the environment here, so
-// the limiter and the logger are guaranteed to agree - both read
-// TrustProxyHeaders(), sync.OnceValue over the same env var.
-func RequestLogger(trustProxy bool, m *metrics.Counters) func(http.Handler) http.Handler {
+// trustProxy and trustedCIDRs control where the logged client identity comes
+// from; see ClientIP. Both are passed in rather than read from the
+// environment here, so the limiter and the logger are guaranteed to agree -
+// all three read TrustProxyHeaders() and TrustedProxyCIDRs(), sync.OnceValues
+// over the same env vars.
+func RequestLogger(trustProxy bool, trustedCIDRs []*net.IPNet, m *metrics.Counters) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
@@ -88,9 +102,9 @@ func RequestLogger(trustProxy bool, m *metrics.Counters) func(http.Handler) http
 			record := accessRecord{
 				Ts:     start.UTC().Format(time.RFC3339Nano),
 				Kind:   "access",
-				IP:     AnonymizeIP(ClientIP(r, trustProxy)),
+				IP:     AnonymizeIP(ClientIP(r, trustProxy, trustedCIDRs)),
 				Method: r.Method,
-				Path:   r.URL.Path,
+				Path:   truncate(r.URL.Path, maxLoggedPath),
 				Query:  r.URL.RawQuery != "",
 				Route:  routePattern,
 				Status: status,

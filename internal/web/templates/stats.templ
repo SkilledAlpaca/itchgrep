@@ -41,6 +41,26 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 				<dd>{ HumaneCount(tr.Static()) }</dd>
 			</div>
 			<div class="stats-cell">
+				<dt>New arrivals page</dt>
+				<dd>{ HumaneCount(tr.New()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Feed requests</dt>
+				<dd>{ HumaneCount(tr.Feed()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Tag pages</dt>
+				<dd>{ HumaneCount(tr.Tag()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Saved page</dt>
+				<dd>{ HumaneCount(tr.Saved()) }</dd>
+			</div>
+			<div class="stats-cell">
+				<dt>Other</dt>
+				<dd>{ HumaneCount(tr.Other()) }</dd>
+			</div>
+			<div class="stats-cell">
 				<dt>Uptime</dt>
 				<dd>{ tr.UptimeLabel() }</dd>
 			</div>

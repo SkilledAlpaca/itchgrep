@@ -92,6 +92,9 @@ temporary review artifact, deleted in the final cleanup.
   consider file-based secret. (docs)
 - [ ] **F29 Follower gaps invisible**: `--tail 0` drops lines during downtime with no marker;
   nothing supervises the script. Reconnect markers + fail-loud. (scripts/export-logs.sh)
+  ALSO: compose now pins `container_name: itchgrep-webserver` (no `-1` suffix) — update the
+  follower default CONTAINER_NAME and README:345 to match, and flag the host-side script
+  refresh in the deploy runbook.
 - [ ] **F30 fetchAndStoreAssets untestable**: 235-line pipeline, eight untested early-return
   paths encoding load-bearing ordering. Extract named stages with tests. (cmd/dataservice)
 - [ ] **F31 Host bootstrap undocumented**: three load-bearing host dirs created by hand.
