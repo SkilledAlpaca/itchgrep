@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blevesearch/bleve"
-	"github.com/blevesearch/bleve/search/query"
+	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search/query"
 )
 
 // ErrNotReady is returned by Find when no data/index has ever been

@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/blevesearch/bleve"
-	"github.com/blevesearch/bleve/search"
-	"github.com/blevesearch/bleve/search/query"
+	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search"
+	"github.com/blevesearch/bleve/v2/search/query"
 )
 
 // maxFacetTags is how many tags the sidebar asks bleve to count. The vocabulary
@@ -523,8 +523,12 @@ func facetTags(facet *search.FacetResult, applied []string) []models.Tag {
 		skip[t] = struct{}{}
 	}
 
-	out := make([]models.Tag, 0, len(facet.Terms))
-	for _, term := range facet.Terms {
+	// v2's FacetResult.Terms is a *TermFacets accessor type rather than a plain
+	// slice (it also backs sorting/trimming internally), so the terms come out
+	// through .Terms() instead of ranging the field directly.
+	terms := facet.Terms.Terms()
+	out := make([]models.Tag, 0, len(terms))
+	for _, term := range terms {
 		if _, ok := skip[term.Term]; ok {
 			continue
 		}

@@ -9,7 +9,7 @@ import (
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
 
-	"github.com/blevesearch/bleve"
+	"github.com/blevesearch/bleve/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

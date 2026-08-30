@@ -8,7 +8,6 @@ import (
 	"itchgrep/internal/logging"
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
-	"itchgrep/pkg/money"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,8 +17,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"github.com/blevesearch/bleve"
 )
 
 // scrapeInProgress guards against overlapping scrapes: /trigger-fetch spawns
@@ -36,6 +33,14 @@ var activeCrawler atomic.Pointer[crawler]
 
 func main() {
 	logging.Init("", true)
+
+	// Runs synchronously, before scheduleCrawls: a rebuild here takes minutes,
+	// and scheduleCrawls would otherwise see a fresh assets.json and wait up to
+	// CRAWL_INTERVAL - as long as a week - before an unopenable index got
+	// fixed by the normal crawl cycle. See selfheal.go.
+	if err := selfHealIndexFormat(); err != nil {
+		logging.Error("Self-heal index rebuild failed, the previous index (if any) is left in place: %v", err)
+	}
 
 	go scheduleCrawls(config.CrawlInterval())
 
@@ -373,97 +378,20 @@ func fetchAndStoreAssets() error {
 
 	// CREATING INDEX
 	//
-	// Built at the staging path, which sits beside the published index so that
-	// publishing is a rename rather than a copy. A previous run killed between
-	// creating this and publishing it would leave the directory behind, and
-	// bleve.New refuses to open a path that already exists.
-	logging.Info("Creating index...")
-	staging := storage.StagingIndexPath()
-	if err := os.RemoveAll(staging); err != nil {
-		logging.Error("Failed to clear stale staging index at %s: %v", staging, err)
-		return fmt.Errorf("clearing stale staging index: %w", err)
-	}
-	newIndex, err := bleve.New(staging, storage.IndexMapping())
-	// On any failure below, the half-built index must not be left where the
-	// next run would trip over it. PublishIndex renames it away on success, so
-	// this is a no-op then.
-	defer os.RemoveAll(staging)
-	if err != nil {
-		logging.Error("Failed to create index: %v", err)
-		return fmt.Errorf("bleve.New: %w", err)
-	}
-
-	logging.Info("Created new empty index at %s", staging)
-
 	// Rates are refreshed here, at the end of a crawl, because that is the only
 	// moment the index is rebuilt - and PriceUSD is baked into the documents,
 	// so the snapshot the index was built with is the snapshot it must be
 	// queried with. Fetching them on a separate schedule would leave the stored
 	// dollar values and the published rates describing different days.
+	logging.Info("Creating index...")
 	rates := currentRates()
-
-	// first, convert the assets to IndexedAssets, which are smaller and used for indexing
-	unpriced := 0
-	var smolAssets []models.IndexedAsset = make([]models.IndexedAsset, len(assets))
-	for i, asset := range assets {
-		priceUSD := 0.0
-		if !asset.Free() {
-			m, ok := money.Parse(asset.Price)
-			if ok {
-				priceUSD, ok = rates.USD(m)
-			}
-			if !ok {
-				// Not zero: an unreadable price must not look like a free asset
-				// to a ceiling filter or a cheapest-first sort.
-				priceUSD = models.UnknownPrice
-				unpriced++
-			}
-		}
-		smolAssets[i] = models.NewIndexedAsset(asset, priceUSD)
+	// buildIndex is shared with rebuildIndexFromPublishedData (selfheal.go),
+	// which needs the exact same document construction and batching for a
+	// rebuild that never recrawls to still produce an indistinguishable index.
+	if _, err := buildIndex(assets, rates); err != nil {
+		logging.Error("Failed to build index: %v", err)
+		return fmt.Errorf("buildIndex: %w", err)
 	}
-	if unpriced > 0 {
-		// Worth logging rather than swallowing: a jump here means itch.io is
-		// showing a currency format money.Parse does not know, and those assets
-		// are silently absent from every price filter until it does.
-		logging.Warning("Could not price %d/%d assets in dollars; they will not match price filters", unpriced, len(assets))
-	}
-
-	// indexing the assets in batches
-	//
-	// Every write is checked, including the batch flushes and the close. They
-	// are what actually put documents on disk, so a failure ignored here does
-	// not produce a visible error - it produces a smaller index that publishes
-	// successfully and replaces a complete one, and the only symptom is assets
-	// that stop being findable.
-	b := newIndex.NewBatch()
-	assetsIndexed := 0
-	for i, asset := range smolAssets {
-		if err := b.Index(asset.GameId, asset); err != nil {
-			newIndex.Close() // clean up the failed new index
-			logging.Error("Failed to index asset, cancelling indexing: %v", err)
-			return fmt.Errorf("indexing asset %s: %w", asset.GameId, err)
-		}
-		assetsIndexed++
-		if i%1500 == 0 && i != 0 { // we index in batches of 1500
-			logging.Info("Batching assets: %d/%d", i, len(smolAssets))
-			if err := newIndex.Batch(b); err != nil {
-				newIndex.Close()
-				logging.Error("Failed to write batch at asset %d, cancelling indexing: %v", i, err)
-				return fmt.Errorf("writing batch at asset %d: %w", i, err)
-			}
-			b.Reset()
-		}
-	}
-	if err := newIndex.Batch(b); err != nil { // the remainder
-		newIndex.Close()
-		logging.Error("Failed to write the final batch, cancelling indexing: %v", err)
-		return fmt.Errorf("writing final batch: %w", err)
-	}
-	if err := newIndex.Close(); err != nil {
-		logging.Error("Failed to close the new index, refusing to publish it: %v", err)
-		return fmt.Errorf("closing new index: %w", err)
-	}
-	logging.Info("Successfully indexed %d assets", assetsIndexed)
 
 	// PUBLISHING
 	//
