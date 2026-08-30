@@ -144,7 +144,7 @@ The primary, code-level fix for the same incident is `robots.txt`'s `Disallow: /
 
 ### DNS
 
-`itchgrep.com` resolves through Cloudflare's DNS (the operator owns the domain — see the README for the project's ownership and attribution note). Specific record details, TLS/proxy mode, and registrar are not verifiable from this repository — see [docs/open-questions.md](open-questions.md).
+`itchgrep.com` resolves through Cloudflare's DNS (the operator owns the domain — see the README for the project's ownership and attribution note). DNS records and the domain registration are managed by the operator outside this project's scope. The zone's TLS/proxy mode is not verifiable from this repository — see [docs/open-questions.md](open-questions.md).
 
 **What breaks if Cloudflare (the account, or the service generally) disappears:** total outage of the public site — `itchgrep.com` stops resolving to anything reachable, and even if DNS somehow still resolved, the tunnel that makes the origin reachable at all depends on the same account. The stack itself keeps running unaffected and stays reachable directly on the host's own network (`http://<host-ip>:62686`) the entire time, since the webserver's port binding doesn't depend on Cloudflare in any way.
 

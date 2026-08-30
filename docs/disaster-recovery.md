@@ -1,6 +1,6 @@
 # Disaster recovery
 
-**There is currently no automated backup of itchgrep's data.** If the `/data` directory is lost — a failed disk, an accidental `docker compose down -v`, a botched restore — some of what's in it cannot be recovered from anywhere else. This document explains what can fail, what can be lost, and gives you a manual backup and restore procedure to close that gap.
+**Backups of itchgrep's data are managed outside this repository** — the operator handles them at the host level, not through anything in this project's scripts or compose file. This document explains what can fail, what would be lost without a backup, how to take a manual snapshot when you want one (for example, before a risky change), and how to restore.
 
 This document assumes no prior familiarity with Docker or backup tooling. Every command below states where to run it and what to expect.
 
@@ -37,9 +37,9 @@ Everything itchgrep persists lives under one directory (`/data` inside the conta
 
 ## Backup
 
-### There is no automated backup today
+### Backups are handled at the host level, outside this repository
 
-No cron job, Unraid plugin, or script in this repository backs up `/data`. This is a gap, not an oversight to work around silently — until it's addressed, the only backup that exists is one you take by hand, whenever you take it.
+Nothing in this repository — no cron job, script, or compose service — backs up `/data`; the operator manages backups at the host level instead. The manual procedure below is therefore not the primary backup: it exists for ad hoc snapshots, for example right before a risky change or upgrade, and as the reference for what is and isn't safe to copy while the stack runs.
 
 ### Is it safe to copy `/data` while the stack is running?
 
@@ -65,16 +65,15 @@ This creates a single compressed archive containing exactly the six files worth 
 
 **NOT TESTED** — this repository has never actually been backed up or restored end to end; the command above is derived directly from `internal/storage`'s file names and the atomicity analysis above, not verified against a live restore.
 
-**Where to put the resulting archive** is not something this repository specifies. A conventional Unraid setup often has an appdata-backup destination (for example, via the community "Appdata Backup / Restore" plugin, typically writing to `/mnt/user/backups/` or similar) — but whether one is configured on this host, and where, is unverified. See [docs/open-questions.md](open-questions.md).
+**Where to put the resulting archive** is not something this repository specifies — the operator's host-level backup arrangement is the primary copy of this data, so an ad hoc snapshot from this procedure only needs to live somewhere outside `/mnt/user/appdata/itchgrep/` (so it doesn't share fate with the files it protects) for as long as the risky change that prompted it is in flight.
 
-### Backup cadence
+### What a backup of this data needs to cover, and how often
 
-Tie the cadence to how fast each file actually changes:
+Whatever backs up this directory — the operator's host-level arrangement is the primary one — the facts that matter when judging its coverage and schedule:
 
-- `traffic.json` is rewritten every 5 minutes while the webserver runs (see [docs/observability.md](observability.md)) — some loss here is already an accepted trade-off even without any backup (a hard container kill loses up to 5 minutes of counts on its own), so backing this up any more often than daily buys little.
-- `assets.json`'s `FirstSeen` data and `history.json` change **once per crawl** — weekly by default (`CRAWL_INTERVAL=168h`; see [docs/configuration.md](configuration.md) for overriding it).
-
-**Recommendation:** back up at least once per crawl interval (weekly, by default), and no less often than that — an outage between backups should never cost more than one crawl's worth of arrival-date and history data. Daily is a comfortable margin above that minimum and costs almost nothing: the files being archived are small JSON documents (a few megabytes for the whole catalogue), not the multi-hundred-megabyte search index. There is no scheduled task in this repository that runs the command above automatically — set one up (an Unraid User Scripts entry on a schedule, or a plain `cron` entry) if you want this to happen without remembering it. **NOT TESTED** — no such scheduled task exists today to verify against.
+- `traffic.json` is rewritten every 5 minutes while the webserver runs (see [docs/observability.md](observability.md)) — some loss here is already an accepted trade-off even without any backup (a hard container kill loses up to 5 minutes of counts on its own), so anything daily or better fully covers it.
+- `assets.json`'s `FirstSeen` data and `history.json` change **once per crawl** — weekly by default (`CRAWL_INTERVAL=168h`; see [docs/configuration.md](configuration.md) for overriding it). A backup at least once per crawl interval means an outage never costs more than one crawl's worth of arrival-date and history data.
+- The files worth archiving are small JSON documents (a few megabytes for the whole catalogue); `index.bleve/` is regenerable and safe to exclude entirely (see above).
 
 ## Restore
 

@@ -1,6 +1,8 @@
 # Open questions
 
-This is the honest list of everything about itchgrep's operation that could not be confirmed from the repository itself, and needs a human — specifically, someone with access to the relevant account (Cloudflare, GitHub, the domain registrar, or the Unraid host itself) — to answer.
+This is the honest list of everything about itchgrep's operation that could not be confirmed from the repository itself, and needs a human — specifically, someone with access to the relevant account (Cloudflare, GitHub, or the Unraid host itself) — to answer.
+
+Entry numbers are stable identifiers, not a count: resolved entries are deleted without renumbering the rest, so gaps in the sequence are normal. Backups of the data directory and DNS/domain registration are managed outside this project's scope (the operator confirmed both) and are deliberately not tracked here.
 
 ## How to work an entry
 
@@ -36,22 +38,9 @@ If you find one of these questions genuinely can't be answered (an account nobod
 
 ---
 
-### 3. Domain registrar and renewal date for itchgrep.com
-
-**What's unknown:** which registrar `itchgrep.com` is registered through, and when it's next due for renewal.
-
-**Why it matters:** an expired domain registration takes the entire public site down instantly and can be surprisingly hard to reclaim if it lapses long enough for someone else to register it — this is a single point of failure with a hard deadline attached.
-
-**How to determine:** check the registrar account directly if you have access, or run a WHOIS lookup (`whois itchgrep.com`, or any public WHOIS web tool) for the registrar name and expiration date. Confirm auto-renewal is enabled and the payment method on file is current.
-
-**Affects:** [docs/infrastructure.md](infrastructure.md#dns), [docs/dependencies.md](dependencies.md#costs).
-
----
-
 ### 4. Full Cloudflare account inventory
 
-**What's unknown, specifically:**
-- Every DNS record configured for `itchgrep.com` (beyond what's inferable from the tunnel setup).
+**What's unknown, specifically** (DNS records and the domain registration itself are managed outside this project's scope and are deliberately not tracked here):
 - Every tunnel route configured (this document assumes only the one routing `itchgrep.com` at `webserver:8080` — see [docs/infrastructure.md](infrastructure.md#cloudflare) — but that's inferred from the compose file's comments, not read from the Cloudflare account itself).
 - Whether any WAF rule exists beyond the one Managed Challenge rule the operator described (`(http.request.uri.query ne "" and not cf.client.bot)`).
 - The TLS/SSL mode set for the zone (Flexible, Full, Full (strict), etc.).
@@ -59,33 +48,9 @@ If you find one of these questions genuinely can't be answered (an account nobod
 
 **Why it matters:** any of these could be a silent single point of failure or a security gap that isn't visible from the code or compose file at all — for example, a permissive TLS mode, an unexpected DNS record pointing somewhere stale, or a WAF rule nobody remembers the reason for.
 
-**How to determine:** log into the Cloudflare dashboard for the account that owns `itchgrep.com` and review, in order: **DNS** (the zone's DNS records tab), **Networking > Tunnels** (routes for the itchgrep tunnel), **Security > WAF** (custom rules list), **SSL/TLS > Overview** (the encryption mode), and **My Profile > Authentication** (2FA and recovery methods, account owner only).
+**How to determine:** log into the Cloudflare dashboard for the account that owns `itchgrep.com` and review, in order: **Networking > Tunnels** (routes for the itchgrep tunnel), **Security > WAF** (custom rules list), **SSL/TLS > Overview** (the encryption mode), and **My Profile > Authentication** (2FA and recovery methods, account owner only).
 
 **Affects:** [docs/infrastructure.md](infrastructure.md#cloudflare), [docs/disaster-recovery.md](disaster-recovery.md#credential-loss).
-
----
-
-### 5. Whether any backup of `/data` exists today, anywhere
-
-**What's unknown:** [docs/disaster-recovery.md](disaster-recovery.md) states plainly that no automated backup exists in this repository or its deployment scripts — but that doesn't rule out an ad hoc backup someone took manually and forgot to document (an Unraid "Appdata Backup / Restore" plugin snapshot, a cloud sync, a manual `tar` copied somewhere).
-
-**Why it matters:** if a backup already exists somewhere, the manual procedure in [docs/disaster-recovery.md](disaster-recovery.md#backup) is a second, redundant safety net rather than the only one — and more importantly, if a real disaster happens *before* this question is answered, knowing where to look first could save real time.
-
-**How to determine:** check the Unraid host for the community "Appdata Backup / Restore" plugin (or any other backup plugin) and whether it's configured to include `/mnt/user/appdata/itchgrep/data`. Check any cloud storage, NAS replication, or off-site sync the host might already have configured for other purposes that happens to cover this path too.
-
-**Affects:** [docs/disaster-recovery.md](disaster-recovery.md#backup).
-
----
-
-### 6. Where Unraid operators conventionally store backup archives on this host
-
-**What's unknown:** [docs/disaster-recovery.md](disaster-recovery.md)'s manual backup procedure writes the archive to `/mnt/user/appdata/itchgrep/` alongside the live data, purely as a placeholder — nothing in this repository specifies (or should specify, without confirmation) a real backup destination, and writing a backup next to the thing it backs up defeats much of the purpose if that whole share is what fails.
-
-**Why it matters:** a backup stored on the same disk/share as the data it protects doesn't protect against a disk failure, only against accidental deletion or corruption of the live files.
-
-**How to determine:** decide on (and document) a destination outside the `appdata` share — a separate array disk, a second Unraid share, or off-host storage — and update the `tar` command's destination path in [docs/disaster-recovery.md](disaster-recovery.md) accordingly.
-
-**Affects:** [docs/disaster-recovery.md](disaster-recovery.md#manual-backup-procedure).
 
 ---
 

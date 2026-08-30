@@ -81,12 +81,10 @@ compromised.
 
 ## Backups
 
-**There is no automated backup today.** This is a known gap, not an
-oversight — see
-[docs/disaster-recovery.md](docs/disaster-recovery.md#there-is-no-automated-backup-today)
-for the manual backup procedure and a recommended cadence (at least once per
-crawl interval). Until an automated backup exists, taking one by hand,
-occasionally, is meaningfully better than the current state of none.
+**Backups are handled at the host level, outside this repository.** See
+[docs/disaster-recovery.md](docs/disaster-recovery.md#backups-are-handled-at-the-host-level-outside-this-repository)
+for what needs backing up (and what doesn't), the manual snapshot procedure
+for ad hoc use before a risky change, and the restore runbook.
 
 ## Keeping docs current
 

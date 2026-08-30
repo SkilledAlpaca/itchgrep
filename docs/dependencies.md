@@ -104,7 +104,7 @@ Covered in full in [docs/infrastructure.md](infrastructure.md#github) — source
 
 | Item | Cost | Notes |
 |---|---|---|
-| Domain (`itchgrep.com`) renewal | Unknown | Registrar and renewal date not verifiable from this repository — see [docs/open-questions.md](open-questions.md). |
+| Domain (`itchgrep.com`) renewal | Managed externally | Registration and renewal are handled by the operator outside this project's scope. |
 | Cloudflare | Free tier (operator-reported) | Nothing in the repository requires a paid Cloudflare feature. |
 | GitHub | Free tier | Public repository; CI runs on GitHub-hosted runners at no cost for public repos. |
 | Unraid host | Owner-operated hardware | Not a hosted/cloud cost with a recurring bill from a provider — but real hardware someone has to maintain, power, and eventually replace. |
