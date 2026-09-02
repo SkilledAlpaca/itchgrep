@@ -5,14 +5,21 @@ import (
 	"time"
 )
 
-// staleAfter is when the index stops being described neutrally and starts
-// being flagged.
+// staleAfter is when an index with no rebuild schedule stops being described
+// neutrally and starts being flagged.
 //
 // Deliberately generous. A crawl is triggered by hand and takes hours, so a
 // two-day-old index is normal operation, not a fault - and an indicator that is
 // amber most of the time teaches people to ignore it, which costs the one
 // occasion it matters. A week means the crawl has actually stopped happening.
 const staleAfter = 7 * 24 * time.Hour
+
+// staleGrace is how far past its due time a scheduled rebuild may run before
+// the warning shows. The default schedule is exactly a week, so the index
+// reaches staleAfter at the same moment its rebuild comes due; without slack
+// for the scheduler's quarter-hourly check and the hours a crawl takes, the
+// banner would cry "stopped" during every healthy weekly rebuild.
+const staleGrace = 24 * time.Hour
 
 // Freshness is how old the served index is, resolved at render time.
 //
@@ -108,7 +115,20 @@ func (f Freshness) DueDateTime() string {
 func (f Freshness) Known() bool { return !f.Updated.IsZero() }
 
 // Stale reports whether the index is old enough to be worth flagging.
-func (f Freshness) Stale() bool { return f.Known() && f.Age >= staleAfter }
+//
+// When a rebuild schedule is known, staleness is measured against it: an index
+// is only suspect once its rebuild is overdue by more than a crawl explains,
+// however old the schedule lets it get. Without one there is no due date to
+// miss, and the absolute staleAfter cutoff stands in.
+func (f Freshness) Stale() bool {
+	if !f.Known() {
+		return false
+	}
+	if f.DueKnown() {
+		return f.Until <= -staleGrace
+	}
+	return f.Age >= staleAfter
+}
 
 // Label is the human reading of the age.
 //

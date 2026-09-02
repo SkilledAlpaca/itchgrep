@@ -106,6 +106,24 @@ func TestStalenessIsFlaggedOnlyOnceItMeansSomething(t *testing.T) {
 	assert.Contains(t, html, "crawl may have stopped")
 }
 
+func TestAHealthyScheduleNeverTripsTheStalenessWarning(t *testing.T) {
+	week := 168 * time.Hour
+
+	// The index reaches a full week of age at the exact moment the weekly
+	// rebuild comes due, and stays that old for the hours the crawl then takes.
+	// "The crawl may have stopped" next to "next update any time now" would be
+	// the banner contradicting the schedule every single week.
+	assert.False(t, every(week+5*time.Hour, week).Stale(),
+		"hours past due is the rebuild window, not a stopped crawl")
+
+	// A full day past due is more than any crawl explains.
+	assert.True(t, every(week+25*time.Hour, week).Stale())
+
+	// On a slow schedule the age alone says nothing: a 10-day-old index is
+	// exactly what a monthly rebuild is supposed to serve.
+	assert.False(t, every(10*24*time.Hour, 30*24*time.Hour).Stale())
+}
+
 func TestTheExactTimeIsAlwaysAvailableBehindTheRoundedOne(t *testing.T) {
 	// "3 days ago" is served from a cache for up to five minutes, so it is only
 	// ever approximate. The machine-readable stamp is what is actually true.
