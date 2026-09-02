@@ -16,7 +16,7 @@ comparison, and live facet counts on top.
 the left of the diagonal and the dark theme on the right](.github/screenshot-search.png)
 
 <sub>One page, split down the diagonal: light theme left, dark theme right.
-Cover art and creator names are blurred in these screenshots; they belong to
+Cover art and creator names are blurred in this screenshot; they belong to
 the asset authors, not to this project.</sub>
 
 ## What it does
