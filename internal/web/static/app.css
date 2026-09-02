@@ -854,9 +854,21 @@ a:hover {
 
 /* ---------------------------------------------------------------- prose  */
 
+/* Centred in main rather than pinned to its left edge: main itself is a
+ * 132rem centred column sized for the search results grid, so a prose page
+ * left-aligned inside it read as a column shoved into a corner with the
+ * rest of the viewport left empty. */
 .prose {
   max-width: 68rem;
+  margin-inline: auto;
   padding-top: 2rem;
+}
+
+/* Wider than reading prose: this page is cards, a table and a histogram,
+ * not paragraphs, and the 68rem measure that keeps text comfortable left a
+ * dashboard looking cramped. */
+.stats-page {
+  max-width: 96rem;
 }
 
 .prose h2 {
@@ -882,20 +894,21 @@ a:hover {
 
 /* -------------------------------------------------------------- stats  */
 
+/* Gapped cells with their own borders, not the old 1px-gap-on-a-background
+ * trick: that packed the numbers together so tightly the grid read as one
+ * block rather than a set of distinct figures. */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  gap: 1px;
+  gap: 0.75rem;
   margin: 0 0 2rem;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
 }
 
 .stats-cell {
   padding: 1.1rem 1.3rem;
   background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 
 .stats-cell dt {
@@ -910,29 +923,78 @@ a:hover {
   font-weight: 600;
 }
 
+/* The per-route counts, which used to be thirteen equal-weight cells
+ * alongside the headline figures above. A table reads as the list of
+ * breakdown rows it is, rather than implying each row is as significant as
+ * "total requests". */
+.stats-table {
+  width: 100%;
+  max-width: 40rem;
+  margin: 0 0 2rem;
+  border-collapse: collapse;
+}
+
+.stats-table th,
+.stats-table td {
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.stats-table th {
+  text-align: left;
+  font-weight: normal;
+  color: var(--text-dim);
+}
+
+.stats-table td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Top-aligned with no fixed height, not bottom-aligned in a 9rem box: only
+ * every third column carries a label, so bottom-aligning would lift the
+ * labelled columns' bars by the label's height. The meters are all exactly
+ * 9rem, so aligning their tops aligns their bottoms too, and the labels
+ * hang below without disturbing the bars. */
 .stats-histogram {
   display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 6rem;
+  align-items: flex-start;
+  gap: 3px;
   margin-bottom: 1rem;
+}
+
+/* One column per hour, holding the bar and - on every third one - its
+ * label. The width and flex sizing that used to live on .stats-bar move
+ * here, so the meter can just fill its column instead of doing its own
+ * layout. */
+.stats-bar-col {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
 }
 
 /* A <meter> rather than a styled div with a dynamic width: templ restricts
  * dynamic style attributes, and meter takes plain numbers with no injection
  * surface. Rotated so its native horizontal fill reads as vertical height. */
 .stats-bar {
-  flex: 1 1 0;
-  height: 6rem;
-  width: 1.6rem;
+  width: 100%;
+  height: 9rem;
   writing-mode: vertical-lr;
   direction: rtl;
   accent-color: var(--accent);
 }
 
+.stats-bar-label {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
 .history-row {
   padding: 0.7rem 1rem;
-  margin-bottom: 1px;
+  margin-bottom: 0.5rem;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 8px;

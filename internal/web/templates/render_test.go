@@ -2,6 +2,8 @@ package templates
 
 import (
 	"context"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +84,78 @@ func TestStatsPageRendersEveryBreakdownRow(t *testing.T) {
 	assert.Contains(t, html, "78")
 	assert.Contains(t, html, ">Other<")
 	assert.Contains(t, html, "90")
+}
+
+func TestStatsHeadlineRendersFourCellsInOrder(t *testing.T) {
+	// The headline separates the four numbers a first glance wants - total
+	// volume, search volume, how long this process has run, and how far
+	// back the count goes - from the per-route breakdown below, so it reads
+	// as a summary rather than one undifferentiated grid.
+	snap := metrics.Snapshot{Total: 100, Searches: 40, Started: now.Add(-90 * time.Minute)}
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, now), History{}))
+
+	require.Contains(t, html, `<dl class="stats-grid stats-headline">`)
+	headline := html[strings.Index(html, `<dl class="stats-grid stats-headline">`):]
+	headline = headline[:strings.Index(headline, "</dl>")]
+
+	total := strings.Index(headline, "Total requests")
+	searches := strings.Index(headline, "Searches served")
+	uptime := strings.Index(headline, "Uptime")
+	countingSince := strings.Index(headline, "Counting since")
+	require.True(t, total >= 0 && total < searches && searches < uptime && uptime < countingSince,
+		"the headline cells must render in this order")
+}
+
+func TestStatsTableListsEveryRouteInAFixedOrder(t *testing.T) {
+	// The order mirrors how a reader thinks about the site: whole pages
+	// before the fragment and asset requests they trigger, then the
+	// specialised pages, ending with the catch-all overflow bucket.
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, now), History{}))
+
+	require.Contains(t, html, `<table class="stats-table">`)
+	table := html[strings.Index(html, `<table class="stats-table">`):]
+	labels := []string{
+		"Home page", "Results fragment", "About page", "Static assets",
+		"New arrivals page", "Feed requests", "Tag pages", "Saved page", "Other",
+	}
+	last := -1
+	for _, label := range labels {
+		idx := strings.Index(table, label)
+		require.True(t, idx >= 0, label+" must appear in the route table")
+		require.True(t, idx > last, label+" must appear after the previous row")
+		last = idx
+	}
+}
+
+func TestCountingSinceRendersAsALocalisableTimeElement(t *testing.T) {
+	// app.js rewrites this to the viewer's own zone on load; it needs a real
+	// datetime attribute to parse an instant from, and the js-local class is
+	// what tells app.js this element's whole text, not just its title,
+	// should be replaced.
+	firstSeen := now.Add(-30 * 24 * time.Hour)
+	tr := NewTraffic(metrics.Snapshot{FirstSeen: firstSeen}, now)
+	html := render(t, StatsPage(Freshness{}, Coverage{}, tr, History{}))
+
+	assert.Contains(t, html, `class="js-local"`)
+	assert.Contains(t, html, `datetime="`+firstSeen.UTC().Format(time.RFC3339)+`"`)
+}
+
+func TestHistogramLabelsEveryThirdBar(t *testing.T) {
+	// 24 bars with a label under each would crowd into illegibility; a label
+	// under every third one keeps the axis readable while still spanning the
+	// full day it describes.
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, now), History{}))
+
+	assert.Equal(t, 24, strings.Count(html, `class="stats-bar-col"`), "one column per hour")
+	assert.Equal(t, 8, strings.Count(html, `class="stats-bar-label"`), "a label on every third bar")
+
+	epochs := regexp.MustCompile(`data-epoch="(\d+)"`).FindAllStringSubmatch(html, -1)
+	require.Len(t, epochs, 8)
+	for _, m := range epochs {
+		epoch, err := strconv.ParseInt(m[1], 10, 64)
+		require.NoError(t, err)
+		assert.Zero(t, epoch%3600, "data-epoch must be an hour boundary in unix seconds")
+	}
 }
 
 func TestEmptyHistoryRendersNoSection(t *testing.T) {

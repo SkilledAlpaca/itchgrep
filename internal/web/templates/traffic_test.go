@@ -32,6 +32,24 @@ func TestCountingSinceIsUnknownWhenNothingHasBeenRestored(t *testing.T) {
 	assert.Equal(t, "unknown", tr.CountingSince())
 }
 
+func TestCountingSinceDateTimeIsRFC3339InUTC(t *testing.T) {
+	// This is the machine-readable half of CountingSince, for app.js to
+	// rewrite into the viewer's own zone - the prose form above it cannot be
+	// parsed back into an instant.
+	firstSeen := now.Add(-30 * 24 * time.Hour)
+	tr := NewTraffic(metrics.Snapshot{Started: now, FirstSeen: firstSeen}, now)
+
+	assert.Equal(t, firstSeen.UTC().Format(time.RFC3339), tr.CountingSinceDateTime())
+}
+
+func TestCountingSinceDateTimeIsEmptyWhenUnknown(t *testing.T) {
+	// Mirrors Freshness.DateTime: an empty attribute rather than a formatted
+	// zero time, so app.js's Date() parse fails closed instead of rendering
+	// 1 January 1970.
+	tr := NewTraffic(metrics.Snapshot{}, now)
+	assert.Equal(t, "", tr.CountingSinceDateTime())
+}
+
 func TestBarsCoverTheTrailing24HoursOldestFirst(t *testing.T) {
 	nowHour := now.Unix() / 3600
 	snap := metrics.Snapshot{
@@ -71,6 +89,15 @@ func TestTrafficExposesEveryBreakdownBucket(t *testing.T) {
 	assert.EqualValues(t, 3, tr.Tag())
 	assert.EqualValues(t, 4, tr.Saved())
 	assert.EqualValues(t, 5, tr.Other())
+}
+
+func TestEpochAttrIsTheBarsHourInUnixSeconds(t *testing.T) {
+	// The histogram label's data-epoch attribute has to be an instant app.js
+	// can hand to Date(), and Date takes milliseconds since the epoch, not
+	// hours since it - the conversion belongs here so stats.templ never
+	// multiplies by 3600 itself.
+	b := Bar{EpochHour: 472392}
+	assert.Equal(t, "1700611200", b.EpochAttr())
 }
 
 func TestPeakIsTheTallestBar(t *testing.T) {

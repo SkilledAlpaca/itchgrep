@@ -15,7 +15,7 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 		<p>Counted in the process, never read back out of a log - see the
 		<a href="/about">About</a>
 		page for how this site is built.</p>
-		<dl class="stats-grid">
+		<dl class="stats-grid stats-headline">
 			<div class="stats-cell">
 				<dt>Total requests</dt>
 				<dd>{ HumaneCount(tr.Total()) }</dd>
@@ -25,60 +25,82 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 				<dd>{ HumaneCount(tr.Searches()) }</dd>
 			</div>
 			<div class="stats-cell">
-				<dt>Home page</dt>
-				<dd>{ HumaneCount(tr.Index()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>Results fragment</dt>
-				<dd>{ HumaneCount(tr.Results()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>About page</dt>
-				<dd>{ HumaneCount(tr.About()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>Static assets</dt>
-				<dd>{ HumaneCount(tr.Static()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>New arrivals page</dt>
-				<dd>{ HumaneCount(tr.New()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>Feed requests</dt>
-				<dd>{ HumaneCount(tr.Feed()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>Tag pages</dt>
-				<dd>{ HumaneCount(tr.Tag()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>Saved page</dt>
-				<dd>{ HumaneCount(tr.Saved()) }</dd>
-			</div>
-			<div class="stats-cell">
-				<dt>Other</dt>
-				<dd>{ HumaneCount(tr.Other()) }</dd>
-			</div>
-			<div class="stats-cell">
 				<dt>Uptime</dt>
 				<dd>{ tr.UptimeLabel() }</dd>
 			</div>
 			<div class="stats-cell">
 				<dt>Counting since</dt>
-				<dd>{ tr.CountingSince() }</dd>
+				<dd>
+					// js-local marks this for app.js to rewrite whole, not just
+					// its title: unlike the relative "N days ago" labels
+					// elsewhere on the page, this is already an absolute
+					// timestamp, so the local rendering can replace it outright
+					// rather than sit alongside it on hover.
+					<time class="js-local" datetime={ tr.CountingSinceDateTime() }>{ tr.CountingSince() }</time>
+				</dd>
 			</div>
 		</dl>
+		<h2>By page</h2>
+		<table class="stats-table">
+			<tbody>
+				<tr>
+					<th scope="row">Home page</th>
+					<td>{ HumaneCount(tr.Index()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">Results fragment</th>
+					<td>{ HumaneCount(tr.Results()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">About page</th>
+					<td>{ HumaneCount(tr.About()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">Static assets</th>
+					<td>{ HumaneCount(tr.Static()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">New arrivals page</th>
+					<td>{ HumaneCount(tr.New()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">Feed requests</th>
+					<td>{ HumaneCount(tr.Feed()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">Tag pages</th>
+					<td>{ HumaneCount(tr.Tag()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">Saved page</th>
+					<td>{ HumaneCount(tr.Saved()) }</td>
+				</tr>
+				<tr>
+					<th scope="row">Other</th>
+					<td>{ HumaneCount(tr.Other()) }</td>
+				</tr>
+			</tbody>
+		</table>
 		<h2>Searches, last 24 hours</h2>
 		<div class="stats-histogram">
-			for _, bar := range tr.Bars() {
-				<meter
-					class="stats-bar"
-					min="0"
-					max={ tr.PeakAttr() }
-					value={ bar.CountAttr() }
-					title={ bar.Title() }
-				></meter>
+			for i, bar := range tr.Bars() {
+				<div class="stats-bar-col">
+					<meter
+						class="stats-bar"
+						min="0"
+						max={ tr.PeakAttr() }
+						value={ bar.CountAttr() }
+						title={ bar.Title() }
+					></meter>
+					// A label under every bar would crowd into illegibility at
+					// 24 across; every third one keeps the axis readable while
+					// still spanning the full day. app.js rewrites the label
+					// into the viewer's own zone from data-epoch - the text
+					// here is the UTC fallback for anyone without scripting.
+					if i%3 == 0 {
+						<span class="stats-bar-label" data-epoch={ bar.EpochAttr() }>{ bar.Label }</span>
+					}
+				</div>
 			}
 		</div>
 		if !history.Empty() {

@@ -71,17 +71,34 @@ func (t Traffic) CountingSince() string {
 	return t.snap.FirstSeen.UTC().Format("2 January 2006, 15:04 UTC")
 }
 
+// CountingSinceDateTime is the machine-readable form for the <time>
+// element's attribute, in the same spirit as Freshness.DateTime: app.js
+// needs a parseable instant to rewrite into the viewer's own zone, and
+// "unknown" is not one.
+func (t Traffic) CountingSinceDateTime() string {
+	if t.snap.FirstSeen.IsZero() {
+		return ""
+	}
+	return t.snap.FirstSeen.UTC().Format(time.RFC3339)
+}
+
 // Bar is one hour of the histogram: how many searches it saw, and the label
 // under it.
 type Bar struct {
-	Label string
-	Count uint64
+	Label     string
+	Count     uint64
+	EpochHour int64 // hours since the epoch, UTC - what the bar's own bucket key is keyed on.
 }
 
 // CountAttr is Count as a string, for <meter value="...">. templ's dynamic
 // attributes are strings; the conversion is done here rather than in the
 // markup so stats.templ stays free of strconv calls.
 func (b Bar) CountAttr() string { return strconv.FormatUint(b.Count, 10) }
+
+// EpochAttr is the bar's hour as unix seconds, for the histogram label's
+// data-epoch attribute: app.js needs an instant it can hand to Date() to
+// render the label in the viewer's own zone, and an hour count is not one.
+func (b Bar) EpochAttr() string { return strconv.FormatInt(b.EpochHour*3600, 10) }
 
 // Title is the hover text for one bar - the only place the exact count
 // appears, since the bar's height alone cannot be read precisely.
@@ -105,8 +122,9 @@ func (t Traffic) Bars() []Bar {
 			}
 		}
 		bars[i] = Bar{
-			Label: time.Unix(epochHour*3600, 0).UTC().Format("15:04"),
-			Count: count,
+			Label:     time.Unix(epochHour*3600, 0).UTC().Format("15:04"),
+			Count:     count,
+			EpochHour: epochHour,
 		}
 	}
 	return bars
