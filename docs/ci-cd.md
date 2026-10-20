@@ -31,7 +31,7 @@ Checks out the repository's code onto the runner. Every workflow needs this as i
       go-version-file: go.mod
       cache: true
 ```
-Installs the Go toolchain. `go-version-file: go.mod` means it reads the exact Go version from `go.mod`'s own `go 1.27.0` line rather than a version hardcoded into the workflow — so bumping the Go version in `go.mod` is the only change needed to also change what CI builds with. `cache: true` caches downloaded modules between runs, so CI doesn't re-download the same dependencies on every single run.
+Installs the Go toolchain. `go-version-file: go.mod` means it reads the exact Go version from `go.mod`'s own `go 1.27.3` line rather than a version hardcoded into the workflow — so bumping the Go version in `go.mod` is the only change needed to also change what CI builds with. `cache: true` caches downloaded modules between runs, so CI doesn't re-download the same dependencies on every single run.
 
 ```yaml
   - name: Install templ (pinned to go.mod's version)
