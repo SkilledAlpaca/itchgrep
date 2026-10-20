@@ -10,10 +10,12 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 	}
 });
 
-// The sidebar shows the top few dozen tags; this narrows that list to
-// what was typed. Purely presentational - it hides list items that
-// are already on the page rather than asking the server for more -
-// so the sidebar stays exactly as useful with scripting off.
+// The sidebar shows the top few dozen tags and carries the rest hidden
+// (data-facet-tail); this narrows the whole list to what was typed, so
+// a match past the head shows up too. An empty box puts the head back.
+// Purely presentational - it hides and reveals list items that are
+// already on the page rather than asking the server for more - so the
+// sidebar stays exactly as useful with scripting off.
 //
 // Delegated, because the sidebar is replaced on every filter change.
 document.addEventListener('input', function (e) {
@@ -23,7 +25,9 @@ document.addEventListener('input', function (e) {
 	var list = box.parentNode.querySelectorAll('[data-facet]');
 	for (var i = 0; i < list.length; i++) {
 		var slug = list[i].getAttribute('data-facet');
-		list[i].hidden = needle !== '' && slug.indexOf(needle) === -1;
+		list[i].hidden = needle === ''
+			? list[i].hasAttribute('data-facet-tail')
+			: slug.indexOf(needle) === -1;
 	}
 });
 

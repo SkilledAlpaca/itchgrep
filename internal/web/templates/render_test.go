@@ -223,6 +223,23 @@ func TestSidebarRendersTagsWithCounts(t *testing.T) {
 	assert.Contains(t, html, `hx-get="/results?page=1&amp;tags=2d"`)
 }
 
+func TestSidebarRendersTheTailHiddenForTheTagSearch(t *testing.T) {
+	// Only the head shows at rest, but every counted tag must be on the page,
+	// or the find-a-tag box can only ever match the forty already visible.
+	r := sampleResults()
+	r.Tags = nil
+	for i := 0; i <= sidebarTags; i++ {
+		r.Tags = append(r.Tags, models.Tag{Slug: "tag-" + strconv.Itoa(i), Count: int64(100 - i)})
+	}
+	html := render(t, ResultsRegion(Filters{}, r))
+
+	last := strconv.Itoa(sidebarTags - 1)
+	assert.Contains(t, html, `<li data-facet="tag-`+last+`">`, "the head shows at rest")
+	tail := strconv.Itoa(sidebarTags)
+	assert.Contains(t, html, `<li data-facet="tag-`+tail+`" data-facet-tail hidden>`,
+		"the tail is rendered, hidden, for the tag search to find")
+}
+
 func TestAppliedFiltersRenderAsRemovableChips(t *testing.T) {
 	// Without these an applied tag is invisible once scrolled past, and an empty
 	// result set looks like a broken search rather than an over-constrained one.
