@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -348,6 +349,12 @@ func TestStatsHandlerWorksWithNilMetrics(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Traffic")
 }
 
+// machineTimestamps matches the stats page's machine-readable times: the
+// histogram's per-hour unix seconds and the counting-since ISO instant. They
+// are digits chosen by the clock, so "429" turns up in one whenever an hour in
+// the window happens to contain it, which says nothing about status codes.
+var machineTimestamps = regexp.MustCompile(`(data-epoch|datetime)="[^"]*"`)
+
 func TestStatsPageCarriesNoPerClientInformation(t *testing.T) {
 	// The counters never store an address, a user agent or a query string
 	// (see internal/metrics), so this asserts the invariant holds all the way
@@ -368,7 +375,7 @@ func TestStatsPageCarriesNoPerClientInformation(t *testing.T) {
 	assert.NotContains(t, body, "q=pixel")
 	assert.NotContains(t, body, "pixel art")
 
-	lower := strings.ToLower(body)
+	lower := strings.ToLower(machineTimestamps.ReplaceAllString(body, ""))
 	assert.NotContains(t, lower, "probe")
 	assert.NotContains(t, lower, "429")
 	assert.NotContains(t, lower, "5xx")
