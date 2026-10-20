@@ -8,7 +8,7 @@
 # still sees which Go version it is without resolving the hash. Refresh
 # deliberately, never as a drive-by:
 #   docker buildx imagetools inspect golang:1.27
-FROM golang:1.27@sha256:0ecdc2a9f6156af6451080bfe3d8382a662fcc4e209608c6f919e643453514c1 AS builder
+FROM golang:1.27@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS builder
 
 # Create and change to the app directory.
 WORKDIR /app

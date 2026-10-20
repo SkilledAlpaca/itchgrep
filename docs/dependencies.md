@@ -56,7 +56,7 @@ To generate templates locally after editing a `.templ` file, install `templ` the
 
 Both `Dockerfile.dataservice` and `Dockerfile.webserver` use the same two base images, each **pinned by digest**, not just by tag:
 
-- **Builder stage:** `golang:1.27@sha256:0ecdc2a9f6156af6451080bfe3d8382a662fcc4e209608c6f919e643453514c1`
+- **Builder stage:** `golang:1.27@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b`
 - **Runtime stage:** `gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5`
 
 A tag like `golang:1.27` or `gcr.io/distroless/base-debian12:nonroot` is a moving target — it gets repushed on every point release and base-image rebuild, so a tag-only `FROM` is not reproducible: the exact same Dockerfile can build a materially different image tomorrow. Pinning by digest fixes the exact bytes; the tag is kept alongside the digest in the `FROM` line purely so a human reading it still sees which version it is, without resolving the hash by hand.

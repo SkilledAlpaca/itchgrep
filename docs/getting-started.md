@@ -35,7 +35,7 @@ Install each of these, then run its verify command and compare the output.
 
 | Tool | Why you need it | Verify command | Expected output |
 | --- | --- | --- | --- |
-| Go 1.27 or later | Compiles and runs both binaries | `go version` | `go version go1.27.0` (or higher) |
+| Go 1.27 or later | Compiles and runs both binaries | `go version` | `go version go1.27.3` (or higher) |
 | The `templ` CLI, pinned to the exact version this repo uses | Generates Go code from the `.templ` template files — the build fails without this step, see below | `templ version` | Matches the version in `go.mod`'s `github.com/a-h/templ` line (`v0.3.1020` as of this writing) |
 | Docker Engine and the Docker Compose plugin | Runs the project the same way production does, in containers | `docker --version` and `docker compose version` | A version number for each, no error |
 | [Task](https://taskfile.dev) (the `go-task` CLI) | Optional, but the fastest way to run the two binaries locally without containers — this guide uses it | `task --version` | A version number, no error |
