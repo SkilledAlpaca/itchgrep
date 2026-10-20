@@ -107,6 +107,13 @@ a:hover {
   white-space: nowrap;
 }
 
+/* The browser's own [hidden] rule loses to any author display value, so a
+   flex row such as a sidebar tag stayed visible after the tag search hid it.
+   This puts the attribute back in charge of every element it is set on. */
+[hidden] {
+  display: none !important;
+}
+
 /* ---------------------------------------------------------------- header  */
 
 .masthead {
