@@ -51,16 +51,17 @@ func priceFilterLabel(price string) string {
 	}
 }
 
-// sidebarTags caps the facet list. The vocabulary runs to several hundred tags
-// and the long tail is single-digit counts, so showing all of them would bury
-// the useful ones under noise the browse field is better at finding.
+// sidebarTags caps how many facets the sidebar shows at rest. The vocabulary
+// runs to several hundred tags and the long tail is single-digit counts, so
+// showing all of them would bury the useful ones under noise. The tail is still
+// rendered, hidden, so that the find-a-tag box can match a tag past the head
+// instead of only the forty already on screen.
 const sidebarTags = 40
 
-func shownFacets(tags []models.Tag) []models.Tag {
-	if len(tags) > sidebarTags {
-		return tags[:sidebarTags]
-	}
-	return tags
+// facetTail reports whether the i'th facet is past the head the sidebar shows
+// at rest.
+func facetTail(i int) bool {
+	return i >= sidebarTags
 }
 
 func resultSummary(r Results) string {
@@ -248,8 +249,8 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 				data-facet-search
 			/>
 			<ul class="facet-list">
-				for _, tag := range shownFacets(tags) {
-					<li data-facet={ tag.Slug }>
+				for i, tag := range tags {
+					<li data-facet={ tag.Slug } data-facet-tail?={ facetTail(i) } hidden?={ facetTail(i) }>
 						<a
 							class="facet"
 							href={ templ.SafeURL(f.WithTag(tag.Slug).ShareURL()) }
