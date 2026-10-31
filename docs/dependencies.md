@@ -4,15 +4,16 @@ This document lists everything itchgrep depends on that isn't itchgrep's own cod
 
 ## Direct Go dependencies
 
-These are the five modules listed under the first `require` block in `go.mod` — the ones itchgrep's own code imports directly. Everything else in `go.mod` is an indirect (transitive) dependency, pulled in by these five.
+These are the modules listed under the first `require` block in `go.mod` — the ones itchgrep's own code imports directly. Everything else in `go.mod` is an indirect (transitive) dependency, pulled in by these. This page deliberately quotes no versions, because Dependabot bumps them every week: read the current ones in `go.mod` (and, for `govulncheck`, in `tools/go.mod`).
 
-| Module | Version (go.mod) | Purpose in this project |
-|---|---|---|
-| `github.com/PuerkitoBio/goquery` | v1.13.0 | Parses the HTML fragments itch.io's browse endpoint returns, so `internal/fetcher` can pull game listings out of them (a jQuery-like API over Go's HTML parser). |
-| `github.com/a-h/templ` | v0.3.1020 | Compiles `.templ` template files (`internal/web/templates/*.templ`) into plain Go code (`*_templ.go`) at build time. Not a runtime dependency of the built binary — see "The templ CLI" below. |
-| `github.com/blevesearch/bleve/v2` | v2.6.1 | The full-text search engine the whole site is built on: indexes every asset and answers fuzzy/exact/phrase queries, facets, and sorts. See "bleve's index format" below. |
-| `github.com/go-chi/chi/v5` | v5.3.2 | HTTP router and middleware (request logging wrapper, panic recovery) for both binaries. |
-| `github.com/stretchr/testify` | v1.12.1 | Test-only: assertion helpers used throughout `*_test.go` files. Never compiled into either production binary. |
+| Module | Purpose in this project |
+|---|---|
+| `github.com/PuerkitoBio/goquery` | Parses the HTML fragments itch.io's browse endpoint returns, so `internal/fetcher` can pull game listings out of them (a jQuery-like API over Go's HTML parser). |
+| `github.com/a-h/templ` | Compiles `.templ` template files (`internal/web/templates/*.templ`) into plain Go code (`*_templ.go`) at build time. Not a runtime dependency of the built binary — see "The templ CLI" below. |
+| `github.com/blevesearch/bleve/v2` | The full-text search engine the whole site is built on: indexes every asset and answers fuzzy/exact/phrase queries, facets, and sorts. See "bleve's index format" below. |
+| `github.com/go-chi/chi/v5` | The webserver's HTTP router: routing, route patterns for the access log and `/stats` breakdown, and the `Recoverer` panic middleware. The dataservice uses the standard library's `http.ServeMux` instead. |
+| `go.etcd.io/bbolt` | Imported only for `bolt.ErrTimeout`, so `cmd/dataservice/selfheal.go`'s `indexNeedsRebuild` can tell "the webserver holds the index lock" apart from a corrupt index. bleve's scorch format also uses it internally. |
+| `github.com/stretchr/testify` | Test-only: assertion helpers used throughout `*_test.go` files. Never compiled into either production binary. |
 
 ### Upgrading a dependency
 
@@ -24,7 +25,7 @@ go test ./...
 
 Then run `go vet ./...` and, if `templ` version changed, re-read "The templ CLI" below — its pinned version is read *from* `go.mod`, so bumping `github.com/a-h/templ` also changes what CI installs and what a fresh `git clone` needs installed locally.
 
-Dependabot (`.github/dependabot.yml`) opens one grouped pull request a week for the application module, one for `tools/go.mod`, and one for the GitHub Actions versions. Review and merge them like any other change; CI runs on each. Docker base images are deliberately not covered (see [ADR 0006](architecture/decisions/0006-distroless-nonroot-digest-pinned.md)).
+Dependabot (`.github/dependabot.yml`) opens at most two grouped pull requests a week: one for Go modules, covering both the application module and `tools/go.mod`, and one for the GitHub Actions versions. Review and merge them like any other change; CI runs on each. Docker base images are deliberately not covered (see [ADR 0006](architecture/decisions/0006-distroless-nonroot-digest-pinned.md)).
 
 `tools/go.mod` is a separate module that pins developer tools, currently `govulncheck`. Upgrade a tool there, not in the root `go.mod`:
 
@@ -78,7 +79,7 @@ docker buildx imagetools inspect gcr.io/distroless/base-debian12:nonroot
 
 Then update the `FROM` line's digest (and confirm the Go version with `docker run --rm golang:1.27 go version` if bumping the tag itself, not just the digest).
 
-The `cloudflared` image in `docker-compose.yml` is pinned the same way and documented there: `cloudflare/cloudflared:2026.8.2@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38`, refreshed via `docker buildx imagetools inspect cloudflare/cloudflared:latest` then confirmed with `docker run --rm cloudflare/cloudflared:latest --version` — see [docs/infrastructure.md](infrastructure.md).
+The `cloudflared` image in `docker-compose.yml` is pinned the same way (tag plus digest, on the `cloudflared` service's `image:` line) and documented there, refreshed via `docker buildx imagetools inspect cloudflare/cloudflared:latest` then confirmed with `docker run --rm cloudflare/cloudflared:latest --version` — see [docs/infrastructure.md](infrastructure.md).
 
 ## External services
 

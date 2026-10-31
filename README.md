@@ -61,8 +61,8 @@ hosted.
 
 - [Docker Engine and the Docker Compose plugin](https://docs.docker.com/get-docker/) —
   the only two things you need to run itchgrep locally.
-- To edit the source: Go 1.27 or later, the `templ` CLI pinned to this
-  repository's `go.mod` version, and (recommended) the [Task](https://taskfile.dev)
+- To edit the source: the Go version in `go.mod`'s `go` directive or later, the
+  `templ` CLI pinned to this repository's `go.mod` version, and (recommended) the [Task](https://taskfile.dev)
   CLI. [docs/getting-started.md](docs/getting-started.md) covers installing
   each of these and verifying the install.
 
@@ -117,7 +117,8 @@ a security issue, see [SECURITY.md](SECURITY.md).
 ## Project status
 
 Live at [itchgrep.com](https://itchgrep.com/), maintained by one person. A
-weekly crawl and CI on every push run unattended; see
+weekly crawl, CI on every push to `main` and every pull request, and a daily
+scheduled CI run all run unattended; see
 [MAINTAINER.md](MAINTAINER.md) for what that maintenance actually involves.
 
 ## License and credit

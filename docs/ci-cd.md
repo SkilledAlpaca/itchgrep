@@ -11,9 +11,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * *"
 ```
 
-In plain terms: every push to the `main` branch, and every pull request against any branch (opening one, or pushing a new commit to one already open). Pushes to any other branch on their own do **not** trigger it — only opening or updating a pull request does.
+In plain terms: every push to the `main` branch, and every pull request against any branch (opening one, or pushing a new commit to one already open). Pushes to any other branch on their own do **not** trigger it — only opening or updating a pull request does. It also runs daily at 06:23 UTC on `main` (see "Vulnerability scan" below for why), and can be started by hand from the Actions tab (`workflow_dispatch`).
 
 There is one job, `test`, running on a GitHub-hosted `ubuntu-latest` runner (a temporary virtual machine GitHub provisions for the run and destroys afterward — nothing about it persists between runs).
 
@@ -66,7 +69,7 @@ Runs every `*_test.go` file's tests across every package. `-count=1` disables Go
 ```
 Runs `govulncheck` — a tool that cross-references this module's dependency tree (and, more precisely, which vulnerable *functions* the code actually calls, not just which vulnerable modules are merely present) against a public database of known Go vulnerabilities.
 
-The checker's version is pinned in `tools/go.mod`, a separate module so its own dependencies never join the application's module graph. Pinning the checker does not freeze the database: `govulncheck` downloads the current vulnerability database on every run, whatever its own version. Dependabot (`.github/dependabot.yml`) proposes new checker versions weekly, alongside the application's own module updates.
+The checker's version is pinned in `tools/go.mod`, a separate module so its own dependencies never join the application's module graph. Pinning the checker does not freeze the database: `govulncheck` downloads the current vulnerability database on every run, whatever its own version. Dependabot (`.github/dependabot.yml`) proposes new checker versions weekly, in the same pull request as the application's own module updates.
 
 Because the database is live, this step's result can change between two runs of the exact same commit when a new vulnerability affecting a function this code calls is published — that's expected, not a flake. To surface those on `main` first rather than on whichever unrelated pull request runs next, the workflow also runs daily on a schedule (`cron: "23 6 * * *"`, 06:23 UTC). GitHub emails a failed scheduled run to the user who last changed the schedule.
 

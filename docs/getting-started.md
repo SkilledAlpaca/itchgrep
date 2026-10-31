@@ -35,8 +35,8 @@ Install each of these, then run its verify command and compare the output.
 
 | Tool | Why you need it | Verify command | Expected output |
 | --- | --- | --- | --- |
-| Go 1.27 or later | Compiles and runs both binaries | `go version` | `go version go1.27.3` (or higher) |
-| The `templ` CLI, pinned to the exact version this repo uses | Generates Go code from the `.templ` template files — the build fails without this step, see below | `templ version` | Matches the version in `go.mod`'s `github.com/a-h/templ` line (`v0.3.1020` as of this writing) |
+| The Go version in `go.mod`'s `go` directive, or later | Compiles and runs both binaries | `go version` | `go version go1.X.Y`, where `X.Y` is at least what the `go` line in `go.mod` says |
+| The `templ` CLI, pinned to the exact version this repo uses | Generates Go code from the `.templ` template files — the build fails without this step, see below | `templ version` | Matches the version in `go.mod`'s `github.com/a-h/templ` line |
 | Docker Engine and the Docker Compose plugin | Runs the project the same way production does, in containers | `docker --version` and `docker compose version` | A version number for each, no error |
 | [Task](https://taskfile.dev) (the `go-task` CLI) | Optional, but the fastest way to run the two binaries locally without containers — this guide uses it | `task --version` | A version number, no error |
 
@@ -271,7 +271,10 @@ only about running it on your own machine.
 ## What you see when it works
 
 Right after starting, before any crawl has published data, the webserver
-answers every page with HTTP status `503 Service Unavailable` and logs:
+answers the search pages (`/`, `/results`, `/tag/{slug}`, `/new`, `/feed`)
+with HTTP status `503 Service Unavailable` — `/about`, `/saved`, `/stats`,
+and `/healthz` still answer `200`, and `/readyz` answers `503 no data` — and
+logs:
 
 ```
 ERRO: ... Initial cache load failed, will retry in background every 15s: storage.GetAssetsUpdateTime: os.Stat: stat data/assets.json: no such file or directory
