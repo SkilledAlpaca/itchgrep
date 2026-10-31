@@ -75,7 +75,7 @@ func (f Filters) AtNotTagLimit() bool { return len(f.NotTags) >= MaxNotTags }
 func (f Filters) Bare() bool { return len(f.Values()) == 0 }
 
 // Narrowed reports whether anything besides the query is narrowing the
-// catalogue, which is what separates "remove a filter" advice from "search for
+// catalog, which is what separates "remove a filter" advice from "search for
 // something broader" advice on an empty page.
 func (f Filters) Narrowed() bool {
 	return len(f.Tags) > 0 || len(f.NotTags) > 0 ||
@@ -184,7 +184,7 @@ func (f Filters) FeedURL() string {
 	return "/feed?" + v.Encode()
 }
 
-// Any reports whether anything is filtering the catalogue, which is what
+// Any reports whether anything is filtering the catalog, which is what
 // decides whether the "clear all" control is worth rendering.
 //
 // Currency is excluded on purpose: it changes how prices read, not which assets
@@ -219,7 +219,7 @@ func contains(list []string, want string) bool {
 // cache entry.
 //
 // Requiring a tag drops any exclusion of it. The two are contradictory, and
-// resolving it in favour of the click that just happened is the only reading
+// resolving it in favor of the click that just happened is the only reading
 // that leaves the control doing what it says.
 func (f Filters) WithTag(tag string) Filters {
 	if f.HasTag(tag) || f.AtTagLimit() {

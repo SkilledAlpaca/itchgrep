@@ -17,11 +17,11 @@ templ StatsPage(tr Traffic, history History) {
 		<dl class="stats-grid stats-headline">
 			<div class="stats-cell">
 				<dt>Total requests</dt>
-				<dd>{ humaniseCount(tr.Total()) }</dd>
+				<dd>{ humanizeCount(tr.Total()) }</dd>
 			</div>
 			<div class="stats-cell">
 				<dt>Searches served</dt>
-				<dd>{ humaniseCount(tr.Searches()) }</dd>
+				<dd>{ humanizeCount(tr.Searches()) }</dd>
 			</div>
 			<div class="stats-cell">
 				<dt>Uptime</dt>
@@ -44,43 +44,43 @@ templ StatsPage(tr Traffic, history History) {
 			<tbody>
 				<tr>
 					<th scope="row">Home page</th>
-					<td>{ humaniseCount(tr.Index()) }</td>
+					<td>{ humanizeCount(tr.Index()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Results fragment</th>
-					<td>{ humaniseCount(tr.Results()) }</td>
+					<td>{ humanizeCount(tr.Results()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">About page</th>
-					<td>{ humaniseCount(tr.About()) }</td>
+					<td>{ humanizeCount(tr.About()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Stats page</th>
-					<td>{ humaniseCount(tr.Stats()) }</td>
+					<td>{ humanizeCount(tr.Stats()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Static assets</th>
-					<td>{ humaniseCount(tr.Static()) }</td>
+					<td>{ humanizeCount(tr.Static()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">New arrivals page</th>
-					<td>{ humaniseCount(tr.New()) }</td>
+					<td>{ humanizeCount(tr.New()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Feed requests</th>
-					<td>{ humaniseCount(tr.Feed()) }</td>
+					<td>{ humanizeCount(tr.Feed()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Tag pages</th>
-					<td>{ humaniseCount(tr.Tag()) }</td>
+					<td>{ humanizeCount(tr.Tag()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Saved page</th>
-					<td>{ humaniseCount(tr.Saved()) }</td>
+					<td>{ humanizeCount(tr.Saved()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Other</th>
-					<td>{ humaniseCount(tr.Other()) }</td>
+					<td>{ humanizeCount(tr.Other()) }</td>
 				</tr>
 			</tbody>
 		</table>
@@ -89,7 +89,7 @@ templ StatsPage(tr Traffic, history History) {
 		<p>{ grid.Summary() }</p>
 		<p class="activity-note">Dates are UTC. Daily counts began when this view replaced the hourly chart, so earlier days read as empty.</p>
 		// A real table, so screen readers get row and column navigation, with
-		// the count for every day as hidden text: colour alone never carries
+		// the count for every day as hidden text: color alone never carries
 		// the figure. The wrapper scrolls sideways at narrow widths and is
 		// focusable for exactly that reason; the cells themselves are not,
 		// since 90 tab stops would bury the rest of the page.

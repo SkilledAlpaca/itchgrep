@@ -1,5 +1,5 @@
 // Command dataservice is the crawler binary: it periodically walks itch.io's
-// asset catalogue (see internal/fetcher), builds a fresh search index and
+// asset catalog (see internal/fetcher), builds a fresh search index and
 // asset list from what it finds, and publishes both to the shared data
 // directory cmd/webserver reads from (see internal/storage). It also
 // exposes POST /trigger-fetch to start a crawl on demand, and self-heals an
@@ -79,7 +79,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// Cancelled on SIGINT (Ctrl-C locally) or SIGTERM (what `docker stop` and
+	// Canceled on SIGINT (Ctrl-C locally) or SIGTERM (what `docker stop` and
 	// `docker compose down` actually send), mirroring cmd/webserver/main.go.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -113,7 +113,7 @@ func main() {
 		// checkpointInterval last wrote on its own schedule. checkpoint()
 		// takes the crawler's own mutex for the duration, so this is safe
 		// alongside the crawl loop's own checkpoint(false) calls - both
-		// serialise on the same lock - rather than a race that would need
+		// serialize on the same lock - rather than a race that would need
 		// restructuring the crawler to avoid.
 		//
 		// Best-effort, not airtight: activeCrawler is cleared by a defer right
@@ -251,7 +251,7 @@ func publishedAge() (time.Duration, error) {
 }
 
 // startScrape begins a crawl unless one is already running, reporting whether
-// it did. Shared by the HTTP trigger and the scheduler so that both honour the
+// it did. Shared by the HTTP trigger and the scheduler so that both honor the
 // same guard - two crawls would write the same index directory and corrupt it.
 //
 // onDone, if non-nil, receives the crawl's outcome once it finishes. The HTTP
@@ -371,7 +371,7 @@ func fetchAndStoreAssets() error {
 }
 
 // crawlResult is what crawlAndCollect produces: the deduplicated assets a
-// crawl gathered, how much of the catalogue they cover, and the bookkeeping
+// crawl gathered, how much of the catalog they cover, and the bookkeeping
 // (crawler included) later stages need to gate on, index, and record.
 type crawlResult struct {
 	assets         []models.Asset
@@ -383,7 +383,7 @@ type crawlResult struct {
 }
 
 // crawlAndCollect runs one full crawl against itch.io: it sizes the
-// catalogue, discovers (or reuses) the tag universe, plans the slices needed
+// catalog, discovers (or reuses) the tag universe, plans the slices needed
 // to cover it, walks every slice, and attaches the tags and recency ranks
 // gathered along the way. It is the first stage of fetchAndStoreAssets
 // because every later stage - the coverage gate, the index build, the
@@ -529,8 +529,8 @@ func recordCrawlCompletion(result crawlResult, previousAssets []models.Asset, c 
 	// Written only on a run that published, so the figure the site quotes
 	// always describes the dataset actually being served.
 	if err := storage.PutStats(models.Stats{
-		Indexed:   int64(len(assets)),
-		Catalogue: result.totalAssets,
+		Indexed: int64(len(assets)),
+		Catalog: result.totalAssets,
 	}); err != nil {
 		logging.Error("Failed to store crawl stats, coverage will not be shown: %v", err)
 	}
@@ -547,7 +547,7 @@ func recordCrawlCompletion(result crawlResult, previousAssets []models.Asset, c 
 		When:            publishedAt,
 		DurationSeconds: int64(publishedAt.Sub(c.runStart).Seconds()),
 		Indexed:         int64(len(assets)),
-		Catalogue:       result.totalAssets,
+		Catalog:         result.totalAssets,
 		NewAssets:       newCount,
 		RemovedAssets:   removedCount,
 		FreeAssets:      freeCount,
@@ -573,7 +573,7 @@ func recordCrawlCompletion(result crawlResult, previousAssets []models.Asset, c 
 //
 // An id present in both publishes keeps whatever FirstSeen it already had,
 // including zero: old stock that predates this feature, or that arrived
-// before the previous publish ever recorded one, must never be relabelled as
+// before the previous publish ever recorded one, must never be relabeled as
 // new just because this happens to be the run that looked. Only an id absent
 // from the previous publish is a newcomer, so only those get stamped.
 func stampFirstSeen(previous, current []models.Asset, publishedAt time.Time) {
@@ -618,7 +618,7 @@ func diffAssetIDs(previous, current []models.Asset) (newCount, removedCount int6
 // crawlConfig is the tuning for one crawl. Every field has a working default,
 // so the dataservice runs with no configuration at all.
 type crawlConfig struct {
-	coverageTarget   float64       // stop once this fraction of the catalogue is collected
+	coverageTarget   float64       // stop once this fraction of the catalog is collected
 	coverageFloor    float64       // below this, refuse to publish
 	minYield         float64       // abandon a slice yielding fewer new assets than this, as a fraction of a page
 	tagCacheMaxAge   time.Duration // rediscover the tag universe when the cache is older than this
@@ -740,7 +740,7 @@ type crawler struct {
 	doneSlices map[string]struct{}
 
 	// resumed is true once resume actually restores a checkpoint, as opposed
-	// to finding none, a stale one, or one for a different catalogue size.
+	// to finding none, a stale one, or one for a different catalog size.
 	// Recorded on CrawlRecord because it explains a low NewAssets/RemovedAssets
 	// count that would otherwise look like the diff logic was broken.
 	resumed bool
@@ -786,7 +786,7 @@ func plannedPages(slices []fetcher.Slice, done map[string]struct{}, itemsPerPage
 }
 
 // checkpointInterval is the minimum wall-clock gap between checkpoint writes.
-// A checkpoint serialises every asset collected so far (~26 MB at full
+// A checkpoint serializes every asset collected so far (~26 MB at full
 // coverage), so writing one per slice would spend more time uploading than
 // crawling; writing one per hour would make the feature pointless.
 //
@@ -810,10 +810,10 @@ func (c *crawler) resume(maxAge time.Duration) {
 		return
 	}
 	if cp.TotalAssets != c.totalAssets {
-		// The catalogue moved underneath the checkpoint. Coverage arithmetic
+		// The catalog moved underneath the checkpoint. Coverage arithmetic
 		// and the slice plan were both computed against the old size, so
 		// resuming would silently mix two different crawls.
-		logging.Info("Ignoring crawl checkpoint: catalogue was %d assets, now %d", cp.TotalAssets, c.totalAssets)
+		logging.Info("Ignoring crawl checkpoint: catalog was %d assets, now %d", cp.TotalAssets, c.totalAssets)
 		return
 	}
 
@@ -864,7 +864,7 @@ func (c *crawler) checkpoint(force bool) {
 	// Copy under the lock; the upload below must not hold it, since the crawl
 	// keeps recording assets throughout.
 	//
-	// Tags are materialised into the copy rather than left to attachTags at the
+	// Tags are materialized into the copy rather than left to attachTags at the
 	// end of the crawl: a checkpoint has to be self-contained, or resuming from
 	// one would silently drop every tag learned before the interruption.
 	assets := make([]models.Asset, len(c.assets))
@@ -883,7 +883,7 @@ func (c *crawler) checkpoint(force bool) {
 	}
 
 	// Copied rather than shared: the crawl keeps writing to c.recency while the
-	// checkpoint is being serialised outside the lock, and marshalling a map
+	// checkpoint is being serialized outside the lock, and marshaling a map
 	// under concurrent write is a panic, not a race detector's opinion.
 	recency := make(map[string]int64, len(c.recency))
 	for id, rank := range c.recency {
@@ -975,7 +975,7 @@ func (c *crawler) record(assets []models.Asset, sliceTags []string, recencyPage 
 	return added
 }
 
-// attachTags materialises the accumulated tag sets onto the collected assets.
+// attachTags materializes the accumulated tag sets onto the collected assets.
 // Called once after the crawl: doing it per sighting would mean rewriting a
 // slice header on every duplicate, which is most of what the crawl sees.
 func (c *crawler) attachTags() {

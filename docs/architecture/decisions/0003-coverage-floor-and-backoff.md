@@ -4,7 +4,7 @@ Status: Accepted (implemented)
 
 ## Context
 
-A crawl can end up incomplete for reasons that have nothing to do with a bug — a network blip, itch.io throttling harder than usual, a process killed mid-run. Coverage (the fraction of itch.io's reported catalogue actually collected) is a real, measured number, not a guarantee: `internal/fetcher/planner.go`'s own comments record that a *healthy, complete* crawl still only reaches roughly 89% of the catalogue, because the plan is a union of tag-filtered views and itch.io offers no way to query "assets with none of the discovered tags at all." A crawl that stalled early might report 40% coverage; one that never started collecting (a broken fetch from the first page onward) would report 0%.
+A crawl can end up incomplete for reasons that have nothing to do with a bug — a network blip, itch.io throttling harder than usual, a process killed mid-run. Coverage (the fraction of itch.io's reported catalog actually collected) is a real, measured number, not a guarantee: `internal/fetcher/planner.go`'s own comments record that a *healthy, complete* crawl still only reaches roughly 89% of the catalog, because the plan is a union of tag-filtered views and itch.io offers no way to query "assets with none of the discovered tags at all." A crawl that stalled early might report 40% coverage; one that never started collecting (a broken fetch from the first page onward) would report 0%.
 
 If the dataservice always published whatever it collected, a bad run would silently replace a good, nearly-complete index with a worse one — and worse, publishing something is indistinguishable in the logs from the crawl having succeeded, so nobody would notice until visitors started failing to find things that used to be there.
 
@@ -24,6 +24,6 @@ Separately: if a crawl keeps failing, retrying it on the normal schedule (or wor
 
 ## Consequences
 
-- `COVERAGE_FLOOR` must stay below whatever coverage a healthy crawl actually reaches, or *every* run gets rejected — see the comment on the constant and on the `docker-compose.yml`/`.env.example` variable for the currently measured figure. If itch.io's catalogue shape changes such that a healthy crawl's typical coverage drops, this floor may need lowering to match, not the other way around.
+- `COVERAGE_FLOOR` must stay below whatever coverage a healthy crawl actually reaches, or *every* run gets rejected — see the comment on the constant and on the `docker-compose.yml`/`.env.example` variable for the currently measured figure. If itch.io's catalog shape changes such that a healthy crawl's typical coverage drops, this floor may need lowering to match, not the other way around.
 - A stalled run's *previous* index keeps being served indefinitely until a run finally clears the floor — there is no separate alerting on "the index is old because crawls keep failing" beyond the backoff schedule's own log lines and whatever `staleAfter`-driven UI warning `templates.Freshness` shows visitors (see `internal/web/templates/freshness.go`). Operationally, watching the log (or `history.json`, via `/stats`) for repeated failures is the way to catch this before a visitor does.
 - The three-step backoff schedule is hardcoded, not configurable — deliberately, since it is meant as damage control for an unexpected failure, not a tuning knob.

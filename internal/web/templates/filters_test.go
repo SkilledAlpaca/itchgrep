@@ -22,7 +22,7 @@ func TestShareURLOfNothingIsTheRoot(t *testing.T) {
 
 func TestDefaultsAreOmittedFromTheURL(t *testing.T) {
 	// Same page, same address. Encoding a sort that matches what the server
-	// would have picked anyway doubles the cache keys for no behaviour change.
+	// would have picked anyway doubles the cache keys for no behavior change.
 	assert.Equal(t, "/", Filters{Sort: models.SortPopular}.ShareURL())
 	assert.Equal(t, "/?q=x", Filters{Query: "x", Sort: models.SortRelevance}.ShareURL())
 
@@ -124,15 +124,15 @@ func TestResolvedSortDependsOnWhetherAnythingWasSearchedFor(t *testing.T) {
 }
 
 func TestFormatCountGroupsThousands(t *testing.T) {
-	assert.Equal(t, "0", humaniseCount(0))
-	assert.Equal(t, "999", humaniseCount(999))
-	assert.Equal(t, "1,000", humaniseCount(1000))
-	assert.Equal(t, "17,488", humaniseCount(17488))
-	assert.Equal(t, "108,697", humaniseCount(108697))
+	assert.Equal(t, "0", humanizeCount(0))
+	assert.Equal(t, "999", humanizeCount(999))
+	assert.Equal(t, "1,000", humanizeCount(1000))
+	assert.Equal(t, "17,488", humanizeCount(17488))
+	assert.Equal(t, "108,697", humanizeCount(108697))
 }
 
 func TestRequiringAndExcludingTheSameTagCannotBothStand(t *testing.T) {
-	// A URL asserting both is contradictory. Resolving it in favour of the more
+	// A URL asserting both is contradictory. Resolving it in favor of the more
 	// recent instruction is the only reading that leaves either control doing
 	// what its label says.
 	excluded := Filters{}.WithTag("2d").WithNotTag("2d")

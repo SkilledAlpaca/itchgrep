@@ -4,7 +4,7 @@ Terms specific to this project, or standard terms used in a specific way here. A
 
 ### Asset
 
-One item in itch.io's game-asset catalogue — a tileset, a sound pack, a font, and so on (not a full game). Represented in code as `models.Asset` (`pkg/models/models.go`): title, author, description, price, tags, and a few crawl-derived rankings. The whole collection is what `assets.json` holds; see [Data lifecycle](architecture.md#data-lifecycle).
+One item in itch.io's game-asset catalog — a tileset, a sound pack, a font, and so on (not a full game). Represented in code as `models.Asset` (`pkg/models/models.go`): title, author, description, price, tags, and a few crawl-derived rankings. The whole collection is what `assets.json` holds; see [Data lifecycle](architecture.md#data-lifecycle).
 
 ### AuthorKey
 
@@ -16,7 +16,7 @@ A partially-complete crawl's progress, written to `checkpoint.json` periodically
 
 ### Coverage
 
-How much of itch.io's reported asset catalogue a crawl actually collected, expressed as a fraction (`crawler.coverage`, `cmd/dataservice/main.go`): assets collected divided by itch.io's own reported total. Shown to visitors as the "X% of catalogue indexable" line — see `templates.Coverage` (`internal/web/templates/coverage.go`).
+How much of itch.io's reported asset catalog a crawl actually collected, expressed as a fraction (`crawler.coverage`, `cmd/dataservice/main.go`): assets collected divided by itch.io's own reported total. Shown to visitors as the "X% of catalog indexable" line — see `templates.Coverage` (`internal/web/templates/coverage.go`).
 
 ### Coverage floor
 
@@ -60,7 +60,7 @@ The smaller, search-optimized shape an `Asset` is converted to before being writ
 
 ### InvRecency / RecencyRank
 
-`InvRecency` (`Asset.InvRecency`, `pkg/models/models.go`) is the page number an asset appeared on in itch.io's *newest-first* view — a rank by recency, the same way `InvPopularity` is a rank by popularity. Zero means "never seen in that view" (true for most of the catalogue, since the view is capped at itch.io's 200-page limit). `RecencyRank()` (`pkg/models/models.go`) is the version actually indexed and sorted by: it maps the "unknown" zero to a value larger than any real rank, so unranked assets sort last instead of appearing to be the newest thing in the catalogue.
+`InvRecency` (`Asset.InvRecency`, `pkg/models/models.go`) is the page number an asset appeared on in itch.io's *newest-first* view — a rank by recency, the same way `InvPopularity` is a rank by popularity. Zero means "never seen in that view" (true for most of the catalog, since the view is capped at itch.io's 200-page limit). `RecencyRank()` (`pkg/models/models.go`) is the version actually indexed and sorted by: it maps the "unknown" zero to a value larger than any real rank, so unranked assets sort last instead of appearing to be the newest thing in the catalog.
 
 ### PageInFull
 
@@ -76,7 +76,7 @@ The moment a freshly built index and a fresh `assets.json` become the dataset th
 
 ### Root view / newest root view
 
-The **root view** is the unfiltered, untagged, unsorted itch.io browse view (`Slice.IsRoot`, `internal/fetcher/planner.go`) — the only view whose page numbers are a genuine, catalogue-wide popularity rank, which is why it is always crawled first and never abandoned early. The **newest root view** is the same but sorted newest-first (`Slice.IsNewestRoot`, `internal/fetcher/planner.go`) — the only source of a recency rank (`InvRecency`), for the same reason: page numbers only mean the same thing across different slices when neither slice narrows the catalogue by tag.
+The **root view** is the unfiltered, untagged, unsorted itch.io browse view (`Slice.IsRoot`, `internal/fetcher/planner.go`) — the only view whose page numbers are a genuine, catalog-wide popularity rank, which is why it is always crawled first and never abandoned early. The **newest root view** is the same but sorted newest-first (`Slice.IsNewestRoot`, `internal/fetcher/planner.go`) — the only source of a recency rank (`InvRecency`), for the same reason: page numbers only mean the same thing across different slices when neither slice narrows the catalog by tag.
 
 ### Scorch
 
@@ -88,11 +88,11 @@ The name of bleve's default (and, as of bleve v2, only writable) on-disk index s
 
 ### Slice
 
-One browsable view of the catalogue that a crawl can page through — a plain URL like `/game-assets/tag-pixel-art` or `/game-assets/newest` (`fetcher.Slice`, `internal/fetcher/planner.go`). A full crawl is the union of many slices, deduplicated by game ID, because itch.io caps any single view at 200 pages (`fetcher.MaxPagesPerView`) and the catalogue is far larger than that. See `PlanSlices` (`internal/fetcher/planner.go`) for how the set of slices to crawl is chosen.
+One browsable view of the catalog that a crawl can page through — a plain URL like `/game-assets/tag-pixel-art` or `/game-assets/newest` (`fetcher.Slice`, `internal/fetcher/planner.go`). A full crawl is the union of many slices, deduplicated by game ID, because itch.io caps any single view at 200 pages (`fetcher.MaxPagesPerView`) and the catalog is far larger than that. See `PlanSlices` (`internal/fetcher/planner.go`) for how the set of slices to crawl is chosen.
 
 ### Smoke test (`SCRAPE_MAX_PAGES`)
 
-Setting the `SCRAPE_MAX_PAGES` environment variable caps the total pages a crawl fetches, turning a ~6 hour full crawl into a few minutes that still exercise every stage of the pipeline — tag discovery (shrunk too, unless `MAX_TAGS` is set explicitly), fetching, indexing, and publishing (`loadCrawlConfig`, `cmd/dataservice/main.go`). It deliberately disarms `COVERAGE_FLOOR` to 0, since a smoke-tested run is expected to cover only a small fraction of the catalogue. Never set this in production — the resulting index is a small, arbitrary subset of the real catalogue.
+Setting the `SCRAPE_MAX_PAGES` environment variable caps the total pages a crawl fetches, turning a ~6 hour full crawl into a few minutes that still exercise every stage of the pipeline — tag discovery (shrunk too, unless `MAX_TAGS` is set explicitly), fetching, indexing, and publishing (`loadCrawlConfig`, `cmd/dataservice/main.go`). It deliberately disarms `COVERAGE_FLOOR` to 0, since a smoke-tested run is expected to cover only a small fraction of the catalog. Never set this in production — the resulting index is a small, arbitrary subset of the real catalog.
 
 ### Staging index
 

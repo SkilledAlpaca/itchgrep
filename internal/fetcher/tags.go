@@ -117,7 +117,7 @@ func DiscoverTags(seed []string, maxTags int) ([]models.Tag, error) {
 // directory and falling back to the browse sitemap.
 //
 // The fallback is deliberately quiet about which one it used only in the happy
-// path: a silent drop from ~607 seeds to ~39 would cost most of the catalogue's
+// path: a silent drop from ~607 seeds to ~39 would cost most of the catalog's
 // reachability while still producing a plausible-looking crawl.
 func discoverySeed() ([]string, error) {
 	slugs, err := fetchTagLinks(tagDirectoryURL)

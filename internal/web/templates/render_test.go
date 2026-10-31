@@ -109,7 +109,7 @@ func TestStatsHeadlineRendersFourCellsInOrder(t *testing.T) {
 func TestStatsTableListsEveryRouteInAFixedOrder(t *testing.T) {
 	// The order mirrors how a reader thinks about the site: whole pages
 	// before the fragment and asset requests they trigger, then the
-	// specialised pages, ending with the catch-all overflow bucket.
+	// specialized pages, ending with the catch-all overflow bucket.
 	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, now), History{}))
 
 	require.Contains(t, html, `<table class="stats-table">`)
@@ -153,7 +153,7 @@ func TestStatsTableRowsSumToTheTotal(t *testing.T) {
 	assert.EqualValues(t, 2, snap.Stats)
 }
 
-func TestCountingSinceRendersAsALocalisableTimeElement(t *testing.T) {
+func TestCountingSinceRendersAsALocalizableTimeElement(t *testing.T) {
 	// app.js rewrites this to the viewer's own zone on load; it needs a real
 	// datetime attribute to parse an instant from, and the js-local class is
 	// what tells app.js this element's whole text, not just its title,
@@ -214,9 +214,9 @@ func TestEmptyHistoryRendersNoSection(t *testing.T) {
 
 func TestHistorySectionRendersRowsNewestFirstWithDeltas(t *testing.T) {
 	history := NewHistory([]models.CrawlRecord{
-		{When: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC), Indexed: 95699, Catalogue: 108000,
+		{When: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC), Indexed: 95699, Catalog: 108000,
 			DurationSeconds: 3600, Pages: 4000, SlicesDone: 300, SlicesPlanned: 320},
-		{When: time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), Indexed: 96903, Catalogue: 108697,
+		{When: time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), Indexed: 96903, Catalog: 108697,
 			DurationSeconds: 3600 + 12*60, Pages: 4200, SlicesDone: 314, SlicesPlanned: 320, Resumed: true},
 	})
 	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, time.Now()), history))
@@ -393,12 +393,12 @@ func TestRecencyIsOnlyOfferedWhenTheDataCarriesIt(t *testing.T) {
 
 func TestCoverageIsStatedWithItsDenominator(t *testing.T) {
 	// "96,903 assets" with nothing to compare it against reads as the whole
-	// catalogue, and a search that then finds nothing looks like proof the asset
+	// catalog, and a search that then finds nothing looks like proof the asset
 	// does not exist rather than that it was never indexed.
 	age := NewFreshness(time.Now().Add(-time.Hour), time.Now(), 0)
-	html := render(t, IndexAge(age, Coverage{Indexed: 96903, Catalogue: 108808}))
+	html := render(t, IndexAge(age, Coverage{Indexed: 96903, Catalog: 108808}))
 
-	assert.Contains(t, html, "89% of catalogue indexable")
+	assert.Contains(t, html, "89% of catalog indexable")
 	// On its own line, not trailing the age: the two say different kinds of
 	// thing, and run together they read as one sentence about neither. Styled
 	// as the age is, because they are the same kind of caveat.
@@ -415,15 +415,15 @@ func TestCoverageIsSilentWhenItWasNeverMeasured(t *testing.T) {
 	html := render(t, IndexAge(age, Coverage{}))
 
 	assert.Contains(t, html, "index updated")
-	assert.NotContains(t, html, "of catalogue indexable")
+	assert.NotContains(t, html, "of catalog indexable")
 	assert.NotContains(t, html, "0%")
 }
 
 func TestCoverageNeverExceedsAHundredPercent(t *testing.T) {
-	// The catalogue total is read when a crawl starts and the indexed count when
-	// it ends, so a catalogue that shrinks in between can produce more than
+	// The catalog total is read when a crawl starts and the indexed count when
+	// it ends, so a catalog that shrinks in between can produce more than
 	// 100%. That is the measurement, not a discovery.
-	assert.Equal(t, 100, Coverage{Indexed: 110, Catalogue: 100}.Percent())
+	assert.Equal(t, 100, Coverage{Indexed: 110, Catalog: 100}.Percent())
 }
 
 func TestMoreResultsAreReachableWithoutScrolling(t *testing.T) {
@@ -606,7 +606,7 @@ func TestEveryCardOffersASimilarLink(t *testing.T) {
 
 func TestSimilarLinkPreservesTheRestOfTheFilterState(t *testing.T) {
 	// Clicking "similar" while browsing a tag keeps that tag applied - the
-	// same "current state plus this change" behaviour every other card
+	// same "current state plus this change" behavior every other card
 	// control uses.
 	f := Filters{}.WithTag("2d")
 	html := render(t, AssetPage(f, sampleResults()))

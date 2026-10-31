@@ -167,16 +167,16 @@ func TestGridLabelsTheColumnHoldingEachFirstOfTheMonth(t *testing.T) {
 	assert.Equal(t, "Aug", g.Months[1])
 	assert.Equal(t, "Sep", g.Months[5])
 	assert.Equal(t, "Oct", g.Months[9])
-	var labelled int
+	var labeled int
 	for _, m := range g.Months {
 		if m != "" {
-			labelled++
+			labeled++
 		}
 	}
-	assert.Equal(t, 3, labelled)
+	assert.Equal(t, 3, labeled)
 }
 
-func TestGridLeavesTheOpeningMonthUnlabelledWhenTheNextIsClose(t *testing.T) {
+func TestGridLeavesTheOpeningMonthUnlabeledWhenTheNextIsClose(t *testing.T) {
 	// Wed 2026-11-25 minus 89 days is Fri Aug 28, in column 0; Sep 1 is in
 	// column 1, so an "Aug" label would overprint "Sep".
 	g := NewTraffic(metrics.Snapshot{}, time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)).Grid()

@@ -78,7 +78,7 @@ func Fallback() Rates {
 
 // Valid reports whether a snapshot is usable at all: a rates table with no euro
 // in it cannot convert anything, and silently treating that as "all rates are
-// zero" would price the whole catalogue at nothing.
+// zero" would price the whole catalog at nothing.
 func (r Rates) Valid() bool { return r.PerEUR["EUR"] == 1 && len(r.PerEUR) > 1 }
 
 // Has reports whether a currency can be converted to or from.
@@ -181,7 +181,7 @@ func ParseECB(xml []byte) (Rates, error) {
 
 	// The document is a nest of <Cube> elements: an outer one carrying
 	// time="YYYY-MM-DD" and a row of inner ones carrying currency and rate.
-	// Matched by attribute rather than by unmarshalling the whole schema,
+	// Matched by attribute rather than by unmarshaling the whole schema,
 	// because the shape of the nesting has changed before and the attributes
 	// have not.
 	date := attr(body, "time")

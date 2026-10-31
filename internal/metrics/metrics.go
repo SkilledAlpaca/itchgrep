@@ -176,7 +176,7 @@ func (c *Counters) RecordRequest(routePattern string, filtered bool, status int)
 		c.other.Add(1)
 	}
 
-	// A search is a query actually answered against the catalogue, not merely
+	// A search is a query actually answered against the catalog, not merely
 	// a hit on a route that can carry one - "/", "/results" and "/tag/{slug}"
 	// (a filtered browse via its own query string, such as ?page=2 or a
 	// currency choice) all render results, and a failed lookup (503 while the

@@ -265,7 +265,7 @@ func TestStampFirstSeenMarksOnlyGenuineNewcomers(t *testing.T) {
 	assert.Equal(t, time.Unix(1000, 0), byID["old-stamped"].FirstSeen,
 		"a non-zero FirstSeen must carry forward unchanged")
 	assert.True(t, byID["old-stock"].FirstSeen.IsZero(),
-		"old stock with no recorded FirstSeen must never be relabelled as new")
+		"old stock with no recorded FirstSeen must never be relabeled as new")
 	assert.Equal(t, publishedAt, byID["brand-new"].FirstSeen,
 		"only an id absent from the previous publish is a genuine newcomer")
 }

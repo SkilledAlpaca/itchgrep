@@ -12,7 +12,7 @@ func TestCrawlIntervalDefaultsToWeekly(t *testing.T) {
 }
 
 func TestCrawlIntervalCanBeDisabled(t *testing.T) {
-	// Zero is the only way back to the old behaviour - an index that refreshes
+	// Zero is the only way back to the old behavior - an index that refreshes
 	// only when something calls /trigger-fetch - so it must survive parsing
 	// rather than being treated as "unset" and replaced by the default.
 	t.Setenv("CRAWL_INTERVAL", "0")

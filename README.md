@@ -2,17 +2,17 @@
 
 # itchgrep
 
-Full-text search over the itch.io game-asset catalogue, running at
+Full-text search over the itch.io game-asset catalog, running at
 [itchgrep.com](https://itchgrep.com/).
 
 itch.io offers no text search scoped to assets — you browse by tag, and any
 one view stops at roughly 7,200 results, so whatever ranks below that is
-unreachable however you page. itchgrep crawls the catalogue into its own
+unreachable however you page. itchgrep crawls the catalog into its own
 search index and searches titles, descriptions, tags, and authors at once,
 adding tag exclusion (up to four required and four excluded tags per search),
 cross-currency price comparison, and live facet counts on top.
 
-![Searching the itch.io asset catalogue by text, shown in the light theme on
+![Searching the itch.io asset catalog by text, shown in the light theme on
 the left of the diagonal and the dark theme on the right](.github/screenshot-search.png)
 
 <sub>One page, split down the diagonal: light theme left, dark theme right.
@@ -33,7 +33,7 @@ the known limitations, and how to report a barrier.
   with exact and fuzzy matching, plus exact phrase search for quoted text.
 - Filters by tag (including exclusion), price, author, and currency, with
   live facet counts as you narrow.
-- Reaches the whole catalogue by crawling many tag-filtered views and
+- Reaches the whole catalog by crawling many tag-filtered views and
   deduplicating, rather than the ~7,200-asset ceiling of any single itch.io
   browse view — itch.io itself also caps a browse view at two combined tags,
   offers no tag exclusion, and cannot compare prices across currencies.
@@ -85,7 +85,7 @@ docker compose up --build
 This builds both images, starts `dataservice` and `webserver` together, and
 serves the search page at [localhost:62686](http://localhost:62686)
 immediately — it answers `503` until the first crawl publishes, which takes
-about six hours for the full catalogue. Set `SCRAPE_MAX_PAGES` first (see
+about six hours for the full catalog. Set `SCRAPE_MAX_PAGES` first (see
 [docs/configuration.md](docs/configuration.md#scrape_max_pages)) for a
 small, fast crawl instead.
 
@@ -137,7 +137,7 @@ original lives at
 repository is a fork, licensed as the original under
 [GPL-3.0](LICENSE), and is not operated by the original author. This fork
 rebuilt the search index and its scoring, the crawl planner that reaches the
-whole catalogue rather than one browse view's page limit, cross-currency
+whole catalog rather than one browse view's page limit, cross-currency
 price comparison, and most of the operational tooling (rate limiting,
 security headers, structured logging, container hardening, this
 documentation set) on top of winterveil's original interface and crawler

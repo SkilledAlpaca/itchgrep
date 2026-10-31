@@ -1,5 +1,5 @@
 // Package fetcher talks to itch.io: it fetches and parses browse pages
-// (this file), plans which views of the catalogue are worth crawling
+// (this file), plans which views of the catalog are worth crawling
 // (planner.go), and discovers the tag vocabulary those views are built from
 // (tags.go). Every outbound request in the package goes through doGet, so
 // request pacing and the crawler's identifying User-Agent apply no matter
@@ -85,7 +85,7 @@ const maxScrapeRPS = 1000
 // workers against one shared limiter, so a worker that sleeps in a
 // per-request backoff just hands its slot to another worker: the aggregate
 // rate offered to itch.io stays pinned no matter how many 429s come back, and
-// a Retry-After honoured by one worker is ignored by the rest. A pause has to
+// a Retry-After honored by one worker is ignored by the rest. A pause has to
 // be global to mean anything.
 //
 // The rate itself is deliberately NOT adaptive. An earlier version halved its
@@ -406,7 +406,7 @@ func calculateBackoff(attempt int, baseDelay time.Duration) time.Duration {
 	return result
 }
 
-// maxRetryAfter bounds how long we'll honour a server-supplied Retry-After
+// maxRetryAfter bounds how long we'll honor a server-supplied Retry-After
 // value, so a hostile or misconfigured response can't stall the scrape.
 const maxRetryAfter = 120 * time.Second
 
@@ -450,7 +450,7 @@ func parseRetryAfter(value string) (time.Duration, bool) {
 var assetCountURL = "https://itch.io/game-assets"
 
 // GetAssetCount fetches itch.io's own reported total for the whole asset
-// catalogue, off the "(N results)" figure on the root browse page. It is the
+// catalog, off the "(N results)" figure on the root browse page. It is the
 // denominator crawlAndCollect (cmd/dataservice) measures coverage against.
 func GetAssetCount() (int64, error) {
 	maxAttempts := maxFetchAttempts

@@ -39,7 +39,7 @@ func NewOpenSearch() openSearchDescription {
 	}
 }
 
-// Render serialises the descriptor as a complete XML document, including the
+// Render serializes the descriptor as a complete XML document, including the
 // declaration a consumer expects at the top of the response body.
 func (doc openSearchDescription) Render() ([]byte, error) {
 	body, err := xml.MarshalIndent(doc, "", "  ")

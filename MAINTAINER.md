@@ -27,7 +27,7 @@ What's worth a glance, on whatever cadence suits you (weekly is reasonable):
   suspiciously old date is the first sign a crawl has been failing silently.
 - **The coverage line in the masthead** (and the per-crawl Coverage figure in
   `/stats`' Index history). A healthy full crawl reaches about 89%
-  of the catalogue. A number sagging well below that, or repeating across
+  of the catalog. A number sagging well below that, or repeating across
   several crawls, means investigate — see
   [docs/observability.md](docs/observability.md#what-normal-looks-like-vs-what-warrants-attention)
   and [docs/dependencies.md](docs/dependencies.md#itchio).

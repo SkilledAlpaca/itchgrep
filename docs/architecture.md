@@ -3,7 +3,7 @@
 itchgrep is one Go module that builds two programs (Go calls a compiled program a *binary*):
 
 - **`webserver`** — the public-facing program. It serves the search page at itchgrep.com, answers searches, and renders every other page (`/about`, `/stats`, `/new`, `/feed`, `/tag/{slug}`, `/saved`). It never contacts itch.io itself.
-- **`dataservice`** — the crawler. On a schedule (or on demand), it walks itch.io's asset catalogue, builds a new search index, and publishes it. It has no public pages of its own.
+- **`dataservice`** — the crawler. On a schedule (or on demand), it walks itch.io's asset catalog, builds a new search index, and publishes it. It has no public pages of its own.
 
 The two programs share one directory on disk (the *data directory*, see [Data lifecycle](#data-lifecycle) below) and nothing else. `dataservice` writes there; `webserver` reads from there. Neither talks to the other over the network in normal operation.
 
@@ -100,8 +100,8 @@ flowchart LR
 
 One crawl, driven by `fetchAndStoreAssets` (`cmd/dataservice/main.go`), runs as a fixed sequence:
 
-1. **Fetch and collect** (`crawlAndCollect`) — reads itch.io's reported catalogue size, plans which browsable views ("slices") to walk (`internal/fetcher/planner.go`), and walks them, deduplicating assets by game ID. This stage also resumes an in-progress crawl from a checkpoint if one exists and is fresh enough.
-2. **Coverage gate** (`checkCoverageFloor`) — if the crawl collected less than `COVERAGE_FLOOR` of the reported catalogue, the run stops here and the previous index is left in place untouched. A stalled or truncated crawl must never replace a good index with a worse one.
+1. **Fetch and collect** (`crawlAndCollect`) — reads itch.io's reported catalog size, plans which browsable views ("slices") to walk (`internal/fetcher/planner.go`), and walks them, deduplicating assets by game ID. This stage also resumes an in-progress crawl from a checkpoint if one exists and is fresh enough.
+2. **Coverage gate** (`checkCoverageFloor`) — if the crawl collected less than `COVERAGE_FLOOR` of the reported catalog, the run stops here and the previous index is left in place untouched. A stalled or truncated crawl must never replace a good index with a worse one.
 3. **Build the index** (`buildIndex`, `cmd/dataservice/selfheal.go`) — converts the collected assets to `models.IndexedAsset` (pricing converted to US dollars using the exchange-rate snapshot fetched this run) and writes a new bleve index at the staging path.
 4. **Publish** (`publishCrawl` → `storage.PublishIndex`, then `storage.PutAssets`) — the index is published first, `assets.json` second, deliberately in that order (see [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md)).
 5. **Record completion** (`recordCrawlCompletion`) — writes `stats.json` (coverage figures) and appends one entry to `history.json`, then deletes the now-stale checkpoint.

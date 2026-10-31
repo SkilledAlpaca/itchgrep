@@ -5,7 +5,7 @@ package templates
 //
 // itchgrep is GPL-3.0. Running a modified version over a network does not by
 // itself oblige anyone to publish the changes - that is the AGPL, not the GPL -
-// but the licence is only honoured in spirit if the source the site actually
+// but the license is only honored in spirit if the source the site actually
 // runs is reachable, so SourceURL must point at THIS fork rather than at
 // upstream. UpstreamURL is credit, not a source offer: it is the original work
 // this is derived from, and it no longer describes what is deployed here.

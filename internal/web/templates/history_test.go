@@ -76,17 +76,17 @@ func TestSummaryLine(t *testing.T) {
 
 func TestCoverageLabel(t *testing.T) {
 	cases := []struct {
-		name      string
-		indexed   int64
-		catalogue int64
-		want      string
+		name    string
+		indexed int64
+		catalog int64
+		want    string
 	}{
 		{"typical crawl", 96903, 108697, "89.1% of 108,697"},
-		{"unknown catalogue", 100, 0, "unknown"},
+		{"unknown catalog", 100, 0, "unknown"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			row := HistoryRow{rec: models.CrawlRecord{Indexed: c.indexed, Catalogue: c.catalogue}}
+			row := HistoryRow{rec: models.CrawlRecord{Indexed: c.indexed, Catalog: c.catalog}}
 			assert.Equal(t, c.want, row.CoverageLabel())
 		})
 	}

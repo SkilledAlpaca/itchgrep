@@ -105,7 +105,7 @@ func TestParseGameCount(t *testing.T) {
 		want int64
 	}{
 		{"div form", `<div class="game_count">108,578 results</div>`, 108578},
-		{"nobr parenthesised form", `<nobr class="game_count"> (36,324 results)</nobr>`, 36324},
+		{"nobr parenthesized form", `<nobr class="game_count"> (36,324 results)</nobr>`, 36324},
 		{"no separators", `<div class="game_count">405 results</div>`, 405},
 	}
 
