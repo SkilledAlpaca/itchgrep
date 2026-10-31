@@ -56,6 +56,10 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 					<td>{ HumaneCount(tr.About()) }</td>
 				</tr>
 				<tr>
+					<th scope="row">Stats page</th>
+					<td>{ HumaneCount(tr.Stats()) }</td>
+				</tr>
+				<tr>
 					<th scope="row">Static assets</th>
 					<td>{ HumaneCount(tr.Static()) }</td>
 				</tr>

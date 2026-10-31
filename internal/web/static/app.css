@@ -886,7 +886,7 @@ a:hover {
   padding-top: 2rem;
 }
 
-/* Wider than reading prose: this page is cards, a table and a histogram,
+/* Wider than reading prose: this page is cards, a table and an activity grid,
  * not paragraphs, and the 68rem measure that keeps text comfortable left a
  * dashboard looking cramped. */
 .stats-page {

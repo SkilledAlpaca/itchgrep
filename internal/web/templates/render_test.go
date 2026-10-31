@@ -2,6 +2,7 @@ package templates
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -114,7 +115,7 @@ func TestStatsTableListsEveryRouteInAFixedOrder(t *testing.T) {
 	require.Contains(t, html, `<table class="stats-table">`)
 	table := html[strings.Index(html, `<table class="stats-table">`):]
 	labels := []string{
-		"Home page", "Results fragment", "About page", "Static assets",
+		"Home page", "Results fragment", "About page", "Stats page", "Static assets",
 		"New arrivals page", "Feed requests", "Tag pages", "Saved page", "Other",
 	}
 	last := -1
@@ -124,6 +125,32 @@ func TestStatsTableListsEveryRouteInAFixedOrder(t *testing.T) {
 		require.True(t, idx > last, label+" must appear after the previous row")
 		last = idx
 	}
+}
+
+func TestStatsTableRowsSumToTheTotal(t *testing.T) {
+	// The docs promise the breakdown is exhaustive; a missing row (the stats
+	// page itself was once absent) makes the visible rows fall short of the
+	// headline figure.
+	c := metrics.New()
+	for _, route := range []string{"/", "/results", "/about", "/stats", "/stats", "/static/*", "/new", "/feed", "/tag/{slug}", "/saved", "/robots.txt", ""} {
+		c.RecordRequest(route, false, 200)
+	}
+	snap := c.Snapshot()
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, now), History{}))
+
+	table := html[strings.Index(html, `<table class="stats-table">`):]
+	table = table[:strings.Index(table, `</table>`)]
+	cells := regexp.MustCompile(`<td>([\d,]+)</td>`).FindAllStringSubmatch(table, -1)
+	require.Len(t, cells, 10, "one row per route bucket, including the stats page")
+
+	var sum uint64
+	for _, m := range cells {
+		n, err := strconv.ParseUint(strings.ReplaceAll(m[1], ",", ""), 10, 64)
+		require.NoError(t, err)
+		sum += n
+	}
+	assert.Equal(t, snap.Total, sum, "the rows must sum to the headline total")
+	assert.EqualValues(t, 2, snap.Stats)
 }
 
 func TestCountingSinceRendersAsALocalisableTimeElement(t *testing.T) {
