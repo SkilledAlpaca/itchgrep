@@ -15,14 +15,14 @@ Three directories under `/mnt/user/appdata/itchgrep/` hold everything the deploy
 | Directory | Purpose |
 |---|---|
 | `src/` | The git checkout of this repository — what `docker compose` is run from, and what `scripts/update.sh` pulls into. |
-| `logs/` | `LOG_EXPORT_DIR` — where `scripts/export-logs.sh` writes `access.jsonl`, `security.jsonl`, and `app.log`. See [docs/observability.md](observability.md). |
+| `logs/` | `LOG_EXPORT_DIR` — where `scripts/export-logs.sh` writes `access.jsonl`, `security.jsonl`, `app.log`, and `crawler.log`. See [docs/observability.md](observability.md). |
 | `data/` | `DATA_PATH` — the crawl database, bind-mounted into both containers at `/data`. See [docs/disaster-recovery.md](disaster-recovery.md) for what's in it. |
 
-`scripts/bootstrap-host.sh` creates all three (`mkdir -p`, idempotent — safe to re-run) on first-time setup, or after restoring an appdata backup. It does not set ownership on `data/` — that's a separate, deliberate step (see below), because the correct uid depends on the container image, not the host.
+`scripts/bootstrap-host.sh` creates all three (`mkdir -p`, idempotent — safe to re-run) on first-time setup, or after restoring an appdata backup. When run as root (the normal case on Unraid), it also `chown`s `data/` to `65532:65532`, the uid both container images run as; run as any other user, it skips that step and prints the command to run by hand.
 
 ### The host has no `git` binary
 
-Unraid does not ship `git`. `scripts/update.sh` (the production update runbook) and any manual clone both work around this by running the `alpine/git` Docker image instead of a native command:
+Unraid does not ship `git`. `scripts/update.sh` (the production update runbook) and any manual clone both work around this by running the `alpine/git` Docker image instead of a native command. The command below uses the bare image name for readability; `scripts/update.sh` pins the image by tag and digest in its `GIT_IMAGE` line.
 
 ```
 docker run --rm -v "$(pwd)":/git alpine/git -c safe.directory=/git pull https://github.com/SkilledAlpaca/itchgrep.git main
@@ -42,7 +42,7 @@ Unraid's root filesystem — including `/etc` — is a tmpfs ramdisk rebuilt fro
 
 `scripts/export-logs.sh` is not run by Docker Compose — it runs continuously on the host as an Unraid **User Scripts** plugin entry named `itchgrep-log-export`, configured **"At Startup of Array,"** background-only. See [docs/deployment.md](deployment.md) for the install steps.
 
-**What breaks if this entry is missing or stops running:** request and security logs stop being captured into durable, rotated files. The application itself is unaffected — logs still accumulate inside Docker's own capped 30 MB `json-file` buffer per container (see [docs/observability.md](observability.md)) — but you lose the ability to investigate anything older than that buffer, and the 30-day retention guarantee silently stops applying to nothing (there's nothing left to rotate).
+**What breaks if this entry is missing or stops running:** request, security, webserver application, and crawler logs stop being captured into durable, rotated files. The application itself is unaffected — logs still accumulate inside Docker's own capped 30 MB `json-file` buffer per container (see [docs/observability.md](observability.md)) — but you lose the ability to investigate anything older than that buffer, and the 30-day retention guarantee silently stops applying to nothing (there's nothing left to rotate).
 
 **What breaks if the whole host disappears:** total outage of everything — the site, the crawl, the logs. See [docs/disaster-recovery.md](disaster-recovery.md#full-host-loss-recovery) for the rebuild procedure.
 
@@ -76,7 +76,7 @@ networks:
         - subnet: 172.30.99.0/24
 ```
 
-This exists for one specific reason: the webserver's `TRUSTED_PROXY_CIDRS` environment variable (see [docs/configuration.md](configuration.md)) defaults to exactly this subnet (`172.30.99.0/24`), and that's the network the webserver trusts `CF-Connecting-IP`/`X-Forwarded-For` headers from — which is where `cloudflared` connects from when the `public` profile is in use. Without a *pinned* subnet, Docker's automatic address assignment can shift across a daemon restart or a second stack on the same host, which would either silently break that trust (real visitor IPs stop being logged correctly, everyone appears to share the tunnel's address) or, worse, trust the wrong subnet.
+This exists for one specific reason: `cloudflared` is pinned to `172.30.99.10` on this network (its `networks: default: ipv4_address:` entry), and the webserver's `TRUSTED_PROXY_CIDRS` (see [docs/configuration.md](configuration.md#trusted_proxy_cidrs)) defaults to exactly that one address, `172.30.99.10/32` — not the whole subnet, because traffic through Docker's userland proxy can arrive from the bridge gateway, which sits inside the `/24`. Without a *pinned* subnet, Docker's automatic address assignment can shift across a daemon restart or a second stack on the same host, so that address could stop belonging to `cloudflared`: real visitor IPs stop being honored, or the wrong peer gets trusted.
 
 **What breaks if the subnet changes without updating `TRUSTED_PROXY_CIDRS` to match:** the webserver stops honoring the proxy headers Cloudflare sends, so every visitor is logged and rate-limited as if they were the single IP of the Cloudflare tunnel connection itself — one visitor's abusive traffic can rate-limit every other visitor.
 
@@ -102,8 +102,8 @@ itself is ever recreated from scratch (rather than just re-tokened — see
 [docs/disaster-recovery.md](disaster-recovery.md#rotating-the-cloudflare-tunnel-token)).
 
 1. In the Cloudflare dashboard for the account that owns `itchgrep.com`, go
-   to the Zero Trust section, then **Networks** → **Tunnels**, and create a
-   new tunnel. **Dashboard navigation labels change over time** — Cloudflare
+   to **Networking** → **Tunnels** (moved out of the separate Zero Trust
+   dashboard in February 2026), and create a new tunnel. **Dashboard navigation labels change over time** — Cloudflare
    has already reorganized tunnel management once (see
    [docs/disaster-recovery.md](disaster-recovery.md#rotating-the-cloudflare-tunnel-token)
    for the dated note on that move); if this path doesn't match what you
@@ -163,10 +163,10 @@ The fingerprint is in the path on purpose, not a `?v=` query string. That keeps 
 The repository is `SkilledAlpaca/itchgrep` (public), a GPL-3.0 fork of `wintermute-cell/itchgrep`. It hosts:
 
 - The source code and commit history.
-- GitHub Actions CI, which runs on every push to `main` and every pull request — see [docs/ci-cd.md](ci-cd.md).
+- GitHub Actions CI — see the `on:` block in `.github/workflows/ci.yml` and [docs/ci-cd.md](ci-cd.md) for when it runs.
 - The issue tracker, which is the contact address both `security.txt` and the crawler's own `User-Agent` header point back to (see below, and [docs/open-questions.md](open-questions.md) for who actually monitors it).
 
-**What breaks if GitHub access is lost:** no new deploys can be pulled — `scripts/update.sh` clones and pulls from this exact URL — and CI stops running for anyone. The already-running production stack is entirely unaffected until the next update is needed. Security reports sent to the linked issue tracker would go unseen.
+**What breaks if GitHub access is lost:** no new deploys can be pulled — `scripts/update.sh` pulls from this exact URL, and a first deploy clones from it — and CI stops running for anyone. The already-running production stack is entirely unaffected until the next update is needed. Security reports sent to the linked issue tracker would go unseen.
 
 ## itch.io
 

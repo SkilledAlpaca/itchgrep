@@ -14,16 +14,19 @@ Most of a week runs with no input from you:
   (a week, by default) — see
   [docs/architecture.md](docs/architecture.md#how-a-crawl-flows). Nothing
   needs to trigger this by hand.
-- **CI on every push.** GitHub Actions builds, vets, formats, tests, and
-  vulnerability-scans every commit pushed to `main` and every pull request —
-  see [docs/ci-cd.md](docs/ci-cd.md).
+- **CI on every push to `main`, every pull request, and daily.** GitHub
+  Actions builds, vets, formats, tests, and vulnerability-scans every commit
+  pushed to `main` and every pull request, and re-runs on `main` every day at
+  06:23 UTC so a newly published advisory surfaces there first — see
+  [docs/ci-cd.md](docs/ci-cd.md).
 
 What's worth a glance, on whatever cadence suits you (weekly is reasonable):
 
 - **The site itself.** Load [itchgrep.com](https://itchgrep.com/) and run a
   search. The masthead states the index's own age and coverage — a
   suspiciously old date is the first sign a crawl has been failing silently.
-- **The coverage line on `/stats`.** A healthy full crawl reaches about 89%
+- **The coverage line in the masthead** (and the per-crawl Coverage figure in
+  `/stats`' Index history). A healthy full crawl reaches about 89%
   of the catalogue. A number sagging well below that, or repeating across
   several crawls, means investigate — see
   [docs/observability.md](docs/observability.md#what-normal-looks-like-vs-what-warrants-attention)
@@ -45,8 +48,9 @@ What's worth a glance, on whatever cadence suits you (weekly is reasonable):
    unformatted code.
 5. Commit and push. See [CONTRIBUTING.md](CONTRIBUTING.md) for this repository's
    commit conventions.
-6. Wait for CI on the pushed branch or the merged commit on `main` to go
-   green — see [docs/ci-cd.md](docs/ci-cd.md).
+6. Wait for CI on the pull request (a pushed branch with no open pull request
+   runs nothing) or on the merged commit on `main` to go green — see
+   [docs/ci-cd.md](docs/ci-cd.md).
 7. On the Unraid host, run `scripts/update.sh` from the repository checkout
    directory. It pulls `main`, rebuilds with `docker compose --profile public
    up -d --build`, and waits for the webserver to report healthy — see

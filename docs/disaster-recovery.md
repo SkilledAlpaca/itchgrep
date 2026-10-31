@@ -9,9 +9,9 @@ This document assumes no prior familiarity with Docker or backup tooling. Every 
 | Symptom | Likely cause | Where to check |
 |---|---|---|
 | `itchgrep.com` doesn't load at all | Cloudflare tunnel down, a Cloudflare-side outage, or the webserver container itself is down | `docker inspect -f '{{.State.Health.Status}}' itchgrep-webserver` (run on the host); Cloudflare dashboard tunnel status |
-| Site loads, but search shows "no data yet" / every search returns `503` | No crawl has ever published (expected on a brand-new deployment) or every crawl since has failed | `app.log` under `LOG_EXPORT_DIR` for dataservice errors; `/stats` page's coverage figure |
-| Search works, but `/new` is empty or results look stale | The scheduled crawl hasn't successfully published in a while (`CRAWL_INTERVAL` elapsed with no success), or the coverage gate is rejecting every run | `history.json`'s latest entries (via `/stats`); `app.log` for `"Coverage ... below COVERAGE_FLOOR"` |
-| `itchgrep-webserver` keeps restarting | `index.bleve/` is corrupted and even the automatic self-heal is failing, or `/data` isn't writable by the container's user | `app.log` for `"Self-heal rebuild"` lines or permission errors; see "Index corruption" below |
+| Site loads, but search shows "no data yet" / every search returns `503` | No crawl has ever published (expected on a brand-new deployment) or every crawl since has failed | `crawler.log` under `LOG_EXPORT_DIR` for dataservice errors; `/stats` page's coverage figure |
+| Search works, but `/new` is empty or results look stale | The scheduled crawl hasn't successfully published in a while (`CRAWL_INTERVAL` elapsed with no success), or the coverage gate is rejecting every run | `history.json`'s latest entries (via `/stats`); `crawler.log` for `"Coverage ... below COVERAGE_FLOOR"` |
+| Site stays on `503` although crawls have published | `index.bleve/` is corrupted and the automatic self-heal is failing, or `/data` isn't writable by uid 65532 | `curl http://127.0.0.1:62686/readyz` (`503 no data` confirms); `crawler.log` for `"Self-heal rebuild"` lines or permission errors; see "Index corruption" below |
 | The public site is unreachable but the LAN address (`http://<host>:62686`) works fine | Cloudflare-side problem specifically — tunnel disconnected, DNS issue, account issue | `docker logs` on the `cloudflared` container; Cloudflare dashboard |
 | Host disk filling up unexpectedly | `index.bleve/` growth (the largest thing under `/data`) or logs not actually rotating | `df -h` on the Unraid host; confirm `scripts/export-logs.sh`'s logrotate reinstall is actually running — see [docs/observability.md](observability.md) |
 
@@ -96,11 +96,11 @@ Follow these steps **on the Unraid host**, in order, assuming you have a backup 
    tar -xzf /path/to/your/data-backup-YYYYMMDD-HHMM.tar.gz -C /mnt/user/appdata/itchgrep/data
    ```
 
-4. **Fix ownership.** Both containers run as uid `65532` (a non-root user baked into the distroless base image — see [docs/dependencies.md](dependencies.md)), and a bind-mounted data path is never automatically `chown`'d by Docker:
+4. **Fix ownership.** Both containers run as uid `65532` (a non-root user baked into the distroless base image — see [ADR 0006](architecture/decisions/0006-distroless-nonroot-digest-pinned.md)), and a bind-mounted data path is never automatically `chown`'d by Docker:
    ```
    chown -R 65532:65532 /mnt/user/appdata/itchgrep/data
    ```
-   Skipping this step is not a degraded mode — both containers fail to write anything and the webserver can never even take the search index's lock file, so the whole stack fails to come up.
+   Skipping this step is not a degraded mode — neither container can write to `/data`, so the containers start and the webserver reports healthy, but the crawl refuses to run and the site stays on `503` (`/readyz` answers `503 no data`).
 
 5. **Start the stack:**
    ```
@@ -129,7 +129,7 @@ If the Unraid host itself is destroyed or unavailable, and you're rebuilding on 
    ```
    mkdir -p /mnt/user/appdata/itchgrep/{src,logs,data}
    ```
-3. Clone the repository. The Unraid host has no native `git`, so this uses the `alpine/git` Docker image the same way `scripts/update.sh` does — see [docs/infrastructure.md](infrastructure.md):
+3. Clone the repository. The Unraid host has no native `git`, so this uses the `alpine/git` Docker image the same way `scripts/update.sh` does (which pins the image in its `GIT_IMAGE` line; the short name below is for readability) — see [docs/infrastructure.md](infrastructure.md):
    ```
    docker run --rm -v /mnt/user/appdata/itchgrep/src:/git alpine/git clone https://github.com/SkilledAlpaca/itchgrep.git /git
    ```
@@ -143,8 +143,9 @@ If the Unraid host itself is destroyed or unavailable, and you're rebuilding on 
      dashboard; see "Credential loss" below for where and how.
    - `COMPOSE_PROJECT_NAME=itchgrep` — **re-obtained** as a fact, not a
      secret: the operator reports this is pinned in production, so set it
-     explicitly so container and volume names match what
-     `scripts/export-logs.sh` and this document's commands expect. See
+     explicitly so the network, the `cloudflared` container name, and any
+     named volume match what this document's commands expect (the webserver
+     and dataservice container names are pinned independently). See
      [docs/infrastructure.md](infrastructure.md).
    - `DATA_PATH` — a host path; set to `/mnt/user/appdata/itchgrep/data` to
      match `scripts/bootstrap-host.sh`'s layout.
@@ -215,7 +216,7 @@ If you've set `DATA_PATH` to a host bind-mount instead of the named volume (prod
 
 **This is normally self-correcting, with no downtime.** `cmd/dataservice/selfheal.go`'s `selfHealIndexFormat` runs once, automatically, every time the dataservice starts, before it schedules any crawl. It tries to open the published index the same way the webserver does; if that fails — a wrong-format index left over from an old bleve version, or a half-written directory from a crash mid-publish — it rebuilds a fresh index from `assets.json` in minutes, with **no recrawl of itch.io needed**. The webserver keeps serving the previous (stale but working) index the entire time this runs, and swaps to the new one automatically once it's published.
 
-Watch for this pair of log lines in `app.log` (see [docs/observability.md](observability.md)):
+Watch for this pair of log lines in `crawler.log` (see [docs/observability.md](observability.md)):
 
 ```
 Published index is unusable (<reason>); rebuilding as scorch from assets.json - this takes minutes, the webserver keeps serving the old data meanwhile
