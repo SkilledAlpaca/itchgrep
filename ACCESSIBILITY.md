@@ -55,7 +55,9 @@ Manual checks:
 - Code review of the templates, stylesheet, and script for criteria that
   scripts can't test, such as timing, shortcuts, pointer handling, and motion.
 
-The evaluation re-ran after the fixes for the findings it raised.
+The one failure it found (color alone conveying daily search levels on the
+stats page) was fixed before this statement was published, and the fix was
+verified with the same automated and manual checks on a local build.
 
 ## Known limitations
 
