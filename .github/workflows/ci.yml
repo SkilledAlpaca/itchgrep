@@ -3,6 +3,11 @@
 # test suite must pass, and govulncheck must find no reachable
 # vulnerabilities. The templ CLI version is read from go.mod so it can
 # never drift from the version the repo actually builds with.
+#
+# It also runs daily on main. New advisories land in the Go vulnerability
+# database without any change here, so the daily run surfaces them on main
+# first, instead of failing whichever unrelated pull request runs next.
+# govulncheck itself is pinned in tools/go.mod, which Dependabot updates.
 name: CI
 
 on:
@@ -12,6 +17,8 @@ on:
   # By hand from the Actions tab: workflows enabled after a push (a fork
   # starts with Actions off) have no event to run on until the next one.
   workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * *"
 
 jobs:
   test:
@@ -45,4 +52,4 @@ jobs:
         run: go test ./... -count=1
 
       - name: Vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: cd tools && go tool govulncheck -C .. ./...

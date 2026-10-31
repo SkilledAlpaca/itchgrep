@@ -70,9 +70,13 @@ Runs every `*_test.go` file's tests across every package. `-count=1` disables Go
 
 ```yaml
   - name: Vulnerability scan
-    run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+    run: cd tools && go tool govulncheck -C .. ./...
 ```
-Runs `govulncheck` — a tool that cross-references this module's dependency tree (and, more precisely, which vulnerable *functions* the code actually calls, not just which vulnerable modules are merely present) against a public database of known Go vulnerabilities. **This step is deliberately pinned to `@latest`**, not to a fixed version like the `templ` install above — the whole point is to check against today's vulnerability database, so an old, frozen version of the checker itself would defeat the purpose. The trade-off is that this step's pass/fail result can change between two runs of the exact same commit, if a new vulnerability affecting a dependency this code actually calls is published in between — that's expected, not a flake.
+Runs `govulncheck` — a tool that cross-references this module's dependency tree (and, more precisely, which vulnerable *functions* the code actually calls, not just which vulnerable modules are merely present) against a public database of known Go vulnerabilities.
+
+The checker's version is pinned in `tools/go.mod`, a separate module so its own dependencies never join the application's module graph. Pinning the checker does not freeze the database: `govulncheck` downloads the current vulnerability database on every run, whatever its own version. Dependabot (`.github/dependabot.yml`) proposes new checker versions weekly, alongside the application's own module updates.
+
+Because the database is live, this step's result can change between two runs of the exact same commit when a new vulnerability affecting a function this code calls is published — that's expected, not a flake. To surface those on `main` first rather than on whichever unrelated pull request runs next, the workflow also runs daily on a schedule (`cron: "23 6 * * *"`, 06:23 UTC). GitHub emails a failed scheduled run to the user who last changed the schedule.
 
 ## Reading results
 
