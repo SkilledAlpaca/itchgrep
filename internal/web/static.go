@@ -17,8 +17,8 @@ const (
 	// immutableCache is for fingerprinted paths: the hash is the content, so
 	// the bytes behind that URL can never change.
 	immutableCache = "public, max-age=31536000, immutable"
-	// bareCache is for the unversioned names (old HTML still cached somewhere,
-	// a hand-typed URL). Short, because those bytes change on every release.
+	// bareCache is for the unversioned names and stale hashes (old HTML still
+	// cached somewhere, a hand-typed URL). Short, because those bytes change on every release.
 	bareCache = "public, max-age=300"
 )
 
@@ -28,8 +28,11 @@ const (
 // year. That is what fixes a deploy changing HTML, CSS and JS together while a
 // CDN or browser still holds the old CSS: new HTML names new URLs, so there is
 // nothing stale to hit. The bare /static/app.css still works for HTML cached
-// from before this scheme, but is never long-cached. A hash that does not match
-// the current file is a 404, not the current bytes under an old name.
+// from before this scheme, but is never long-cached. So does a well-formed hash
+// that is no longer current: Cloudflare and browsers keep serving HTML for a few
+// minutes after a deploy, and that HTML names the previous hashes. They get the
+// current bytes on the short cache rather than a 404 and an unstyled page, and
+// never the immutable header, so the wrong hash is not pinned for a year.
 func StaticHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name, immutable, ok := static.Resolve(strings.TrimPrefix(r.URL.Path, "/static/"))

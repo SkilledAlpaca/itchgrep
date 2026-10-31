@@ -729,12 +729,15 @@ func TestStaticAssetCachingFollowsTheFingerprint(t *testing.T) {
 		assert.Equal(t, fingerprinted.Body.String(), bare.Body.String(), name)
 	}
 
-	// A stale or invented hash must never be answered with long-cached bytes.
+	// HTML cached across a deploy names the previous hashes: serve the current
+	// file, but never pin it under the wrong hash.
+	current := do(templates.Asset("app.css"))
 	stale := do("/static/app.000000000000.css")
-	assert.Equal(t, http.StatusNotFound, stale.Code)
-	assert.NotContains(t, stale.Header().Get("Cache-Control"), "immutable")
+	assert.Equal(t, http.StatusOK, stale.Code)
+	assert.Equal(t, "public, max-age=300", stale.Header().Get("Cache-Control"))
+	assert.Equal(t, current.Body.String(), stale.Body.String())
 
-	for _, path := range []string{"/static/nope.css", "/static/", "/static/static.go", "/static/VENDOR.md",
+	for _, path := range []string{"/static/nope.css", "/static/app.notahash.css", "/static/app.000000000000.png", "/static/", "/static/static.go", "/static/VENDOR.md",
 		"/static/static_test.go", "/static/app.css/", "/static/../static.go"} {
 		assert.Equal(t, http.StatusNotFound, do(path).Code, path)
 	}

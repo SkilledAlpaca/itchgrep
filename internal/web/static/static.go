@@ -85,9 +85,15 @@ func urlFor(h map[string]string, name string) string {
 
 // Resolve maps a path relative to /static/ onto an embedded file. name is the
 // real file, and immutable is true only when the path carries that file's
-// current hash. A bare name resolves with immutable false. A hash that does not
-// match, or a file that does not exist, does not resolve: serving old bytes
-// under a hash that no longer describes them is exactly the bug this prevents.
+// current hash.
+//
+// A bare name and a well-formed but stale hash (exactly hashLen lowercase hex
+// characters on a known file) both resolve with immutable false. The stale case
+// is the window after a deploy: edge-cached and back/forward-cached HTML still
+// names the previous hashes, and a 404 there would leave the page unstyled.
+// Callers must give those responses a short cache, never a long one. A hash
+// segment that is not hashLen lowercase hex characters, an unknown file, or the
+// wrong extension does not resolve.
 func Resolve(rel string) (name string, immutable, ok bool) { return resolve(hashes, rel) }
 
 func resolve(h map[string]string, rel string) (name string, immutable, ok bool) {
@@ -101,8 +107,21 @@ func resolve(h map[string]string, rel string) (name string, immutable, ok bool) 
 		return "", false, false
 	}
 	base := stem[:i] + ext
-	if want, known := h[base]; known && stem[i+1:] == want {
-		return base, true, true
+	want, known := h[base]
+	if !known || !isHash(stem[i+1:]) {
+		return "", false, false
 	}
-	return "", false, false
+	return base, stem[i+1:] == want, true
+}
+
+func isHash(s string) bool {
+	if len(s) != hashLen {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
