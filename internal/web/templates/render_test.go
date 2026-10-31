@@ -876,3 +876,12 @@ func TestFindATagHasAVisibleLabel(t *testing.T) {
 	assert.Contains(t, html, `<label class="facet-search-label" for="facet-search">Find a tag</label>`)
 	assert.Contains(t, html, `id="facet-search"`)
 }
+
+func TestAboutLinksToTheAccessibilityStatementInANewTab(t *testing.T) {
+	html := render(t, About())
+	assert.Contains(t, html, "This site conforms to WCAG 2.2 Level AA.")
+	link := anchorsWith(html, `href="https://github.com/SkilledAlpaca/itchgrep/blob/main/ACCESSIBILITY.md"`)
+	require.Len(t, link, 1)
+	assert.Contains(t, link[0], `target="_blank"`)
+	assert.Contains(t, html, `accessibility statement<span class="visually-hidden"> (opens in new tab)</span>`)
+}

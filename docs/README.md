@@ -55,6 +55,12 @@ For maintaining the running site day to day, see [../MAINTAINER.md](../MAINTAINE
 | --- | --- |
 | [../SECURITY.md](../SECURITY.md) | You're reporting a vulnerability, or want to understand the site's trust boundaries and what's done to protect visitor privacy. |
 
+## Accessibility
+
+| Page | Open this when |
+| --- | --- |
+| [../ACCESSIBILITY.md](../ACCESSIBILITY.md) | You want the site's WCAG 2.2 conformance status, how it was evaluated, its known limitations, or how to report an accessibility barrier. |
+
 ## Testing and CI
 
 | Page | Open this when |
