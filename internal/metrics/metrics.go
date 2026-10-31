@@ -27,8 +27,10 @@ import (
 	"itchgrep/pkg/models"
 )
 
-// hoursInDay is the width of the ring the histogram walks.
-const hoursInDay = 24
+// daysKept is the width of the ring the /stats activity grid walks.
+const daysKept = models.DaysKept
+
+const secondsPerDay = 24 * 60 * 60
 
 // The route patterns RecordRequest classifies by, matching chi's own
 // registration in cmd/webserver/main.go's rate-limited group exactly. Every
@@ -53,7 +55,7 @@ const (
 
 // Counters is the live, concurrently-updated state. sync/atomic for the
 // scalars, since the request path is the one genuinely concurrent place in
-// this server; one small mutex for the 24-slot ring alone, because a bucket
+// this server; one small mutex for the daily ring alone, because a bucket
 // rollover is a read-compare-write that atomics cannot express.
 type Counters struct {
 	started   time.Time // process start, for uptime
@@ -70,8 +72,8 @@ type Counters struct {
 	searches                                    atomic.Uint64
 	probes                                      atomic.Uint64 // internal only: feeds the aggregate log line, never the page
 
-	mu    sync.Mutex // guards hours only
-	hours [hoursInDay]models.HourBucket
+	mu   sync.Mutex // guards days only
+	days [daysKept]models.DayBucket
 }
 
 // Snapshot is a point-in-time, immutable read of the counters - what the
@@ -85,7 +87,7 @@ type Snapshot struct {
 	New, Feed, Tag, Saved, Other                uint64
 	Searches                                    uint64
 
-	Hours [hoursInDay]models.HourBucket
+	Days [daysKept]models.DayBucket
 }
 
 // New starts a Counters with nothing restored: counting begins now.
@@ -115,16 +117,21 @@ func Restore() *Counters {
 		Searches: t.Searches,
 	}
 
-	// Only within the last 24h: a server down for a week must not draw a
-	// week-old histogram back onto the current one.
-	cutoff := time.Now().UTC().Unix()/3600 - hoursInDay
-	for _, hb := range t.Hours {
-		if hb.EpochHour == 0 || hb.EpochHour < cutoff {
+	c.restoreDays(t.Days, time.Now())
+	return c
+}
+
+// restoreDays reloads the persisted ring, keeping only the days still inside
+// the window as of now: a server down for a quarter must not draw old days
+// back onto the current grid.
+func (c *Counters) restoreDays(days [daysKept]models.DayBucket, now time.Time) {
+	oldest := now.UTC().Unix()/secondsPerDay - daysKept + 1
+	for _, db := range days {
+		if db.EpochDay == 0 || db.EpochDay < oldest {
 			continue
 		}
-		c.hours[hb.EpochHour%hoursInDay] = hb
+		c.days[db.EpochDay%daysKept] = db
 	}
-	return c
 }
 
 // RecordRequest tallies one completed request. routePattern comes from chi's
@@ -177,7 +184,7 @@ func (c *Counters) RecordRequest(routePattern string, filtered bool, status int)
 	if filtered && status < 400 &&
 		(routePattern == routeIndex || routePattern == routeResults || routePattern == routeTag) {
 		c.searches.Add(1)
-		c.bumpHour(time.Now())
+		c.bumpDay(time.Now())
 	}
 }
 
@@ -191,17 +198,17 @@ func (c *Counters) RecordProbe() {
 	c.probes.Add(1)
 }
 
-// bumpHour records one search against the bucket for now's hour, resetting
-// that slot first if it belongs to a different hour than what is stored there
-// - the ring is 24 slots wide but time keeps moving, so slot N belongs to
-// whichever hour last wrote it.
-func (c *Counters) bumpHour(now time.Time) {
-	epochHour := now.UTC().Unix() / 3600
+// bumpDay records one search against the bucket for now's UTC day, resetting
+// that slot first if it belongs to a different day than what is stored there
+// - the ring is daysKept slots wide but time keeps moving, so slot N belongs
+// to whichever day last wrote it.
+func (c *Counters) bumpDay(now time.Time) {
+	epochDay := now.UTC().Unix() / secondsPerDay
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	b := &c.hours[epochHour%hoursInDay]
-	if b.EpochHour != epochHour {
-		*b = models.HourBucket{EpochHour: epochHour}
+	b := &c.days[epochDay%daysKept]
+	if b.EpochDay != epochDay {
+		*b = models.DayBucket{EpochDay: epochDay}
 	}
 	b.Searches++
 }
@@ -215,7 +222,7 @@ func (c *Counters) Snapshot() Snapshot {
 		return Snapshot{}
 	}
 	c.mu.Lock()
-	hours := c.hours
+	days := c.days
 	c.mu.Unlock()
 	return Snapshot{
 		Started:   c.started,
@@ -232,7 +239,7 @@ func (c *Counters) Snapshot() Snapshot {
 		Saved:     c.base.Saved + c.saved.Load(),
 		Other:     c.base.Other + c.other.Load(),
 		Searches:  c.base.Searches + c.searches.Load(),
-		Hours:     hours,
+		Days:      days,
 	}
 }
 
@@ -244,7 +251,7 @@ func (c *Counters) toTraffic() models.Traffic {
 		About: s.About, Stats: s.Stats, Static: s.Static,
 		New: s.New, Feed: s.Feed, Tag: s.Tag, Saved: s.Saved, Other: s.Other,
 		Searches: s.Searches,
-		Hours:    s.Hours,
+		Days:     s.Days,
 	}
 }
 

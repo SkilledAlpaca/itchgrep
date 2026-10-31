@@ -56,6 +56,10 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 					<td>{ HumaneCount(tr.About()) }</td>
 				</tr>
 				<tr>
+					<th scope="row">Stats page</th>
+					<td>{ HumaneCount(tr.Stats()) }</td>
+				</tr>
+				<tr>
 					<th scope="row">Static assets</th>
 					<td>{ HumaneCount(tr.Static()) }</td>
 				</tr>
@@ -81,27 +85,59 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 				</tr>
 			</tbody>
 		</table>
-		<h2>Searches, last 24 hours</h2>
-		<div class="stats-histogram">
-			for i, bar := range tr.Bars() {
-				<div class="stats-bar-col">
-					<meter
-						class="stats-bar"
-						min="0"
-						max={ tr.PeakAttr() }
-						value={ bar.CountAttr() }
-						title={ bar.Title() }
-					></meter>
-					// A label under every bar would crowd into illegibility at
-					// 24 across; every third one keeps the axis readable while
-					// still spanning the full day. app.js rewrites the label
-					// into the viewer's own zone from data-epoch - the text
-					// here is the UTC fallback for anyone without scripting.
-					if i%3 == 0 {
-						<span class="stats-bar-label" data-epoch={ bar.EpochAttr() }>{ bar.Label }</span>
+		<h2>Searches, last 90 days</h2>
+		{{ grid := tr.Grid() }}
+		<p>{ grid.Summary() }</p>
+		<p class="activity-note">Dates are UTC. Daily counts began when this view replaced the hourly chart, so earlier days read as empty.</p>
+		// A real table, so screen readers get row and column navigation, with
+		// the count for every day as hidden text: colour alone never carries
+		// the figure. The wrapper scrolls sideways at narrow widths and is
+		// focusable for exactly that reason; the cells themselves are not,
+		// since 90 tab stops would bury the rest of the page.
+		<div class="activity-scroll" role="region" aria-label="Search activity by day, scrolls sideways" tabindex="0">
+			<table class="activity-grid">
+				<caption class="visually-hidden">Searches, last 90 days (UTC)</caption>
+				<thead>
+					<tr>
+						<td></td>
+						for _, month := range grid.Months {
+							<th scope="col">{ month }</th>
+						}
+					</tr>
+				</thead>
+				<tbody>
+					for _, row := range grid.Rows {
+						<tr>
+							<th scope="row">
+								if row.ShowShort() {
+									<span aria-hidden="true">{ row.Short }</span>
+									<span class="visually-hidden">{ row.Name }</span>
+								} else {
+									<span class="visually-hidden">{ row.Name }</span>
+								}
+							</th>
+							for _, cell := range row.Cells {
+								if cell.InWindow {
+									<td class={ cell.Class() } title={ cell.Label }>
+										<span class="visually-hidden">{ cell.Label }</span>
+									</td>
+								} else {
+									<td class={ cell.Class() } aria-hidden="true"></td>
+								}
+							}
+						</tr>
 					}
-				</div>
-			}
+				</tbody>
+			</table>
+		</div>
+		<div class="activity-legend" aria-hidden="true">
+			<span>Less</span>
+			<span class="activity-cell activity-l0"></span>
+			<span class="activity-cell activity-l1"></span>
+			<span class="activity-cell activity-l2"></span>
+			<span class="activity-cell activity-l3"></span>
+			<span class="activity-cell activity-l4"></span>
+			<span>More</span>
 		</div>
 		if !history.Empty() {
 			<h2>Index history</h2>

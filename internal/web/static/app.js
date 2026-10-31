@@ -51,10 +51,6 @@ function formatLocalDateTime(when) {
 		when.getFullYear() + ', ' + pad2(when.getHours()) + ':' + pad2(when.getMinutes());
 }
 
-function formatLocalClock(when) {
-	return pad2(when.getHours()) + ':' + pad2(when.getMinutes());
-}
-
 // suffixUTC appends " UTC" to a server-rendered string unless it is there
 // already - CountingSince always carries it, but nothing stops a future
 // caller passing in text that already does.
@@ -65,7 +61,7 @@ function suffixUTC(text) {
 // The server renders exact times in UTC because it has no way of knowing
 // the reader's zone - a visitor comparing "14:30 UTC" against their own
 // clock has to do the arithmetic themselves. Where there is a browser to
-// ask, rewrite it to local time. Three different kinds of element carry a
+// ask, rewrite it to local time. Two different kinds of element carry a
 // server-rendered UTC time, and each needs a different conversion:
 //
 //   - time.js-local[datetime] is already an absolute timestamp (e.g.
@@ -78,17 +74,13 @@ function suffixUTC(text) {
 //     absolute local timestamp instead. Its title - already the UTC
 //     absolute - gains the local absolute alongside it, so hovering shows
 //     both.
-//   - [data-epoch] is the histogram's per-bar hour, carried as unix seconds
-//     rather than an ISO string because a <span> has no datetime attribute
-//     to parse one from.
 //
-// All three are guarded by a marker attribute so a second pass - after an
+// Both are guarded by a marker attribute so a second pass - after an
 // htmx swap that did not touch a given element - leaves it alone rather
 // than converting an already-local rendering as though it were still UTC.
 function localiseTimestamps(root) {
 	localiseAbsoluteTimestamps(root);
 	localiseRelativeTimestamps(root);
-	localiseEpochLabels(root);
 }
 
 function localiseAbsoluteTimestamps(root) {
@@ -112,22 +104,6 @@ function localiseRelativeTimestamps(root) {
 		var originalTitle = nodes[i].getAttribute('title') || '';
 		var local = formatLocalDateTime(when);
 		nodes[i].title = originalTitle ? local + ' (' + originalTitle + ')' : local;
-	}
-}
-
-function localiseEpochLabels(root) {
-	var nodes = root.querySelectorAll('[data-epoch]:not([data-localised])');
-	for (var i = 0; i < nodes.length; i++) {
-		var raw = nodes[i].getAttribute('data-epoch');
-		if (!raw) continue;
-		var seconds = Number(raw);
-		if (isNaN(seconds)) continue;
-		var when = new Date(seconds * 1000);
-		if (isNaN(when.getTime())) continue;
-		nodes[i].setAttribute('data-localised', '');
-		var original = nodes[i].textContent;
-		nodes[i].textContent = formatLocalClock(when);
-		nodes[i].title = suffixUTC(original);
 	}
 }
 

@@ -20,6 +20,14 @@
   --accent-dim: #2ea043;
   --accent-contrast: #08130a;
   --warn: #d29922;
+  /* Search-activity grid. Level 0 is an outline only; levels 1-4 are fills.
+   * Each reaches 3:1 against --bg (WCAG 1.4.11), and adjacent levels differ
+   * by at least 1.37:1. Measured: border 3.84, then 3.36, 5.37, 8.59, 11.79. */
+  --activity-0-border: #6b7484;
+  --activity-1: #1b7a3a;
+  --activity-2: #2ea043;
+  --activity-3: #56c96b;
+  --activity-4: #7ee787;
   --radius: 10px;
   --gap: 1.4rem;
 
@@ -41,6 +49,13 @@
     --accent-contrast: #ffffff;
     /* Darker than the dark-theme amber: #d29922 on white fails contrast. */
     --warn: #9a6700;
+    /* Inverted ramp: more searches is darker on a light page. Measured
+     * against --bg: border 3.64, then 3.09, 4.60, 6.64, 9.81. */
+    --activity-0-border: #7a8290;
+    --activity-1: #40a058;
+    --activity-2: #27813f;
+    --activity-3: #166630;
+    --activity-4: #0a4a21;
 
     color-scheme: light;
   }
@@ -871,7 +886,7 @@ a:hover {
   padding-top: 2rem;
 }
 
-/* Wider than reading prose: this page is cards, a table and a histogram,
+/* Wider than reading prose: this page is cards, a table and an activity grid,
  * not paragraphs, and the 68rem measure that keeps text comfortable left a
  * dashboard looking cramped. */
 .stats-page {
@@ -958,45 +973,157 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* Top-aligned with no fixed height, not bottom-aligned in a 9rem box: only
- * every third column carries a label, so bottom-aligning would lift the
- * labelled columns' bars by the label's height. The meters are all exactly
- * 9rem, so aligning their tops aligns their bottoms too, and the labels
- * hang below without disturbing the bars. */
-.stats-histogram {
-  display: flex;
-  align-items: flex-start;
-  gap: 3px;
-  margin-bottom: 1rem;
-}
-
-/* One column per hour, holding the bar and - on every third one - its
- * label. The width and flex sizing that used to live on .stats-bar move
- * here, so the meter can just fill its column instead of doing its own
- * layout. */
-.stats-bar-col {
-  display: flex;
-  flex: 1 1 0;
-  flex-direction: column;
-  align-items: center;
-}
-
-/* A <meter> rather than a styled div with a dynamic width: templ restricts
- * dynamic style attributes, and meter takes plain numbers with no injection
- * surface. Rotated so its native horizontal fill reads as vertical height. */
-.stats-bar {
-  width: 100%;
-  height: 9rem;
-  writing-mode: vertical-lr;
-  direction: rtl;
-  accent-color: var(--accent);
-}
-
-.stats-bar-label {
-  margin-top: 0.3rem;
-  font-size: 0.72rem;
+/* The 90-day search grid. Rows grow rather than clip if the reader's text
+ * spacing or zoom makes the day labels taller than a cell, and the wrapper
+ * scrolls sideways at narrow widths so the page itself never does. position:
+ * relative contains the visually-hidden spans inside the cells, which are
+ * absolutely positioned. */
+.activity-note {
+  margin-top: -0.6rem;
+  font-size: 1.3rem;
   color: var(--text-dim);
-  text-align: center;
+}
+
+.activity-scroll {
+  position: relative;
+  max-width: 100%;
+  margin-bottom: 0.8rem;
+  padding-bottom: 0.4rem;
+  overflow-x: auto;
+}
+
+.activity-grid,
+.activity-legend {
+  --cell: 1.2rem;
+  --cell-gap: 0.3rem;
+}
+
+.activity-grid {
+  --label-width: 3.4rem;
+  /* Fixed layout so the month labels, which are wider than a column, overflow
+   * into the empty header cells beside them instead of widening the column. */
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: var(--cell-gap);
+  width: calc(var(--label-width) + 14 * (var(--cell) + var(--cell-gap)) + var(--cell-gap));
+  /* Room for a month label under the last column to run past the table. */
+  margin-right: 2rem;
+  font-size: 1.1rem;
+  line-height: 1.2;
+  color: var(--text-dim);
+}
+
+.activity-grid thead td:first-child,
+.activity-grid tbody th {
+  width: var(--label-width);
+}
+
+.activity-grid thead th {
+  width: var(--cell);
+  padding: 0;
+  font-weight: normal;
+  text-align: left;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.activity-grid tbody th {
+  padding: 0;
+  font-weight: normal;
+  text-align: left;
+}
+
+.activity-cell {
+  display: inline-block;
+  width: var(--cell);
+  height: var(--cell);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+
+.activity-grid td.activity-cell {
+  display: table-cell;
+}
+
+.activity-out {
+  visibility: hidden;
+}
+
+.activity-l0 {
+  border-color: var(--activity-0-border);
+}
+
+.activity-l1 {
+  background: var(--activity-1);
+  border-color: var(--activity-1);
+}
+
+.activity-l2 {
+  background: var(--activity-2);
+  border-color: var(--activity-2);
+}
+
+.activity-l3 {
+  background: var(--activity-3);
+  border-color: var(--activity-3);
+}
+
+.activity-l4 {
+  background: var(--activity-4);
+  border-color: var(--activity-4);
+}
+
+.activity-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--cell-gap);
+  margin-bottom: 2rem;
+  font-size: 1.1rem;
+  color: var(--text-dim);
+}
+
+.activity-legend .activity-cell {
+  flex: none;
+}
+
+.activity-legend span:first-child {
+  margin-right: 0.3rem;
+}
+
+.activity-legend span:last-child {
+  margin-left: 0.3rem;
+}
+
+/* In forced-colors mode the browser replaces every colour with the user's
+ * palette, which would flatten the fills to one. Opt the cells out and derive
+ * the four levels from the system text colour at rising strength, with a
+ * solid border on every cell so level 0 and the shape stay visible. */
+@media (forced-colors: active) {
+  .activity-cell {
+    forced-color-adjust: none;
+    border: 1px solid CanvasText;
+  }
+
+  .activity-l0 {
+    background: Canvas;
+  }
+
+  .activity-l1 {
+    background: color-mix(in srgb, CanvasText 25%, Canvas);
+  }
+
+  .activity-l2 {
+    background: color-mix(in srgb, CanvasText 50%, Canvas);
+  }
+
+  .activity-l3 {
+    background: color-mix(in srgb, CanvasText 75%, Canvas);
+  }
+
+  .activity-l4 {
+    background: CanvasText;
+  }
 }
 
 .history-row {

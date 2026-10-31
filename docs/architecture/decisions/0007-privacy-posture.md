@@ -12,7 +12,7 @@ itchgrep is a public search engine — every request potentially carries a visit
 
 **The one place a *full-precision* IP is used at all is the in-memory rate limiter**, which needs it to key one bucket per client (`Limiter.client` → `ClientIP`, `internal/web/ratelimit.go`) — and that value is never persisted or logged; it lives only in the limiter's in-memory map and is evicted after 10 minutes of inactivity (`evictLoop`, `ratelimit.go`).
 
-**The public `/stats` page is built from aggregate counters, never from parsing logs.** `internal/metrics`'s own package doc comment (`internal/metrics/metrics.go`) states the reasoning directly: counters "cannot leak what they never store" — `models.Traffic` (`pkg/models/models.go`) holds only route-level hit counts and an hourly search-count histogram, no addresses, no user agents, no query text, by construction of the struct itself rather than by discipline at the point of rendering.
+**The public `/stats` page is built from aggregate counters, never from parsing logs.** `internal/metrics`'s own package doc comment (`internal/metrics/metrics.go`) states the reasoning directly: counters "cannot leak what they never store" — `models.Traffic` (`pkg/models/models.go`) holds only route-level hit counts and a daily search-count ring (90 days), no addresses, no user agents, no query text, by construction of the struct itself rather than by discipline at the point of rendering.
 
 ## Alternatives considered
 

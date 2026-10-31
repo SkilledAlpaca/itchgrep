@@ -8,6 +8,7 @@ import (
 	"itchgrep/pkg/models"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var now = time.Date(2026, 8, 10, 15, 0, 0, 0, time.UTC)
@@ -50,34 +51,6 @@ func TestCountingSinceDateTimeIsEmptyWhenUnknown(t *testing.T) {
 	assert.Equal(t, "", tr.CountingSinceDateTime())
 }
 
-func TestBarsCoverTheTrailing24HoursOldestFirst(t *testing.T) {
-	nowHour := now.Unix() / 3600
-	snap := metrics.Snapshot{
-		Hours: [24]models.HourBucket{
-			0: {EpochHour: nowHour, Searches: 7},        // this hour
-			1: {EpochHour: nowHour - 23, Searches: 3},   // 23 hours ago: oldest bar
-			2: {EpochHour: nowHour - 100, Searches: 99}, // outside the window: must not appear
-		},
-	}
-	tr := NewTraffic(snap, now)
-	bars := tr.Bars()
-
-	assert.Len(t, bars, 24)
-	assert.EqualValues(t, 3, bars[0].Count, "oldest bar is 23 hours ago")
-	assert.EqualValues(t, 7, bars[23].Count, "last bar is the current hour")
-
-	var total uint64
-	for _, b := range bars {
-		total += b.Count
-	}
-	assert.EqualValues(t, 10, total, "the out-of-window bucket must not be counted")
-}
-
-func TestPeakIsFlooredAtOneOnAQuietDay(t *testing.T) {
-	tr := NewTraffic(metrics.Snapshot{}, now)
-	assert.EqualValues(t, 1, tr.Peak())
-}
-
 func TestTrafficExposesEveryBreakdownBucket(t *testing.T) {
 	// One accessor per bucket metrics.Counters tracks, so stats.templ can
 	// render a row for each without reaching into the snapshot directly.
@@ -91,22 +64,150 @@ func TestTrafficExposesEveryBreakdownBucket(t *testing.T) {
 	assert.EqualValues(t, 5, tr.Other())
 }
 
-func TestEpochAttrIsTheBarsHourInUnixSeconds(t *testing.T) {
-	// The histogram label's data-epoch attribute has to be an instant app.js
-	// can hand to Date(), and Date takes milliseconds since the epoch, not
-	// hours since it - the conversion belongs here so stats.templ never
-	// multiplies by 3600 itself.
-	b := Bar{EpochHour: 472392}
-	assert.Equal(t, "1700611200", b.EpochAttr())
+// gridNow is a Saturday, so the last column is full and the first column's
+// leading cells fall outside the window.
+var gridNow = time.Date(2026, 10, 31, 15, 0, 0, 0, time.UTC)
+
+func dayOf(t time.Time) int64 { return t.UTC().Unix() / 86400 }
+
+func countInWindow(g ActivityGrid) int {
+	n := 0
+	for _, r := range g.Rows {
+		for _, c := range r.Cells {
+			if c.InWindow {
+				n++
+			}
+		}
+	}
+	return n
 }
 
-func TestPeakIsTheTallestBar(t *testing.T) {
-	nowHour := now.Unix() / 3600
-	snap := metrics.Snapshot{
-		Hours: [24]models.HourBucket{
-			0: {EpochHour: nowHour - 5, Searches: 42},
-		},
+func TestGridIs14WeeksBy7DaysSundayFirstEndingToday(t *testing.T) {
+	g := NewTraffic(metrics.Snapshot{}, gridNow).Grid() // Saturday
+
+	require.Len(t, g.Rows, 7)
+	require.Len(t, g.Rows[0].Cells, 14)
+	assert.Equal(t, "Sunday", g.Rows[0].Name)
+	assert.Equal(t, "Saturday", g.Rows[6].Name)
+	assert.True(t, g.Rows[6].Cells[13].InWindow, "today is the last cell of the last column")
+}
+
+func TestGridHoldsExactly90DaysOnEveryWeekday(t *testing.T) {
+	// Oct 25, 2026 is a Sunday; walk a full week of "today" values.
+	for d := 0; d < 7; d++ {
+		now := time.Date(2026, 10, 25+d, 12, 0, 0, 0, time.UTC)
+		g := NewTraffic(metrics.Snapshot{}, now).Grid()
+		assert.Equal(t, 90, countInWindow(g), now.Weekday().String())
+		assert.True(t, g.Rows[d].Cells[13].InWindow, "today sits in its weekday row")
 	}
-	tr := NewTraffic(snap, now)
-	assert.EqualValues(t, 42, tr.Peak())
+}
+
+func TestGridLeavesOutOfWindowSlotsEmpty(t *testing.T) {
+	// Sunday: the last column holds only today; 6 future cells are empty.
+	sun := NewTraffic(metrics.Snapshot{}, time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)).Grid()
+	for r := 1; r < 7; r++ {
+		assert.False(t, sun.Rows[r].Cells[13].InWindow, sun.Rows[r].Name+" is in the future")
+		assert.Contains(t, sun.Rows[r].Cells[13].Class(), "activity-out")
+	}
+	// Today minus 89 days is Tuesday Jul 28, so Sunday and Monday lead out.
+	assert.False(t, sun.Rows[0].Cells[0].InWindow)
+	assert.False(t, sun.Rows[1].Cells[0].InWindow)
+	assert.True(t, sun.Rows[2].Cells[0].InWindow)
+
+	// Saturday: the whole last column is in the window.
+	sat := NewTraffic(metrics.Snapshot{}, gridNow).Grid()
+	for r := 0; r < 7; r++ {
+		assert.True(t, sat.Rows[r].Cells[13].InWindow)
+	}
+}
+
+func TestActivityLevelMath(t *testing.T) {
+	assert.Equal(t, 0, activityLevel(0, 100), "zero searches is level 0")
+	assert.Equal(t, 0, activityLevel(0, 0), "an all-zero window is level 0")
+	assert.Equal(t, 1, activityLevel(1, 100), "any nonzero day is at least level 1")
+	assert.Equal(t, 1, activityLevel(25, 100))
+	assert.Equal(t, 2, activityLevel(26, 100), "ceil, not round")
+	assert.Equal(t, 2, activityLevel(50, 100))
+	assert.Equal(t, 3, activityLevel(51, 100))
+	assert.Equal(t, 3, activityLevel(75, 100))
+	assert.Equal(t, 4, activityLevel(76, 100))
+	assert.Equal(t, 4, activityLevel(100, 100), "the busiest day is level 4")
+}
+
+func TestGridPlacesCountsLevelsAndHiddenText(t *testing.T) {
+	today := dayOf(gridNow)
+	snap := metrics.Snapshot{}
+	snap.Days[0] = models.DayBucket{EpochDay: today, Searches: 1234}
+	snap.Days[1] = models.DayBucket{EpochDay: today - 1, Searches: 1}
+	snap.Days[2] = models.DayBucket{EpochDay: today - 100, Searches: 99999} // outside the window
+	g := NewTraffic(snap, gridNow).Grid()
+
+	last := g.Rows[6].Cells[13]
+	assert.Equal(t, 4, last.Level)
+	assert.Equal(t, "Oct 31, 2026: 1,234 searches", last.Label)
+
+	friday := g.Rows[5].Cells[13]
+	assert.Equal(t, 1, friday.Level)
+	assert.Equal(t, "Oct 30, 2026: 1 search", friday.Label, "singular for one")
+
+	assert.Equal(t, 0, g.Rows[4].Cells[13].Level)
+	assert.EqualValues(t, 1235, g.Total, "the out-of-window bucket must not be counted")
+	assert.EqualValues(t, 1234, g.Busiest)
+}
+
+func TestGridLabelsTheColumnHoldingEachFirstOfTheMonth(t *testing.T) {
+	g := NewTraffic(metrics.Snapshot{}, gridNow).Grid()
+
+	// Oct 25 is column 13, so Oct 1 (Thursday of the week of Sun Sep 27) is
+	// column 9, and Sep 1 (Tuesday of the week of Sun Aug 30) is column 5.
+	// Aug 1 is before the window, so the window's opening month is named on
+	// its first column instead: the window starts Mon Aug 3, in column 1
+	// (column 0 is entirely outside it on a Saturday).
+	assert.Equal(t, "", g.Months[0])
+	assert.Equal(t, "Aug", g.Months[1])
+	assert.Equal(t, "Sep", g.Months[5])
+	assert.Equal(t, "Oct", g.Months[9])
+	var labelled int
+	for _, m := range g.Months {
+		if m != "" {
+			labelled++
+		}
+	}
+	assert.Equal(t, 3, labelled)
+}
+
+func TestGridLeavesTheOpeningMonthUnlabelledWhenTheNextIsClose(t *testing.T) {
+	// Wed 2026-11-25 minus 89 days is Fri Aug 28, in column 0; Sep 1 is in
+	// column 1, so an "Aug" label would overprint "Sep".
+	g := NewTraffic(metrics.Snapshot{}, time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)).Grid()
+	assert.Equal(t, "", g.Months[0])
+	assert.Equal(t, "Sep", g.Months[1])
+}
+
+func TestGridLabelsAMonthThatStartsInTheLastColumn(t *testing.T) {
+	// Sunday Nov 1 is today, alone in the last column.
+	g := NewTraffic(metrics.Snapshot{}, time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)).Grid()
+	assert.Equal(t, "Nov", g.Months[13])
+	assert.Equal(t, "Oct", g.Months[8])
+}
+
+func TestGridSummaryCoversTheZeroAndNonzeroCases(t *testing.T) {
+	zero := NewTraffic(metrics.Snapshot{}, gridNow).Grid().Summary()
+	assert.Equal(t, "No searches recorded in the last 90 days yet.", zero)
+
+	today := dayOf(gridNow)
+	snap := metrics.Snapshot{}
+	snap.Days[0] = models.DayBucket{EpochDay: today - 3, Searches: 1000}
+	snap.Days[1] = models.DayBucket{EpochDay: today - 10, Searches: 234}
+	got := NewTraffic(snap, gridNow).Grid().Summary()
+	assert.Equal(t, "1,234 searches in the last 90 days. Busiest day: Oct 28, 2026 (1,000).", got)
+}
+
+func TestGridBusiestDayTieGoesToTheMostRecent(t *testing.T) {
+	today := dayOf(gridNow)
+	snap := metrics.Snapshot{}
+	snap.Days[0] = models.DayBucket{EpochDay: today - 20, Searches: 5}
+	snap.Days[1] = models.DayBucket{EpochDay: today - 2, Searches: 5}
+	g := NewTraffic(snap, gridNow).Grid()
+	assert.Equal(t, "Oct 29, 2026", g.BusiestDay.Format("Jan 2, 2006"))
 }

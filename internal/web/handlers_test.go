@@ -349,11 +349,11 @@ func TestStatsHandlerWorksWithNilMetrics(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Traffic")
 }
 
-// machineTimestamps matches the stats page's machine-readable times: the
-// histogram's per-hour unix seconds and the counting-since ISO instant. They
-// are digits chosen by the clock, so "429" turns up in one whenever an hour in
-// the window happens to contain it, which says nothing about status codes.
-var machineTimestamps = regexp.MustCompile(`(data-epoch|datetime)="[^"]*"`)
+// machineTimestamps matches the stats page's machine-readable time: the
+// counting-since ISO instant. It is digits chosen by the clock, so "429" turns
+// up in it whenever the date happens to contain it, which says nothing about
+// status codes.
+var machineTimestamps = regexp.MustCompile(`datetime="[^"]*"`)
 
 func TestStatsPageCarriesNoPerClientInformation(t *testing.T) {
 	// The counters never store an address, a user agent or a query string

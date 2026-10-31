@@ -31,7 +31,7 @@ Everything itchgrep persists lives under one directory (`/data` inside the conta
 | `stats.json` (crawl coverage) | **Yes** | Rewritten every crawl; describes only the current publish, carries no history of its own. |
 | `checkpoint.json` (in-progress crawl resume state) | **Transient by design** | Deleted automatically on every successful publish. A missing one just means the next crawl starts from zero instead of resuming a partial one — never worth backing up. |
 | `history.json` (per-crawl record, up to ~2 years) | **No** | Append-only; nothing else recreates lost entries. |
-| `traffic.json` (visitor traffic counters and histogram) | **No** | Accumulated since counting began; nothing else recreates lost counts. |
+| `traffic.json` (visitor traffic counters and the 90-day daily search ring) | **No** | Accumulated since counting began; nothing else recreates lost counts. |
 
 **In short: back up `assets.json`, `tags.json`, `rates.json`, `stats.json`, `history.json`, and `traffic.json`. Skip `checkpoint.json` and `index.bleve/`.**
 
