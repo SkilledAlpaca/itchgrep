@@ -37,8 +37,8 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
 ```
 
 - **Public internet to Cloudflare.** Cloudflare terminates TLS, applies a WAF
-  managed-challenge rule to any request carrying a query string (added after
-  an August 2026 incident — see
+  custom rules that block scanner probes and challenge abusive query-string
+  traffic (added after an August 2026 incident — see
   [docs/infrastructure.md](docs/infrastructure.md#waf-rules)),
   and is the only thing the public internet ever actually reaches.
 - **Cloudflare to the origin, via Tunnel.** `cloudflared` dials **outbound**

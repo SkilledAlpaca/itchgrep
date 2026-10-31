@@ -460,12 +460,11 @@ Disallow: /*?*
 verified present in the checked-out source as of this writing. Both bots
 involved in the original incident respect `robots.txt`, so this alone
 resolves compliant crawlers. For bots or scanners that don't respect
-`robots.txt`, a Cloudflare WAF rule provides a backstop — its exact
-expression, what it does, and why it's a backstop rather than the primary
-fix, is documented once, in
-[docs/infrastructure.md](infrastructure.md#waf-rules).
+`robots.txt`, Cloudflare WAF rules provide a backstop — what they match
+and why they're a backstop rather than the primary fix is documented once,
+in [docs/infrastructure.md](infrastructure.md#waf-rules).
 If you're seeing the same exhaustive-crawl pattern from a bot that ignores
-`robots.txt` and the existing WAF rule doesn't cover it, that's a new
+`robots.txt` and the existing WAF rules don't cover it, that's a new
 Cloudflare-side rule to add, not a code change here.
 
 ## Escalation summary

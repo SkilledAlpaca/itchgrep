@@ -63,10 +63,10 @@ To generate templates locally after editing a `.templ` file, install `templ` the
 
 ## Base container images
 
-Both `Dockerfile.dataservice` and `Dockerfile.webserver` use the same two base images, each **pinned by digest**, not just by tag:
+Both `Dockerfile.dataservice` and `Dockerfile.webserver` use the same two base images, each **pinned by tag plus digest** on the `FROM` lines of `Dockerfile.webserver` and `Dockerfile.dataservice` (read the current references there; this page deliberately doesn't copy them). Refreshing them is a deliberate manual step, not an automatic one — see [ADR 0006](architecture/decisions/0006-distroless-nonroot-digest-pinned.md).
 
-- **Builder stage:** `golang:1.27@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b`
-- **Runtime stage:** `gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5`
+- **Builder stage:** the `golang:1.27` image.
+- **Runtime stage:** `gcr.io/distroless/base-debian12:nonroot`.
 
 A tag like `golang:1.27` or `gcr.io/distroless/base-debian12:nonroot` is a moving target — it gets repushed on every point release and base-image rebuild, so a tag-only `FROM` is not reproducible: the exact same Dockerfile can build a materially different image tomorrow. Pinning by digest fixes the exact bytes; the tag is kept alongside the digest in the `FROM` line purely so a human reading it still sees which version it is, without resolving the hash by hand.
 
@@ -103,7 +103,7 @@ Fetched once per crawl (not on a separate schedule) and stored to `rates.json`, 
 
 ### Cloudflare
 
-Covered in full in [docs/infrastructure.md](infrastructure.md#cloudflare) — DNS, the tunnel, and the WAF rule. From a dependency-cost perspective: the operator reports this runs on Cloudflare's free tier; nothing in this repository contradicts that (no paid-tier-only feature — such as a non-Managed-Challenge WAF action, load balancing, or a custom TLS certificate upload — is referenced anywhere in the compose file or code).
+Covered in full in [docs/infrastructure.md](infrastructure.md#cloudflare) — DNS, the tunnel, and the [WAF rules](infrastructure.md#waf-rules). From a dependency-cost perspective: the operator reports this runs on Cloudflare's free tier; nothing in this repository contradicts that (no paid-tier-only feature, such as load balancing or a custom TLS certificate upload, is referenced anywhere in the compose file or code).
 
 ### GitHub
 

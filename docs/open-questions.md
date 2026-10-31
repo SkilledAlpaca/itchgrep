@@ -42,7 +42,7 @@ If you find one of these questions genuinely can't be answered (an account nobod
 
 **What's unknown, specifically** (DNS records and the domain registration itself are managed outside this project's scope and are deliberately not tracked here):
 - Every tunnel route configured (this document assumes only the one routing `itchgrep.com` at `webserver:8080` — see [docs/infrastructure.md](infrastructure.md#cloudflare) — but that's inferred from the compose file's comments, not read from the Cloudflare account itself).
-- Whether any WAF rule exists beyond the one Managed Challenge rule the operator described (`(http.request.uri.query ne "" and not cf.client.bot)`).
+- Whether any WAF rule exists beyond those documented in [docs/infrastructure.md](infrastructure.md#waf-rules), which were checked against the live zone on 2026-10-31. The application itself already caps a search at 4 required and 4 excluded tags and 302s non-canonical `/` URLs to their canonical form; `/results` is deliberately not challenged.
 - The TLS/SSL mode set for the zone (Flexible, Full, Full (strict), etc.).
 - The account's own email address and 2FA/recovery configuration.
 
