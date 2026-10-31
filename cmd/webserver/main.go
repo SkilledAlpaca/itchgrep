@@ -148,6 +148,10 @@ func newRouter(h pageHandler, m *metrics.Counters, limiter *web.Limiter) *chi.Mu
 		r.Handle("/static/*", web.StaticHandler())
 		r.Get("/robots.txt", web.HandleRobots)
 		r.Head("/robots.txt", web.HandleRobots)
+		// Challenge pages and bots that never render our layout ask for this;
+		// cached at the edge for a day so they stop reaching the 404 page.
+		r.Get("/favicon.ico", web.HandleFavicon)
+		r.Head("/favicon.ico", web.HandleFavicon)
 		r.Get("/.well-known/security.txt", web.HandleSecurityTxt)
 		r.Head("/.well-known/security.txt", web.HandleSecurityTxt)
 		r.Get("/sitemap.xml", h.HandleSitemap)
