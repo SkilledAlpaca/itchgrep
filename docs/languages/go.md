@@ -11,10 +11,10 @@ A Go **module** is one codebase with one dependency list. This whole repository 
 ```
 module itchgrep
 
-go 1.27.0
+go 1.<minor>.<patch>
 ```
 
-The `module itchgrep` line is why every import inside this repository starts with `itchgrep/`, for example `itchgrep/internal/storage`. The `go 1.27.0` line pins the minimum Go language version the code requires.
+The `module itchgrep` line is why every import inside this repository starts with `itchgrep/`, for example `itchgrep/internal/storage`. The `go` line pins the minimum Go toolchain version the code requires (read the current value in `go.mod`; CI reads it from there too).
 
 A **package** is a directory of `.go` files that share a `package <name>` declaration at the top of each file. Everything in a package can see everything else in the package without an import; a file in a different package needs an explicit import. This project's packages are laid out under three roots:
 
@@ -26,7 +26,7 @@ Every package file opens with a package-level doc comment on the `package` line 
 
 ## Imports
 
-An `import` block lists the packages a file uses, standard library first, then this module's own packages, then third-party ones — see the top of `internal/web/handlers.go`:
+An `import` block lists the packages a file uses. Most files here keep one block that `gofmt` sorts alphabetically, so standard-library and `itchgrep/...` paths interleave, as at the top of `internal/web/handlers.go`; files that import third-party modules put those in a second group (see `cmd/webserver/main.go`):
 
 ```go
 import (
@@ -54,7 +54,7 @@ An unused import is a compile error in Go — the build refuses to proceed rathe
 A plain function is declared with `func`, a name, typed parameters, and a return type:
 
 ```go
-// internal/cache/cache.go (excerpt of the pattern; see file for the
+// internal/storage/storage.go (excerpt of the pattern; see file for the
 // full body)
 func syncDir(dir string) {
 ```
@@ -108,8 +108,8 @@ Fields starting with an uppercase letter (`GameId`, `Title`, ...) are **exported
 A struct literal builds a value by naming its fields:
 
 ```go
-// cmd/dataservice/selfheal.go, inside rebuildIndexFromPublishedData's callers
-Checkpoint{
+// cmd/dataservice/main.go, inside (*crawler).checkpoint
+storage.Checkpoint{
 	Assets:      assets,
 	DoneSlices:  make([]string, 0, len(c.doneSlices)),
 	MaxRootRank: c.maxRootRank,
@@ -286,9 +286,9 @@ You run the generator with:
 templ generate
 ```
 
-The generated `*_templ.go` files are **not committed to git** — `.gitignore` excludes them by pattern (`internal/web/templates/*_templ.go`, see `.gitignore`), and they are regenerated as the first step of every build (see both Dockerfiles, and `go build`/`go test` on a fresh clone — nothing compiles until they exist). If you edit a `.templ` file and forget to re-run `templ generate`, your changes will not appear, because the compiler is still building the stale generated file.
+The generated `*_templ.go` files are **not committed to git** — `.gitignore` excludes them by pattern (`internal/web/templates/*_templ.go`, see `.gitignore`), and they are regenerated before every build that needs them (`Dockerfile.webserver` and CI both run `templ generate` before compiling; the dataservice never imports the templates package, so its Dockerfile skips it — and on a fresh clone nothing in `internal/web` compiles until they exist). If you edit a `.templ` file and forget to re-run `templ generate`, your changes will not appear, because the compiler is still building the stale generated file.
 
-A `.templ` file declares a **component** with the `templ` keyword instead of `func`, and can call another component the way a function calls another function. Here is a real one, the `IndexAge` component (`internal/web/templates/freshness.go`'s sibling `.templ` file — see also `internal/web/templates/index.templ`), which shows a value from a plain Go struct spliced into an HTML attribute and a text node:
+A `.templ` file declares a **component** with the `templ` keyword instead of `func`, and can call another component the way a function calls another function. Here is an abbreviated real one, the `IndexAge` component (`internal/web/templates/index.templ`; the full version also renders a stale-crawl warning and the coverage line), which shows a value from a plain Go struct spliced into an HTML attribute and a text node:
 
 ```templ
 templ IndexAge(f Freshness, c Coverage) {

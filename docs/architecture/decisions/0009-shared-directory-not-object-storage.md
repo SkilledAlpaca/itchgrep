@@ -1,5 +1,7 @@
 # 0009: A plain shared directory, not an object store
 
+Status: Accepted (implemented)
+
 ## Context
 
 `internal/storage` used to sit on top of Google Cloud Storage (GCS), with `fake-gcs-server` standing in for it in local development. The package's own header comment (`internal/storage/storage.go`) records exactly what that bought and what it cost: GCS's actual features — ACLs, signed URLs, lifecycle rules, listing — are things this workload never uses, because there is exactly one writer (`dataservice`) and a small, fixed set of named objects nothing ever needs to enumerate. What GCS *did* cost was a container (`fake-gcs-server`) purely to emulate it locally, a network hop on every read and write even in production, and a tar+gzip round-trip on every index publish solely to move a directory across a process boundary that, once both binaries run in the same compose stack sharing a volume, does not actually exist.

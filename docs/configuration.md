@@ -56,15 +56,15 @@ Change safety:
 
 | Setting | Location | Required | Default | Valid values | Purpose | Change safety |
 | --- | --- | --- | --- | --- | --- | --- |
-| [`CRAWL_INTERVAL`](#crawl_interval) | `docker-compose.yml` (both services), `internal/config/config.go` | No | `168h` (1 week) | Go duration string, or `0` | How stale the index may get before an automatic rebuild | Safe to change |
+| [`CRAWL_INTERVAL`](#crawl_interval) | `docker-compose.yml` (both services), `.env.example` (commented), `internal/config/config.go` | No | `168h` (1 week) | Go duration string, or `0` | How stale the index may get before an automatic rebuild | Safe to change |
 | [`SCRAPE_RPS`](#scrape_rps) | `docker-compose.yml`, `.env.example`, `internal/fetcher/fetcher.go` | No | `2` | Positive integer, ≤ `1000` | Outbound requests per second to itch.io during a crawl | Change only if you understand the consequences |
 | [`SCRAPE_MAX_PAGES`](#scrape_max_pages) | `docker-compose.yml`, `.env.example`, `cmd/dataservice/main.go` | No | Unset (unlimited) | Positive integer | Caps total pages fetched, for a fast partial "smoke" crawl | Change only if you understand the consequences |
-| [`COVERAGE_TARGET`](#coverage_target) | `docker-compose.yml`, `.env.example`, `internal/config/config.go` | No | `0.95` | Non-negative float | Stops the crawl once this fraction of the catalogue is collected | Safe to change |
-| [`COVERAGE_FLOOR`](#coverage_floor) | `docker-compose.yml`, `.env.example`, `internal/config/config.go` | No | `0.75` | Non-negative float | Refuses to publish a crawl that covers less than this fraction | Change only if you understand the consequences |
-| [`SLICE_MIN_YIELD`](#slice_min_yield) | `docker-compose.yml`, `.env.example`, `internal/config/config.go` | No | `0.05` | Non-negative float | Abandons a crawl view once it stops finding new assets | Change only if you understand the consequences |
-| [`TAG_CACHE_MAX_AGE`](#tag_cache_max_age) | `docker-compose.yml`, `.env.example`, `internal/config/config.go` | No | `168h` | Positive Go duration | How long the cached tag list is reused before rediscovery | Safe to change |
-| [`CHECKPOINT_MAX_AGE`](#checkpoint_max_age) | `docker-compose.yml`, `internal/config/config.go` | No | `24h` | Positive Go duration | How stale an in-progress crawl checkpoint may be before it's ignored | Safe to change |
-| [`MAX_TAGS`](#max_tags) | `.env.example`, `internal/config/config.go`, `internal/fetcher/tags.go` | No | `1000` | Positive integer | Upper bound on the discovered tag vocabulary | Change only if you understand the consequences |
+| [`COVERAGE_TARGET`](#coverage_target) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `0.95` | Non-negative float | Stops the crawl once this fraction of the catalogue is collected | Safe to change |
+| [`COVERAGE_FLOOR`](#coverage_floor) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `0.75` | Non-negative float | Refuses to publish a crawl that covers less than this fraction | Change only if you understand the consequences |
+| [`SLICE_MIN_YIELD`](#slice_min_yield) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `0.05` | Non-negative float | Abandons a crawl view once it stops finding new assets | Change only if you understand the consequences |
+| [`TAG_CACHE_MAX_AGE`](#tag_cache_max_age) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `168h` | Positive Go duration | How long the cached tag list is reused before rediscovery | Safe to change |
+| [`CHECKPOINT_MAX_AGE`](#checkpoint_max_age) | `docker-compose.yml`, `.env.example` (commented), `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `24h` | Positive Go duration | How stale an in-progress crawl checkpoint may be before it's ignored | Safe to change |
+| [`MAX_TAGS`](#max_tags) | `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`), `internal/fetcher/tags.go` | No | `1000` | Positive integer | Upper bound on the discovered tag vocabulary | Change only if you understand the consequences |
 | [`DATA_DIR`](#data_dir) | `docker-compose.yml`, `internal/storage/storage.go` | No | `data` (relative to the working directory) | Filesystem path | Where the crawl database (`assets.json`, `index.bleve/`, and so on) lives | Never change manually (under Compose) |
 | [`DATA_PATH`](#data_path) | `docker-compose.yml` (top level) | No | Named Docker volume `itchgrep-data` | Absolute host path, or omit | Whether the shared data directory is a host folder or a Docker-managed volume | Change only if you understand the consequences |
 | [`COMPOSE_PROJECT_NAME`](#compose_project_name) | `docker-compose.yml` (Compose built-in) | Yes in production | Basename of the checkout directory | Any short identifier, no spaces | Names the Compose project (containers, networks, volumes) | Never change manually |
@@ -75,7 +75,7 @@ Change safety:
 | [`RATE_LIMIT_BURST`](#rate_limit_burst) | `docker-compose.yml`, `internal/web/ratelimit.go` | No | `20` | Float | How many requests a client may burst above the steady rate | Safe to change |
 | [`PAGE_SIZE`](#page_size) | `docker-compose.yml`, `Dockerfile.webserver`, `cmd/webserver/main.go` | No | `36` | Positive integer | Assets shown per page of results | Safe to change |
 | [`PORT`](#port) | `docker-compose.yml`, `cmd/webserver/main.go`, `cmd/dataservice/main.go` | No | `8080` | Numeric TCP port | Which port the binary listens on inside its container | Change only if you understand the consequences |
-| [`LOG_EXPORT_DIR`](#log_export_dir) | `.env.example` (comment only), `scripts/export-logs.sh` | No | `/mnt/user/appdata/itchgrep/logs` | Absolute host path | Where the host-side log follower writes `access.jsonl`, `security.jsonl`, `app.log` | Safe to change |
+| [`LOG_EXPORT_DIR`](#log_export_dir) | `.env.example` (comment only), `scripts/export-logs.sh` | No | `/mnt/user/appdata/itchgrep/logs` | Absolute host path | Where the host-side log follower writes `access.jsonl`, `security.jsonl`, `app.log`, and `crawler.log` | Safe to change |
 | [`CONTAINER_NAME`](#container_name) | `scripts/export-logs.sh`, `scripts/update.sh` | No | `itchgrep-webserver` | Docker container name | Which container the script targets | Change only if you understand the consequences |
 | [`DATASERVICE_CONTAINER_NAME`](#dataservice_container_name) | `scripts/export-logs.sh` | No | `itchgrep-dataservice` | Docker container name | Which container the dataservice-side log follower targets | Change only if you understand the consequences |
 | [`RECONNECT_DELAY_SECONDS`](#reconnect_delay_seconds) | `scripts/export-logs.sh` | No | `5` | Positive integer (seconds) | Delay between reconnect attempts when the log follower loses the container | Safe to change |
@@ -326,15 +326,16 @@ declares a default for — Compose falls back to the basename of the directory
   the production host the checkout lives at
   `/mnt/user/appdata/itchgrep/src`, so an unset value there produces the
   project name `src`, **not** `itchgrep`.
-- **Why it must be pinned in production**: the pinned webserver
-  `container_name: itchgrep-webserver` in `docker-compose.yml` is fixed
-  regardless of project name, but the project name still governs the
-  network, the volume, and the dataservice's container name (which has no
-  pinned `container_name:`). Running `docker compose up` from `src/` without
-  `COMPOSE_PROJECT_NAME` set creates a second, independent stack — new
-  network, new default container names — that then fails to start because
-  the webserver's published host port is already bound by the first stack.
-  This happened in production; see
+- **Why it must be pinned in production**: both `container_name:` values in
+  `docker-compose.yml` (`itchgrep-webserver`, `itchgrep-dataservice`) are
+  fixed regardless of project name, but the project name still governs the
+  network, the named volume, and the `cloudflared` container's name
+  (`<project>-cloudflared-1`, the one service with no pinned name). Running
+  `docker compose up` from `src/` without `COMPOSE_PROJECT_NAME` set creates
+  a second, independent stack that fails to start — usually at network
+  creation, because the pinned `172.30.99.0/24` subnet overlaps the first
+  stack's, otherwise on the container-name conflict or the already-bound host
+  ports. This happened in production; see
   [docs/troubleshooting.md](troubleshooting.md) for the fix and
   [docs/deployment.md](deployment.md) for why the production `.env` pins it.
 
@@ -483,8 +484,9 @@ mappings for that (`127.0.0.1:62685:8080` for the dataservice,
   from `docker ps`.
 - **Under Docker Compose**: both services hardcode this to `8080` inside the
   container; changing it there also requires updating the matching `ports:`
-  and `healthcheck:` entries in `docker-compose.yml`, or the health check
-  starts probing the wrong port and the container never reports healthy.
+  mapping in `docker-compose.yml` (and, for the webserver, the tunnel's
+  `http://webserver:8080` route). The `healthcheck:` needs no change:
+  `/server -healthcheck` reads the same `PORT` through `resolvePort()`.
   When running two binaries directly on the same machine (see
   [docs/getting-started.md](getting-started.md)), they need **different**
   values — `Taskfile.dist.yml` sets `8080` for `dataservice` and `8081` for
@@ -501,7 +503,7 @@ contain.
 ### `LOG_EXPORT_DIR`
 
 Read by `scripts/export-logs.sh`. Where the follower writes `access.jsonl`,
-`security.jsonl`, and `app.log`.
+`security.jsonl`, and `app.log` (webserver) and `crawler.log` (dataservice).
 
 - **Format**: an absolute host filesystem path.
 - **Not a secret.**

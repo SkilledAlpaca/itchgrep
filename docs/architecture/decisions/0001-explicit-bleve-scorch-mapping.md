@@ -1,5 +1,7 @@
 # 0001: Explicit bleve field mapping, not dynamic defaults
 
+Status: Accepted (implemented)
+
 ## Context
 
 bleve, the full-text search library this project indexes into, will happily index a document with no mapping at all: it discovers fields dynamically and, for each one, stores three things by default — a stored copy of the raw value, a "doc values" column (needed for sorting/faceting), and a copy of the field's terms folded into a composite `_all` field that a query naming no specific field can search against.

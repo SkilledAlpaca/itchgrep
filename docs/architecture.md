@@ -65,9 +65,9 @@ Inside `webserver`, a request passes through a fixed chain of middleware (`cmd/w
 
 1. **`middleware.Recoverer`** (from the chi router library) — catches a panic anywhere below and still answers something, rather than dropping the connection.
 2. **`web.SecurityHeaders`** (`internal/web/secheaders.go`) — sets a Content-Security-Policy and a few other headers on every response.
-3. **`web.ProbeFilter`** (`internal/web/probes.go`) — recognizes the shape of a commodity vulnerability scanner (paths like `/wp-admin`, `/.env`, anything ending `.php`) and answers with a bare 404 before the request reaches routing, the access log, or the rate limiter.
+3. **`web.ProbeFilter`** (`internal/web/probes.go`) — recognizes the shape of a commodity vulnerability scanner (paths like `/wp-admin`, `/.env`, anything ending `.php`) and answers with a bare 404 before the request reaches routing or the access log. It still charges the client one token from the shared per-client rate limiter, so a scanner sweep and real requests from the same client draw on one budget.
 4. **`web.RequestLogger`** (`internal/web/logmiddleware.go`) — writes one JSON log line per request that reaches this point.
-5. For the group of routes that render results, a per-client rate limiter (`internal/web/ratelimit.go`).
+5. For every route except `/healthz` and `/readyz` — every page, `/results`, `/static/*`, `robots.txt`, `sitemap.xml`, `opensearch.xml`, `favicon.ico`, `security.txt`, and the 404 page — a per-client rate limiter (`internal/web/ratelimit.go`).
 
 From there, a handler in `internal/web/handlers.go` (or `tag.go` for `/tag/{slug}`) parses the query string into a `templates.Filters` value, calls `cache.Find` (`internal/cache/search.go`), and renders the result through `internal/web/templates`.
 

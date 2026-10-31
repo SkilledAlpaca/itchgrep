@@ -37,9 +37,9 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
 ```
 
 - **Public internet to Cloudflare.** Cloudflare terminates TLS, applies a WAF
-  managed-challenge rule to any request carrying a query string (added after
-  an August 2026 incident — see
-  [docs/infrastructure.md](docs/infrastructure.md#the-waf-managed-challenge-rule)),
+  custom rules that block scanner probes and challenge abusive query-string
+  traffic (added after an August 2026 incident — see
+  [docs/infrastructure.md](docs/infrastructure.md#waf-rules)),
   and is the only thing the public internet ever actually reaches.
 - **Cloudflare to the origin, via Tunnel.** `cloudflared` dials **outbound**
   to Cloudflare; no inbound port is opened on the host, no port is forwarded,
@@ -74,13 +74,17 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
     everybody. See
     [ADR 0002](docs/architecture/decisions/0002-trusted-proxy-cidrs-fail-closed.md).
   - **Security-event logging** — every request the scanner-probe filter
-    blocks is recorded to `security.jsonl`; see
+    blocks is recorded to `security.jsonl` while that client's rate-limit budget
+    lasts; probes past the budget still get the 404 and the aggregate count,
+    but no per-request line. See
     [docs/observability.md](docs/observability.md).
   - **A restrictive Content-Security-Policy** plus `Referrer-Policy`,
     `X-Content-Type-Options`, and `Cross-Origin-Opener-Policy`
     (`internal/web/secheaders.go`). No `X-Frame-Options` (the CSP's
     `frame-ancestors 'none'` already covers it) and no HSTS at the origin
-    (Cloudflare sets it at the edge; the same binary also answers on a
+    (HSTS belongs at the Cloudflare edge — whether it is enabled there is not
+    verifiable from this repository, see
+    [docs/open-questions.md](docs/open-questions.md#4-full-cloudflare-account-inventory); the same binary also answers on a
     plain-HTTP LAN port that must not be locked to HTTPS).
 - **The dataservice.** Listens on `8080` inside its container, published on
   **`127.0.0.1:62685`** — loopback only, never `0.0.0.0`
@@ -126,9 +130,11 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
 
 ## Dependency security
 
-- **`govulncheck`** runs on every push to `main` and every pull request (see
-  [docs/ci-cd.md](docs/ci-cd.md)) and fails the build if a dependency has a
-  known, reachable vulnerability.
+- **`govulncheck`** runs on every push to `main`, every pull request, and daily
+  at 06:23 UTC on `main` (see [docs/ci-cd.md](docs/ci-cd.md)), and fails the
+  build if a dependency has a known, reachable vulnerability. The checker is
+  pinned in `tools/go.mod`, which Dependabot updates; the vulnerability
+  database it reads is always current.
 - **Every base container image is pinned by digest**, not just by tag, in
   both Dockerfiles and in `docker-compose.yml`'s `cloudflared` image — a
   tag alone is a moving target that can silently swap in a different image

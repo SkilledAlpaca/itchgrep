@@ -1,5 +1,7 @@
 # 0008: Self-healing index rebuild at `dataservice` startup
 
+Status: Accepted (implemented)
+
 ## Context
 
 This project migrated its search index storage from bleve v1 (the "upsidedown" format, built on BoltDB) to bleve v2 ("scorch") — see [glossary: upsidedown](../../glossary.md#upsidedown) and [ADR 0001](0001-explicit-bleve-scorch-mapping.md) for why. bleve v2 registers no reader for the upsidedown format at all: a binary built against v2 cannot open a v1 index — not slowly, not with a warning, it simply fails.

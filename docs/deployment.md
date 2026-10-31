@@ -26,7 +26,7 @@ Every Git operation on the host runs through a throwaway `alpine/git`
 container instead of an installed `git` command. `-c safe.directory=/git` is
 required because Git refuses to operate on a repository it doesn't own by
 default, and the repository's on-disk owner (whatever user created it) will
-rarely match the user Git runs as inside that container.
+rarely match the user Git runs as inside that container. The commands in this document write the image as a bare `alpine/git` for readability; `scripts/update.sh` pins the image by tag and digest in its `GIT_IMAGE` line, so use that reference if you want the exact same image.
 
 ### Create the base and checkout directories by hand
 
@@ -111,7 +111,7 @@ public production deployment needs:
 | Variable | Example value | Why it's required here |
 | --- | --- | --- |
 | `COMPOSE_PROJECT_NAME` | `itchgrep` | Pins the Compose project name. Without it, running `docker compose` from a directory not literally named `itchgrep` (this checkout lives in `src/`) creates a differently named, independent stack instead of managing the existing one — see [docs/troubleshooting.md](troubleshooting.md) for exactly what that failure looks like. |
-| `DATA_PATH` | `/mnt/user/appdata/itchgrep/data` | Points the shared data volume at the host directory `bootstrap-host.sh` created, instead of an anonymous Docker-managed volume. |
+| `DATA_PATH` | `/mnt/user/appdata/itchgrep/data` | Points the shared data volume at the host directory `bootstrap-host.sh` created, instead of the named Docker volume `itchgrep-data`. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | *(secret — see [Creating the tunnel](infrastructure.md#creating-the-tunnel))* | Required only if deploying with `--profile public` (see below); without it `cloudflared` starts and immediately exits. |
 | `TRUST_PROXY_HEADERS` | `true` | Required alongside the tunnel token — tells the webserver to read the visitor's real address from Cloudflare's headers instead of treating every request as coming from the tunnel container. |
 
@@ -180,10 +180,11 @@ services). The dataservice begins a full crawl immediately, since no data
 has ever been published on this volume — expect roughly six hours before
 the site shows real results; see "Verification" below for what to check in
 the meantime.
-Common failures: `Bind for 127.0.0.1:62685 failed: port is already
-allocated` or similar — see
-[docs/troubleshooting.md](troubleshooting.md)'s port-already-in-use
-section, most often caused by a missing `COMPOSE_PROJECT_NAME`.
+Common failures: `Pool overlaps with other one on this address space`, a
+container-name conflict, or `Bind for 127.0.0.1:62685 failed: port is already
+allocated` — see
+[docs/troubleshooting.md](troubleshooting.md#compose-says-port-already-in-use-or-the-network-pool-overlaps);
+all three usually mean `COMPOSE_PROJECT_NAME` is missing.
 How to undo or recover: `docker compose --profile public down` stops
 everything without deleting data.
 
@@ -318,7 +319,8 @@ but fine on loopback" section.
 ## Rollback
 
 `scripts/update.sh` prints this guidance itself when the post-update health
-check fails, so you don't need to remember it — but the sequence is:
+check fails, so you don't need to remember it (it prints its pinned `GIT_IMAGE`
+reference where the commands below say `alpine/git`) — but the sequence is:
 
 1. Find the previous working commit:
    ```

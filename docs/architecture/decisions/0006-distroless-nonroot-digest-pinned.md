@@ -1,5 +1,7 @@
 # 0006: Distroless, nonroot, digest-pinned container images
 
+Status: Accepted (implemented)
+
 ## Context
 
 Both `Dockerfile.webserver` and `Dockerfile.dataservice` build a static Go binary (`CGO_ENABLED=0`) and copy it into a minimal runtime image. Two independent risks were worth closing off in the runtime image itself, beyond whatever the application code does: what the process can do if compromised, and whether a rebuild of "the same" Dockerfile could silently produce a different image tomorrow.

@@ -60,7 +60,7 @@ For maintaining the running site day to day, see [../MAINTAINER.md](../MAINTAINE
 | Page | Open this when |
 | --- | --- |
 | [testing.md](testing.md) | You want to know what the test suite covers, what it honestly doesn't, or how to run and add tests. |
-| [ci-cd.md](ci-cd.md) | You need to understand what GitHub Actions checks on every push and pull request, or why a CI run failed. |
+| [ci-cd.md](ci-cd.md) | You need to understand what GitHub Actions checks (see the `on:` block in `.github/workflows/ci.yml`), or why a CI run failed. |
 
 ## Reference
 

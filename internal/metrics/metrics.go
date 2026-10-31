@@ -1,7 +1,7 @@
 // Package metrics is an in-process, no-PII tally of traffic, built to answer
 // the public /stats page without ever reading a log line.
 //
-// logging.Init("", true) sends everything to stdout, so in a container there
+// logging.Init() sends everything to stdout, so in a container there
 // is no log file to read - the lines live in Docker's json-file driver,
 // reachable only via the Docker socket, which the distroless image has no
 // client for and must never be given. Parsing would also mean re-reading text

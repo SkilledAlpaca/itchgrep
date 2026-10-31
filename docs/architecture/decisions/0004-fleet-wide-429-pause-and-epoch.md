@@ -1,5 +1,7 @@
 # 0004: Fleet-wide 429 pause with an epoch guard, and a non-adaptive base rate
 
+Status: Accepted (implemented)
+
 ## Context
 
 The crawler fetches multiple pages concurrently (`maxConcurrentRequests = 8`, `cmd/dataservice/main.go`) against one shared rate limiter (`internal/fetcher/fetcher.go`). Two separate problems had to be solved:

@@ -48,7 +48,7 @@ When itch.io returns a 429 (Too Many Requests), the fetcher's rate limiter pause
 
 ### Follower (the), export-logs
 
-`scripts/export-logs.sh`, a host-side shell script (not part of either container) that tails the `webserver` container's stdout log forever, reconnecting after a restart, and splits each line by its `"kind"` field into `access.jsonl` (one line per served request), `security.jsonl` (one line per blocked scanner probe), and `app.log` (everything else). It exists because Docker's own log driver is bounded (see `docker-compose.yml`'s `x-logging` block) and is not meant as durable storage on its own. See [deployment.md](deployment.md) for how to install it.
+`scripts/export-logs.sh`, a host-side shell script (not part of either container) that follows both containers' stdout logs forever, each in its own reconnecting loop. It splits the webserver's lines by their `"kind"` field into `access.jsonl` (one line per served request), `security.jsonl` (one line per blocked scanner probe), and `app.log` (everything else), and writes every dataservice line to `crawler.log`. It exists because Docker's own log driver is bounded (see `docker-compose.yml`'s `x-logging` block) and is not meant as durable storage on its own. See [deployment.md](deployment.md) for how to install it.
 
 ### IndexedAsset
 
@@ -68,7 +68,7 @@ A flag on a crawl `Slice` (`fetcher.Slice.PageInFull`, `internal/fetcher/planner
 
 ### Probe
 
-A request shaped like a commodity vulnerability scanner's — `/wp-admin`, `/.env`, anything ending `.php`, and similar (`isProbeSuffixes`/`isProbePrefixes`, `internal/web/probes.go`). `ProbeFilter` recognizes these and answers with a bare 404 before the request reaches routing, the access log, or the rate limiter, logging it separately as a `"kind":"probe"` line instead. See [ADR 0007](architecture/decisions/0007-privacy-posture.md) for what is and isn't logged about a probe.
+A request shaped like a commodity vulnerability scanner's — `/wp-admin`, `/.env`, anything ending `.php`, and similar (`isProbeSuffixes`/`isProbePrefixes`, `internal/web/probes.go`). `ProbeFilter` recognizes these and answers with a bare 404 before the request reaches routing or the access log, after charging the client one token from the shared rate limiter, logging it separately as a `"kind":"probe"` line instead. See [ADR 0007](architecture/decisions/0007-privacy-posture.md) for what is and isn't logged about a probe.
 
 ### Publish
 
@@ -96,7 +96,7 @@ Setting the `SCRAPE_MAX_PAGES` environment variable caps the total pages a crawl
 
 ### Staging index
 
-The bleve index directory a crawl builds into while it's in progress (`storage.StagingIndexPath`, `internal/storage/storage.go`), kept in the same directory as the published index specifically so publishing can be a single atomic rename rather than a slower cross-filesystem copy. See [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md).
+The bleve index directory a crawl builds into while it's in progress (`storage.StagingIndexPath`, `internal/storage/storage.go`), kept in the same directory as the published index specifically so publishing is a few renames within one filesystem (see `PublishIndex`) rather than a slower cross-filesystem copy. See [ADR 0005](architecture/decisions/0005-index-before-assets-publish-order.md).
 
 ### Tag universe
 

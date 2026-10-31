@@ -266,9 +266,10 @@ Ignoring crawl checkpoint: <age> old, older than <CHECKPOINT_MAX_AGE>
 
 **Before assuming it's actually stuck:** `SCRAPE_RPS` (default `2`
 requests/second) deliberately paces every outbound request, so a full crawl
-genuinely takes hours, and long gaps between log lines during a big
-tag-filtered view are expected, not a hang. Check for forward progress
-rather than instant completion:
+genuinely takes hours. During the slice walk the dataservice logs a progress
+line every 5 seconds (`assets: N/M (P%), slices: a/b, pages: n, 429s: r,
+<ETA>`); check whether `pages:` keeps rising rather than waiting for
+completion:
 
 COMMAND: `docker logs itchgrep-dataservice --tail 20 --follow`
 Purpose: Watches for new log lines in real time, to distinguish "slow but
@@ -276,9 +277,10 @@ progressing" from "actually stopped."
 When to use: A crawl has been running much longer than expected with no
 recent completion or checkpoint line.
 Prerequisites: Shell access to the host.
-Expected result: New lines appearing every few minutes at most —
-checkpoint lines (`Checkpointed <N> assets, <N> slices done`), slice
-completions, or the eventual `Successfully fetched ... assets` summary.
+Expected result: A progress line every 5 seconds with a rising `pages:`
+count, plus occasional `DEBG: ... Checkpointed <N> assets, <N> slices done`
+lines and, at the end, `Successfully fetched ... assets`. Tag discovery on a
+cold start (about 17 minutes) and the index build print less often.
 Common failures: If genuinely nothing new appears for well over 30
 minutes, check for a network-level problem reaching itch.io first (the
 process could be blocked in a request that itch.io itself never answers)
@@ -438,11 +440,15 @@ filtering UI can generate — an effectively unbounded URL space, since every
 combination of tags, price filter, and sort order produces its own URL, all
 describing the same underlying catalogue.
 
-**Diagnosing whether you're seeing the same pattern:** check
-`security.jsonl` and `access.jsonl` under `LOG_EXPORT_DIR` for a sustained
-run of requests carrying query strings from the same user agent — the `jq`
-recipes for this live in [docs/observability.md](observability.md), so as
-not to duplicate them here.
+**Diagnosing whether you're seeing the same pattern:** in `access.jsonl`
+under `LOG_EXPORT_DIR`, count records with `"query": true` per user agent
+(the log records only that a query string was present, never its contents):
+
+```
+jq -s -c 'map(select(.query)) | group_by(.ua) | map({ua: .[0].ua, count: length}) | sort_by(-.count)' access.jsonl
+```
+
+A single crawler user agent dominating that list is the pattern.
 
 **The fix already in place:** `robots.txt` (`internal/web/robots.go`)
 currently disallows any URL carrying a query string:
@@ -454,12 +460,11 @@ Disallow: /*?*
 verified present in the checked-out source as of this writing. Both bots
 involved in the original incident respect `robots.txt`, so this alone
 resolves compliant crawlers. For bots or scanners that don't respect
-`robots.txt`, a Cloudflare WAF rule provides a backstop — its exact
-expression, what it does, and why it's a backstop rather than the primary
-fix, is documented once, in
-[docs/infrastructure.md](infrastructure.md#the-waf-managed-challenge-rule).
+`robots.txt`, Cloudflare WAF rules provide a backstop — what they match
+and why they're a backstop rather than the primary fix is documented once,
+in [docs/infrastructure.md](infrastructure.md#waf-rules).
 If you're seeing the same exhaustive-crawl pattern from a bot that ignores
-`robots.txt` and the existing WAF rule doesn't cover it, that's a new
+`robots.txt` and the existing WAF rules don't cover it, that's a new
 Cloudflare-side rule to add, not a code change here.
 
 ## Escalation summary

@@ -1,23 +1,33 @@
 # Testing
 
-As of this branch, the suite is **443 tests across 10 packages** (of the 12
-packages in this module, `internal/logging` and `pkg/models` have no test
-files — see "What is not tested, and why" below), all passing (`go test
-./... -count=1`). This page explains what that suite actually covers, what
-it honestly does not, how to run it, how to add to it, and how to read a
+The suite is expected to pass in full on every commit (`go test ./...
+-count=1`). Some packages have no test files at all — see "What is not
+tested, and why" below. This page explains what that suite actually covers,
+what it honestly does not, how to run it, how to add to it, and how to read a
 failure.
+
+This page deliberately quotes no test counts, because they change with almost
+every pull request. To count them yourself, list the top-level test functions
+and the packages that have none:
+
+```
+go test ./... -list . | grep -c '^Test'
+go test ./... -list . | grep '^?'
+```
+
+The second command prints one line per package with `[no test files]`.
 
 ## What is tested
 
 Nearly everything that does not require a live network connection to itch.io is covered, and covered thoroughly — this codebase favors many small, narrowly-named tests over few broad ones. Some examples of what's exercised:
 
-- **Pure logic with no I/O at all** — the crawl planner (`internal/fetcher/planner_test.go`, 25 tests: slice validity, URL grammar, page-count arithmetic), the rate limiter's pause/epoch bookkeeping (`internal/fetcher/fetcher_test.go`), price parsing (`pkg/money/money_test.go`), the coverage-floor and backoff decisions (`cmd/dataservice/main_test.go`).
+- **Pure logic with no I/O at all** — the crawl planner (`internal/fetcher/planner_test.go`: slice validity, URL grammar, page-count arithmetic), the rate limiter's pause/epoch bookkeeping (`internal/fetcher/fetcher_test.go`), price parsing (`pkg/money/money_test.go`), the coverage-floor and backoff decisions (`cmd/dataservice/main_test.go`).
 - **HTML/XML parsing against fixed input** — `ParseAssetPage` against real captured HTML fragments (`internal/fetcher/parse_test.go`), the Atom feed and sitemap XML (`internal/web/templates/render_test.go`, `internal/web/sitemap_test.go`).
 - **HTTP behavior against a fake server** — `internal/fetcher/tags_test.go` points `baseURL`/the tag-directory URL at an `httptest.Server` to test `DiscoverTags`, `FetchAssetPage`'s 404-as-exhausted handling, and retry/429 behavior, without ever reaching the real itch.io.
 - **Storage round-trips against a real temporary filesystem** — `internal/storage/storage_test.go` writes and reads back every artifact listed in [Data lifecycle](architecture.md#data-lifecycle) using `t.TempDir()`, including the atomic-rename publish sequence.
 - **The index-self-heal decision and rebuild** — `cmd/dataservice/selfheal_test.go` builds real fixture indexes (a valid scorch one, a mangled `index_meta.json`, a missing directory) and asserts `indexNeedsRebuild` and the rebuild path both behave correctly against each.
-- **HTTP handlers end to end, in-process** — `internal/web/handlers_test.go` (34 tests) builds a real `cache.Cache` loaded from fixture data and drives handlers through `httptest.NewRecorder()`, asserting on status codes, headers, and rendered content.
-- **Rendered templates** — `internal/web/templates/render_test.go` (39 tests) renders real `templ` components to a string and asserts on the resulting HTML, including cross-cutting properties like "every page credits the original author" (`TestAttributionSurvivesOnEveryPage`).
+- **HTTP handlers end to end, in-process** — `internal/web/handlers_test.go` builds a real `cache.Cache` loaded from fixture data and drives handlers through `httptest.NewRecorder()`, asserting on status codes, headers, and rendered content.
+- **Rendered templates** — `internal/web/templates/render_test.go` renders real `templ` components to a string and asserts on the resulting HTML, including cross-cutting properties like "every page credits the original author" (`TestAttributionSurvivesOnEveryPage`).
 - **Concurrency-sensitive code** — `internal/cache`'s single-flight refresh, the crawler's mutex-guarded `record`/`checkpoint` methods, and the rate limiter's fleet-wide pause all have tests that exercise them from multiple goroutines.
 
 ## What is not tested, and why
