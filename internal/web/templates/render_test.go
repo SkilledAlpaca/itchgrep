@@ -642,3 +642,15 @@ func TestChangingCurrencyKeepsEveryOtherFilter(t *testing.T) {
 	assert.Contains(t, html, `name="author" value="ana"`)
 	assert.Contains(t, html, `name="price" value="free"`)
 }
+
+func TestArrivalsCardsAreNotLiveHtmxLinks(t *testing.T) {
+	// /new has no #results-region, so a card link left under htmx dies with
+	// htmx:targetError and navigates nowhere. The wrapper must disable htmx for
+	// every card, and the links must still carry a real href to fall back on.
+	html := render(t, ArrivalsPage(sampleResults().Assets, money.Fallback(), Freshness{}, Coverage{}))
+
+	assert.Contains(t, html, `<div id="asset-list" hx-disable>`)
+	assert.Contains(t, html, `href="/?tags=2d"`)
+	assert.NotContains(t, html[:strings.Index(html, `id="asset-list"`)], "hx-get",
+		"nothing before the wrapper may be an htmx link")
+}

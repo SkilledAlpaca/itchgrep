@@ -30,7 +30,12 @@ templ ArrivalsPage(assets []models.Asset, rates money.Rates, age Freshness, cove
 			}
 		</div>
 		if len(assets) > 0 {
-			<div id="asset-list">
+			// hx-disable because AssetCard's filter links carry hx-target
+			// "#results-region", which only the search page has. Left live,
+			// htmx cancels the navigation and then fails to find the target
+			// (htmx:targetError), so every tag and author link here did
+			// nothing. Disabled, they are the plain links they already are.
+			<div id="asset-list" hx-disable>
 				for _, asset := range assets {
 					@AssetCard(Filters{}, asset, rates)
 				}
