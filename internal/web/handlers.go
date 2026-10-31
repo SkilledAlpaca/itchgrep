@@ -185,6 +185,20 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One address per result set. Dropped values, an unsorted or duplicated tag
+	// list, parameters at their default and unknown parameters are all different
+	// URLs for the same page, which a shared cache stores separately and a
+	// crawler counts separately. Only here and not on /results: that endpoint is
+	// a fragment fetched by htmx, which cannot follow a redirect to a full page.
+	//
+	// No loop is possible because the target is the output of PageURL, which
+	// parses back to the same filters (TestCanonicalURLIsAFixedPoint), and the
+	// comparison is against that exact string.
+	if canonical := filters.PageURL(page); canonical != requestedForm(r) {
+		http.Redirect(w, r, canonical, http.StatusMovedPermanently)
+		return
+	}
+
 	results, err := h.find(filters, page)
 	if err != nil {
 		// The page itself still renders - masthead, search box, filters - with
@@ -205,6 +219,15 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	// filters makes sense on, so it carries the auto-discovery link every
 	// other page has no reason to.
 	templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters, results.LikeTitle), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
+}
+
+// requestedForm is the request's own address in the shape Filters.PageURL
+// writes, so the two compare directly.
+func requestedForm(r *http.Request) string {
+	if r.URL.RawQuery == "" {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + r.URL.RawQuery
 }
 
 // HandleResults serves one page of results as a fragment.
@@ -381,8 +404,16 @@ func parseFilters(r *http.Request, rates money.Rates) templates.Filters {
 	// Both encodings are accepted: ?tags=a,b is what the links generate, while
 	// ?tags=a&tags=b is what a plain HTML form submission produces from the
 	// hidden fields that carry the filters through a search.
+	//
+	// Parsing stops at the cap rather than looping over every value and letting
+	// WithTag refuse each one: an over-long URL has nothing past the cap worth
+	// reading, and the caller redirects it to the canonical form anyway.
+tags:
 	for _, raw := range q["tags"] {
 		for _, tag := range strings.Split(raw, ",") {
+			if f.AtTagLimit() {
+				break tags
+			}
 			if tag = normaliseTag(tag); tag != "" {
 				f = f.WithTag(tag)
 			}
@@ -391,8 +422,12 @@ func parseFilters(r *http.Request, rates money.Rates) templates.Filters {
 	// Applied after the inclusions, so that a URL asserting both ends up
 	// excluding: WithNotTag drops the tag from the required list, and the last
 	// instruction in the URL is the one that stands.
+not:
 	for _, raw := range q["not"] {
 		for _, tag := range strings.Split(raw, ",") {
+			if f.AtNotTagLimit() {
+				break not
+			}
 			if tag = normaliseTag(tag); tag != "" {
 				f = f.WithNotTag(tag)
 			}

@@ -186,7 +186,11 @@ func TestActivityGridRendersAsAnAccessibleTable(t *testing.T) {
 
 	// 90 in-window cells each carry hidden text plus a matching title; the
 	// other 8 slots (gridNow is a Saturday) are hidden from assistive technology.
-	assert.Equal(t, 7+90, strings.Count(html, `<span class="visually-hidden">`), "seven day names plus one hidden label per in-window cell")
+	//
+	// Counted from the grid's own caption on: the masthead above it carries
+	// hidden text of its own (the new-tab hints), which is not the grid's.
+	grid := html[strings.Index(html, `<caption class="visually-hidden">`):]
+	assert.Equal(t, 7+90, strings.Count(grid, `<span class="visually-hidden">`), "seven day names plus one hidden label per in-window cell")
 	assert.Contains(t, html, `title="Oct 31, 2026: 1,234 searches"><span class="visually-hidden">Oct 31, 2026: 1,234 searches</span>`)
 	assert.Equal(t, 8, strings.Count(html, `class="activity-cell activity-out" aria-hidden="true"`))
 	assert.NotContains(t, html, "<td class=\"activity-cell activity-l4\" tabindex", "cells are not focusable")
@@ -262,7 +266,8 @@ func TestSidebarRendersTagsWithCounts(t *testing.T) {
 	assert.Contains(t, html, `data-facet="pixel-art"`)
 	assert.Contains(t, html, "1,740", "counts are what make the sidebar a map rather than a list")
 	// The link must be navigable without scripting, and must also drive htmx.
-	assert.Contains(t, html, `href="/?tags=2d"`)
+	// Bare front page: the sidebar points at the tag's own page.
+	assert.Contains(t, html, `href="/tag/2d"`)
 	assert.Contains(t, html, `hx-get="/results?page=1&amp;tags=2d"`)
 }
 
@@ -653,4 +658,176 @@ func TestArrivalsCardsAreNotLiveHtmxLinks(t *testing.T) {
 	assert.Contains(t, html, `href="/?tags=2d"`)
 	assert.NotContains(t, html[:strings.Index(html, `id="asset-list"`)], "hx-get",
 		"nothing before the wrapper may be an htmx link")
+}
+
+// anchorsWith returns every opening <a ...> tag in html that contains marker.
+func anchorsWith(html, marker string) []string {
+	var out []string
+	for _, a := range regexp.MustCompile(`<a [^>]*>`).FindAllString(html, -1) {
+		if strings.Contains(a, marker) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func TestEveryFilterLinkIsNofollow(t *testing.T) {
+	// The destinations differ only by query string; a crawler that follows them
+	// walks every combination of tag and exclusion. hx-get marks a filter link
+	// (load more is checked separately).
+	r := sampleResults()
+	r.HasMore = true
+	f := Filters{Query: "x", Price: models.PricingFree}.WithTag("2d").WithNotTag("3d")
+	html := render(t, ResultsRegion(f, r))
+
+	links := anchorsWith(html, "hx-get=")
+	require.NotEmpty(t, links)
+	for _, a := range links {
+		assert.Contains(t, a, `rel="nofollow"`, a)
+	}
+	assert.Contains(t, anchorsWith(html, "asset-load-trigger")[0], `rel="nofollow"`)
+}
+
+func TestBareFrontPageSidebarLinksToTagPages(t *testing.T) {
+	// One clean followable path per tag; the exclude control and every card link
+	// stay nofollow query strings. htmx still drives the click.
+	html := render(t, ResultsRegion(Filters{}, sampleResults()))
+
+	facets := anchorsWith(html, `class="facet"`)
+	require.Len(t, facets, 2)
+	assert.Contains(t, facets[0], `href="/tag/2d"`)
+	assert.NotContains(t, facets[0], "nofollow")
+	assert.Contains(t, facets[0], `hx-get="/results?page=1&amp;tags=2d"`)
+	assert.Contains(t, facets[0], `hx-target="#results-region"`)
+
+	for _, a := range anchorsWith(html, `class="facet-exclude"`) {
+		assert.Contains(t, a, `href="/?not=`)
+		assert.Contains(t, a, "nofollow")
+	}
+	assert.Contains(t, anchorsWith(html, `class="tag"`)[0], `href="/?tags=2d"`)
+}
+
+func TestSidebarKeepsQueryLinksOnceAnythingIsApplied(t *testing.T) {
+	// /tag/{slug} would silently drop the price filter, so it is only for the
+	// page that has nothing to lose.
+	html := render(t, ResultsRegion(Filters{Price: models.PricingFree}, sampleResults()))
+
+	assert.NotContains(t, html, `href="/tag/`)
+	assert.Contains(t, html, `href="/?price=free&amp;tags=2d"`)
+}
+
+func TestTagsRenderAsPlainTextAtTheLimit(t *testing.T) {
+	// WithTag refuses at the cap, so a link would point at the page it is on.
+	f := Filters{}.WithTag("a").WithTag("b").WithTag("c").WithTag("d")
+	require.True(t, f.AtTagLimit())
+	r := sampleResults()
+	r.Assets[0].Tags = []string{"a", "2d"}
+	html := render(t, ResultsRegion(f, r))
+
+	assert.Empty(t, anchorsWith(html, `class="facet"`))
+	assert.Contains(t, html, `class="facet is-capped"`)
+	assert.Contains(t, html, "Tag limit reached.")
+	assert.Contains(t, html, `<span class="tag is-capped">2d</span>`, "card chips stop being links too")
+	assert.NotContains(t, html, "Exclusion limit reached.")
+	assert.NotEmpty(t, anchorsWith(html, `class="facet-exclude"`), "exclusion is a separate budget")
+}
+
+func TestExclusionsAreOmittedAtTheLimit(t *testing.T) {
+	f := Filters{}.WithNotTag("a").WithNotTag("b").WithNotTag("c").WithNotTag("d")
+	require.True(t, f.AtNotTagLimit())
+	html := render(t, ResultsRegion(f, sampleResults()))
+
+	assert.Empty(t, anchorsWith(html, `class="facet-exclude"`))
+	assert.Contains(t, html, "Exclusion limit reached.")
+	assert.NotEmpty(t, anchorsWith(html, `class="facet"`), "tags can still be required")
+}
+
+func TestSimilarLinksNameTheirAsset(t *testing.T) {
+	// 36 links all called "Similar" are indistinguishable out of context.
+	html := render(t, AssetPage(Filters{}, sampleResults()))
+
+	assert.Contains(t, html, `Similar<span class="visually-hidden"> to Pixel Tileset</span>`)
+	assert.Contains(t, html, `Similar<span class="visually-hidden"> to Sprite Pack</span>`)
+}
+
+func TestActiveFilterStateIsExposedSemantically(t *testing.T) {
+	f := Filters{Price: models.PricingFree, Author: "ana"}.WithTag("2d")
+	html := render(t, ResultsRegion(f, sampleResults()))
+
+	for _, class := range []string{`class="segment is-active"`, `class="tag is-active"`, `class="asset-author is-active"`} {
+		got := anchorsWith(html, class)
+		require.NotEmpty(t, got, class)
+		assert.Contains(t, got[0], `aria-current="true"`, class)
+	}
+	// Inactive counterparts must not claim it.
+	for _, a := range anchorsWith(html, `class="segment"`) {
+		assert.NotContains(t, a, "aria-current")
+	}
+	assert.Contains(t, html, `<span class="visually-hidden">Remove filter: </span>2d`)
+	assert.Contains(t, html, `<span aria-hidden="true"> ✕</span>`, "the glyph is decoration")
+	assert.Contains(t, html, "(remove filter)", "the action is spoken instead")
+}
+
+func TestCardThumbnailsAreDecorative(t *testing.T) {
+	r := sampleResults()
+	r.Assets[0].ThumbUrl = "https://img.itch.zone/a.png"
+	html := render(t, AssetPage(Filters{}, r))
+
+	assert.Contains(t, html, `alt=""`)
+	assert.NotContains(t, html, "Thumbnail for")
+}
+
+func TestNewTabLinksSayTheyOpenANewTab(t *testing.T) {
+	assert.Contains(t, render(t, AssetPage(Filters{}, sampleResults())), "(opens in new tab)")
+	assert.Contains(t, render(t, Masthead(Freshness{}, Coverage{})), "(opens in new tab)")
+	assert.Contains(t, render(t, About()), "(opens in new tab)")
+}
+
+func TestCardsListAppliedTagsFirstAndCountTheRest(t *testing.T) {
+	r := sampleResults()
+	r.Assets = r.Assets[:1]
+	r.Assets[0].Tags = []string{"a", "b", "c", "d", "e", "f", "g"}
+	html := render(t, AssetPage(Filters{}.WithTag("g"), r))
+
+	assert.Contains(t, html, `class="tag is-active"`, "the applied tag survives the five-chip cap")
+	assert.Contains(t, html, `+2<span class="visually-hidden"> more tags</span>`)
+	assert.NotContains(t, html, `>f</a>`, "f is one of the two left off")
+
+	r.Assets[0].Tags = []string{"a", "b"}
+	assert.NotContains(t, render(t, AssetPage(Filters{}, r)), "tag-more")
+}
+
+func TestSearchBoxAndCurrencyFormCarryDifferentFields(t *testing.T) {
+	f := Filters{Query: "q", Like: "7", Sort: models.SortTitle, Currency: "EUR", Author: "ana"}.WithTag("2d")
+
+	bar := render(t, SearchBar(f))
+	assert.Contains(t, bar, `name="tags" value="2d"`)
+	assert.Contains(t, bar, `name="author" value="ana"`)
+	assert.Contains(t, bar, `name="cur" value="EUR"`)
+	assert.NotContains(t, bar, `name="like"`, "a typed search is a new intent, not a refinement of similar-to")
+	assert.NotContains(t, bar, `name="sort"`)
+	assert.Equal(t, 1, strings.Count(bar, `name="q"`), "the box owns q")
+
+	cur := render(t, CurrencyControl(f, money.Fallback()))
+	assert.Contains(t, cur, `name="q" value="q"`)
+	assert.Contains(t, cur, `name="like" value="7"`)
+	assert.Contains(t, cur, `name="sort" value="title"`)
+	assert.NotContains(t, cur, `<input type="hidden" name="cur"`, "the select owns cur")
+}
+
+func TestEmptySearchSuggestsABroaderTermNotTheSidebar(t *testing.T) {
+	html := render(t, AssetPage(Filters{Query: "zzqq"}, Results{Page: 1}))
+
+	assert.Contains(t, html, "Check the spelling or try a broader term.")
+	assert.Contains(t, html, `<a href="/">Browse all assets</a>`)
+	assert.NotContains(t, html, "sidebar")
+	assert.NotContains(t, html, "Clear filters", "it would keep the query that matched nothing")
+}
+
+func TestAboutStatesTheLimitsWithoutAStaleCount(t *testing.T) {
+	html := render(t, About())
+
+	assert.NotContains(t, html, "97,000")
+	assert.NotContains(t, html, "without limit")
+	assert.Contains(t, html, "up to "+strconv.Itoa(MaxTags)+" tags can be required")
 }

@@ -15,9 +15,10 @@ import (
 // a tag page is that filter, just reached by a path a crawler is allowed to
 // follow instead of a query string one is not.
 //
-// In-page filter links (the sidebar, the removable chips) keep their normal
-// /?tags=... form; this route exists for the inbound link, not the outbound
-// ones.
+// In-page filter links (the removable chips, the card tags) keep their normal
+// /?tags=... form and are rel="nofollow". The one exception is the sidebar on
+// an unfiltered page, whose tag links point here so a crawler has a clean path
+// to follow instead of the query-string space.
 func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 	raw := chi.URLParam(r, "slug")
 	// normaliseTag both validates (charset, length) and lowercases in one

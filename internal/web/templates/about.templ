@@ -1,5 +1,7 @@
 package templates
 
+import "strconv"
+
 // About is written in the third person on purpose.
 //
 // It used to be the original author's personal page: "I built itchgrep.com",
@@ -20,15 +22,17 @@ templ About() {
 	<div id="page-content" class="prose">
 		<h2>About</h2>
 		<p>
-			itchgrep searches <a href="https://itch.io/game-assets" target="_blank" rel="noopener">itch.io/game-assets</a>
+			itchgrep searches <a href="https://itch.io/game-assets" target="_blank" rel="noopener">itch.io/game-assets
+				@NewTabHint()
+			</a>
 			by text rather than by tag alone. itch.io itself only lets you browse
 			the asset catalogue by picking tags, which works badly when you know
 			what you want but not what somebody chose to label it.
 		</p>
 		<p>
 			A crawler walks the public browse pages a couple of requests per
-			second, builds a full-text index over roughly 97,000 assets, and
-			this site queries it. Nothing is mirrored: every result links
+			second, builds a full-text index of every asset it can reach, and
+			this site queries it. The masthead says how many that is. Nothing is mirrored: every result links
 			straight back to the asset's own itch.io page, and every purchase,
 			download and page view still happens there.
 		</p>
@@ -56,8 +60,8 @@ templ About() {
 			is not a question it can answer.
 		</p>
 		<p>
-			Here, tags combine without limit, any tag can be excluded, every
-			filter stacks with every other, the sidebar counts tags within your
+			Here, up to { strconv.Itoa(MaxTags) } tags can be required and up to { strconv.Itoa(MaxNotTags) } excluded
+			at once, every filter stacks with every other, the sidebar counts tags within your
 			current results, and prices are normalised to one currency so they
 			can be compared and bounded. What itch.io has that this does not is
 			authority: it is current to the second, and it knows about
@@ -66,20 +70,28 @@ templ About() {
 		<h2>Credit</h2>
 		<p>
 			itchgrep was created by
-			<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }</a>,
+			<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }
+				@NewTabHint()
+			</a>,
 			whose original version is at
-			<a href={ templ.SafeURL(UpstreamURL) } target="_blank" rel="noopener">{ UpstreamURL }</a>.
+			<a href={ templ.SafeURL(UpstreamURL) } target="_blank" rel="noopener">{ UpstreamURL }
+				@NewTabHint()
+			</a>.
 			This site runs a fork of that work and is not operated by the
 			original author, so nothing here should be taken as their doing.
 		</p>
 		<p>
 			Their own games and assets are at
-			<a href="https://winterveil.itch.io/" target="_blank" rel="noopener">winterveil.itch.io</a>.
+			<a href="https://winterveil.itch.io/" target="_blank" rel="noopener">winterveil.itch.io
+				@NewTabHint()
+			</a>.
 		</p>
 		<h2>Disclaimer</h2>
 		<p>
 			This fork was created, updated and "enhanced" with
-			<a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a>,
+			<a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code
+				@NewTabHint()
+			</a>,
 			Anthropic's coding agent. Almost everything added on top of
 			winterveil's original — the crawler that reaches the whole
 			catalogue, the search and filtering, this page — was written by it
@@ -93,9 +105,13 @@ templ About() {
 		<h2>Source</h2>
 		<p>
 			itchgrep is free software under the
-			<a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GNU GPL v3</a>.
+			<a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GNU GPL v3
+				@NewTabHint()
+			</a>.
 			The code this site runs is at
-			<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">{ SourceURL }</a>.
+			<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">{ SourceURL }
+				@NewTabHint()
+			</a>.
 		</p>
 		<hr/>
 		<p><a href="/">← Back to search</a></p>
