@@ -208,8 +208,11 @@ function markSaveButton(btn, saved) {
 	btn.classList.toggle('is-saved', saved);
 	btn.setAttribute('aria-pressed', saved ? 'true' : 'false');
 	btn.textContent = saved ? '★' : '☆';
+	// The label stays "Save ..." in both states; aria-pressed carries the
+	// state. Flipping the label as well announced "Unsave X, pressed", a
+	// double negative.
 	var title = btn.getAttribute('data-title');
-	if (title) btn.setAttribute('aria-label', (saved ? 'Unsave ' : 'Save ') + title);
+	if (title) btn.setAttribute('aria-label', 'Save ' + title);
 }
 
 // applySavedState reflects localStorage onto every save button under root.
@@ -303,7 +306,8 @@ function fillSavedCard(card, entry) {
 		var safeThumb = safeHTTPURL(entry.thumb || '');
 		if (safeThumb) {
 			thumb.setAttribute('src', safeThumb);
-			thumb.setAttribute('alt', 'Thumbnail for ' + (entry.title || ''));
+			// Empty alt: the title in the same link already names the asset.
+			thumb.setAttribute('alt', '');
 		} else {
 			thumb.remove();
 		}
