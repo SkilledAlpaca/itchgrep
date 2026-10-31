@@ -63,7 +63,7 @@ This is the one recipe with a real consequence you have to think through, becaus
 ## Add or upgrade a dependency
 
 1. `go get <module>@<version>` (or `go get -u <module>` for the latest version), then `go mod tidy` to clean up `go.mod`/`go.sum`.
-2. Run `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` — CI runs this on every push and pull request (`.github/workflows/ci.yml`), so a new dependency with a reachable known vulnerability will fail CI; catching it locally first is faster.
+2. Run `(cd tools && go tool govulncheck -C .. ./...)` — CI runs this on every push, every pull request, and daily (`.github/workflows/ci.yml`), so a new dependency with a reachable known vulnerability will fail CI; catching it locally first is faster.
 3. If the dependency is `github.com/a-h/templ`, nothing else needs bumping by hand: both CI (`ci.yml`) and `Dockerfile.webserver` install the `templ` CLI by deriving the version straight from `go.mod` (`templ_version="$(go list -m -f '{{.Version}}' github.com/a-h/templ)"`), so bumping `go.mod` alone is enough for both to pick up the new version automatically. This used to be a separate, manually pinned literal in the Dockerfile that could (and did) drift out of sync — see [docs/dependencies.md](dependencies.md#the-templ-cli).
 4. Both Dockerfiles also pin their base images (`golang:1.27` and `gcr.io/distroless/base-debian12:nonroot`) by exact digest rather than by tag alone, for reproducibility — see [ADR 0006](architecture/decisions/0006-distroless-nonroot-digest-pinned.md). These are a separate kind of "dependency" from a Go module and are refreshed deliberately, not as a drive-by part of an unrelated change:
    ```sh

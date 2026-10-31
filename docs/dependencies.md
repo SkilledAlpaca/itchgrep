@@ -24,6 +24,14 @@ go test ./...
 
 Then run `go vet ./...` and, if `templ` version changed, re-read "The templ CLI" below — its pinned version is read *from* `go.mod`, so bumping `github.com/a-h/templ` also changes what CI installs and what a fresh `git clone` needs installed locally.
 
+Dependabot (`.github/dependabot.yml`) opens one grouped pull request a week for the application module, one for `tools/go.mod`, and one for the GitHub Actions versions. Review and merge them like any other change; CI runs on each. Docker base images are deliberately not covered (see [ADR 0006](architecture/decisions/0006-distroless-nonroot-digest-pinned.md)).
+
+`tools/go.mod` is a separate module that pins developer tools, currently `govulncheck`. Upgrade a tool there, not in the root `go.mod`:
+
+```
+cd tools && go get -tool golang.org/x/vuln/cmd/govulncheck@latest && go mod tidy
+```
+
 ### bleve's index format tie
 
 The published search index (`index.bleve/` inside the shared `/data` directory) is written in bleve's own on-disk format for whichever bleve version built it. `internal/storage/index.go`'s `IndexMapping()` documents this as a *contract* between the dataservice (which writes it) and the webserver (which reads it) — both binaries must agree on the mapping, and a wrong-format or unopenable index (for example, one built by an older bleve major version) is exactly the condition `cmd/dataservice/selfheal.go`'s self-heal path exists to detect and fix automatically at startup, by rebuilding the index from `assets.json` rather than requiring a fresh six-hour crawl. See [docs/disaster-recovery.md](disaster-recovery.md#index-corruption).

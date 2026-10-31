@@ -1,0 +1,19 @@
+# Weekly dependency updates, grouped so each ecosystem opens at most one
+# pull request a week. The daily CI run catches new advisories; these
+# updates keep the fix a merge away rather than a manual bump.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories: ["/", "/tools"]
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
