@@ -287,12 +287,16 @@ func (a IndexedAsset) String() string {
 	return fmt.Sprintf("GameId: %s, Title: %s, Author: %s, Description: %s, Tags: %v, Pricing: %s, InvPopularity: %d", a.GameId, a.Title, a.Author, a.Description, a.Tags, a.Pricing, a.InvPopularity)
 }
 
-// HourBucket is one slot of a 24-hour ring: how many searches landed in a
-// given wall-clock hour. EpochHour, not a time.Time, so a bucket compares
-// with plain integer equality when deciding whether it is stale.
-type HourBucket struct {
-	EpochHour int64
-	Searches  uint64
+// DaysKept is how many UTC days the search-activity ring holds, and so how
+// far back the /stats grid can look.
+const DaysKept = 90
+
+// DayBucket is one slot of a DaysKept-day ring: how many searches landed on a
+// given UTC day. EpochDay (Unix seconds / 86400), not a time.Time, so a bucket
+// compares with plain integer equality when deciding whether it is stale.
+type DayBucket struct {
+	EpochDay int64
+	Searches uint64
 }
 
 // Traffic is the persisted form of internal/metrics.Counters: what survives a
@@ -311,5 +315,9 @@ type Traffic struct {
 	New, Feed, Tag, Saved, Other uint64
 	Searches                     uint64
 
-	Hours [24]HourBucket
+	// Days replaced an hourly ring of the same shape. A traffic.json written
+	// before then carries an "Hours" key this struct no longer has, which
+	// json.Unmarshal skips, and has no "Days" key, which it leaves empty - so
+	// an old file still loads and the activity grid simply starts blank.
+	Days [DaysKept]DayBucket
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"itchgrep/internal/metrics"
+	"itchgrep/pkg/models"
 )
 
 // Traffic is the public /stats page's view model, in the style of Coverage
@@ -82,68 +83,144 @@ func (t Traffic) CountingSinceDateTime() string {
 	return t.snap.FirstSeen.UTC().Format(time.RFC3339)
 }
 
-// Bar is one hour of the histogram: how many searches it saw, and the label
-// under it.
-type Bar struct {
-	Label     string
-	Count     uint64
-	EpochHour int64 // hours since the epoch, UTC - what the bar's own bucket key is keyed on.
+// Activity-grid geometry: 13 weekly columns of 7 days, Sunday first like the
+// git contribution graph. The window is models.DaysKept days ending today, so
+// a grid that always ends on the current week's Sunday-to-Saturday column
+// shows between 85 and 90 of them depending on the weekday - the 91 slots
+// hold the window, and any slot older than it renders empty.
+const (
+	gridWeeks    = 13
+	gridDays     = 7
+	secondsInDay = 24 * 60 * 60
+)
+
+// ActivityCell is one day of the grid. A cell outside the window (after today
+// in the last column, older than the ring in the first) has no level and no
+// text, and the markup hides it from assistive technology.
+type ActivityCell struct {
+	InWindow bool
+	Level    int    // 0-4; 0 means no searches
+	Count    uint64 // searches that day
+	Label    string // "Oct 31, 2026: 1,234 searches" - hidden text and title
 }
 
-// CountAttr is Count as a string, for <meter value="...">. templ's dynamic
-// attributes are strings; the conversion is done here rather than in the
-// markup so stats.templ stays free of strconv calls.
-func (b Bar) CountAttr() string { return strconv.FormatUint(b.Count, 10) }
-
-// EpochAttr is the bar's hour as unix seconds, for the histogram label's
-// data-epoch attribute: app.js needs an instant it can hand to Date() to
-// render the label in the viewer's own zone, and an hour count is not one.
-func (b Bar) EpochAttr() string { return strconv.FormatInt(b.EpochHour*3600, 10) }
-
-// Title is the hover text for one bar - the only place the exact count
-// appears, since the bar's height alone cannot be read precisely.
-func (b Bar) Title() string {
-	return fmt.Sprintf("%s — %s searches", b.Label, humaniseCount(int64(b.Count)))
+// Class is the level's CSS class, which carries the colour (see app.css).
+func (c ActivityCell) Class() string {
+	if !c.InWindow {
+		return "activity-cell activity-out"
+	}
+	return "activity-cell activity-l" + strconv.Itoa(c.Level)
 }
 
-// Bars returns 24 hourly buckets oldest-first, ending with the current hour -
-// so the histogram always reads left-to-right as "a day ago" through "now",
-// regardless of which ring slot in the snapshot each hour happens to occupy.
-func (t Traffic) Bars() []Bar {
-	nowHour := t.now.UTC().Unix() / 3600
-	bars := make([]Bar, 24)
-	for i := range bars {
-		epochHour := nowHour - int64(23-i)
-		var count uint64
-		for _, hb := range t.snap.Hours {
-			if hb.EpochHour == epochHour {
-				count = hb.Searches
-				break
+// ActivityRow is one weekday across all 13 weeks.
+type ActivityRow struct {
+	Name  string // "Monday", for assistive technology
+	Short string // "Mon", shown only on Mon, Wed and Fri to keep the axis uncrowded
+	Cells [gridWeeks]ActivityCell
+}
+
+// ShowShort reports whether the abbreviated day name is visible.
+func (r ActivityRow) ShowShort() bool { return r.Short != "" }
+
+// ActivityGrid is the whole 90-day view: the table's rows and month header,
+// plus the figures the summary line reads aloud.
+type ActivityGrid struct {
+	Months  [gridWeeks]string // "Oct" over the column holding a 1st, else ""
+	Rows    [gridDays]ActivityRow
+	Total   uint64
+	Busiest uint64
+	// BusiestDay is zero when no search was recorded.
+	BusiestDay time.Time
+}
+
+// Summary is the visible gist of the grid, for readers who skip the table.
+func (g ActivityGrid) Summary() string {
+	if g.Total == 0 {
+		return "No searches recorded in the last 90 days yet."
+	}
+	return fmt.Sprintf("%s searches in the last 90 days. Busiest day: %s (%s).",
+		humaniseCount(int64(g.Total)), g.BusiestDay.Format("Jan 2, 2006"), humaniseCount(int64(g.Busiest)))
+}
+
+// activityLevel buckets a day's count against the window's busiest day:
+// ceil(4*count/max), so any nonzero day is at least level 1 and the busiest
+// day is level 4. Zero searches, or an all-zero window, is level 0.
+func activityLevel(count, peak uint64) int {
+	if count == 0 || peak == 0 {
+		return 0
+	}
+	return int((4*count + peak - 1) / peak)
+}
+
+func dayLabel(day time.Time, count uint64) string {
+	noun := "searches"
+	if count == 1 {
+		noun = "search"
+	}
+	return fmt.Sprintf("%s: %s %s", day.Format("Jan 2, 2006"), humaniseCount(int64(count)), noun)
+}
+
+// Grid lays the snapshot's daily ring out as 13 weeks ending with the current
+// one. All arithmetic is on UTC epoch days, so the grid reads the same
+// whatever zone the server or the viewer is in.
+func (t Traffic) Grid() ActivityGrid {
+	today := t.now.UTC().Unix() / secondsInDay
+	oldest := today - models.DaysKept + 1
+	weekday := int64(time.Unix(today*secondsInDay, 0).UTC().Weekday())
+	first := today - weekday - 7*(gridWeeks-1) // Sunday of the first column
+
+	// Count only what the grid shows, so the summary line never claims days
+	// the table does not carry.
+	lo := max(oldest, first)
+	counts := make(map[int64]uint64, models.DaysKept)
+	for _, d := range t.snap.Days {
+		if d.EpochDay >= lo && d.EpochDay <= today {
+			counts[d.EpochDay] = d.Searches
+		}
+	}
+
+	// Ascending, with >=, so a tie goes to the most recent day.
+	var g ActivityGrid
+	var peak uint64
+	for day := lo; day <= today; day++ {
+		n := counts[day]
+		g.Total += n
+		if n > 0 && n >= peak {
+			peak = n
+			g.BusiestDay = time.Unix(day*secondsInDay, 0).UTC()
+		}
+	}
+	g.Busiest = peak
+
+	for r := range g.Rows {
+		name := time.Weekday(r).String()
+		g.Rows[r].Name = name
+		if r == 1 || r == 3 || r == 5 {
+			g.Rows[r].Short = name[:3]
+		}
+	}
+
+	for c := 0; c < gridWeeks; c++ {
+		for r := 0; r < gridDays; r++ {
+			day := first + int64(7*c+r)
+			when := time.Unix(day*secondsInDay, 0).UTC()
+			if when.Day() == 1 && day >= oldest && day <= today {
+				g.Months[c] = when.Format("Jan")
+			}
+			if day < oldest || day > today {
+				continue // zero value: outside the window
+			}
+			n := counts[day]
+			g.Rows[r].Cells[c] = ActivityCell{
+				InWindow: true,
+				Level:    activityLevel(n, peak),
+				Count:    n,
+				Label:    dayLabel(when, n),
 			}
 		}
-		bars[i] = Bar{
-			Label:     time.Unix(epochHour*3600, 0).UTC().Format("15:04"),
-			Count:     count,
-			EpochHour: epochHour,
-		}
 	}
-	return bars
+	return g
 }
-
-// Peak is the tallest bar, floored at 1 so a <meter max={peak}> never divides
-// by zero on a quiet day.
-func (t Traffic) Peak() uint64 {
-	var peak uint64 = 1
-	for _, b := range t.Bars() {
-		if b.Count > peak {
-			peak = b.Count
-		}
-	}
-	return peak
-}
-
-// PeakAttr is Peak as a string, for <meter max="...">.
-func (t Traffic) PeakAttr() string { return strconv.FormatUint(t.Peak(), 10) }
 
 // HumaneCount formats a scalar the same way the coverage figures are: grouped
 // thousands, so a bare "96903" beside them does not read as a different kind

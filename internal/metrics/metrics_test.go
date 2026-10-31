@@ -1,9 +1,13 @@
 package metrics
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"itchgrep/pkg/models"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,22 +34,85 @@ func TestRecordRequestUnderRace(t *testing.T) {
 	assert.EqualValues(t, 50, snap.Searches)
 }
 
-func TestRingZeroesAStaleBucketOnHourRollover(t *testing.T) {
+func TestRingZeroesAStaleBucketOnDayRollover(t *testing.T) {
 	c := New()
-	hourOne := time.Date(2026, 1, 1, 3, 30, 0, 0, time.UTC)
-	c.bumpHour(hourOne)
-	c.bumpHour(hourOne)
+	dayOne := time.Date(2026, 1, 1, 3, 30, 0, 0, time.UTC)
+	c.bumpDay(dayOne)
+	c.bumpDay(dayOne.Add(10 * time.Hour)) // same UTC day
 
-	idx := hourOne.Unix() / 3600 % hoursInDay
-	assert.EqualValues(t, 2, c.hours[idx].Searches)
+	idx := dayOne.Unix() / secondsPerDay % daysKept
+	assert.EqualValues(t, 2, c.days[idx].Searches)
 
-	// 24 hours later lands on the same ring slot but a different epoch hour;
-	// the stale count must not bleed into the new one.
-	dayLater := hourOne.Add(24 * time.Hour)
-	c.bumpHour(dayLater)
+	// daysKept days later lands on the same ring slot but a different epoch
+	// day; the stale count must not bleed into the new one.
+	later := dayOne.AddDate(0, 0, daysKept)
+	c.bumpDay(later)
 
-	assert.EqualValues(t, 1, c.hours[idx].Searches)
-	assert.Equal(t, dayLater.Unix()/3600, c.hours[idx].EpochHour)
+	assert.EqualValues(t, 1, c.days[idx].Searches)
+	assert.Equal(t, later.Unix()/secondsPerDay, c.days[idx].EpochDay)
+}
+
+func TestDaysSplitAtUTCMidnight(t *testing.T) {
+	c := New()
+	c.bumpDay(time.Date(2026, 3, 1, 23, 59, 59, 0, time.UTC))
+	c.bumpDay(time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC))
+
+	var days int
+	for _, d := range c.Snapshot().Days {
+		if d.Searches == 1 {
+			days++
+		}
+	}
+	assert.Equal(t, 2, days)
+}
+
+func TestRestoreDaysDropsBucketsOlderThanTheWindow(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	today := now.Unix() / secondsPerDay
+
+	var saved [daysKept]models.DayBucket
+	saved[0] = models.DayBucket{EpochDay: today, Searches: 5}
+	saved[1] = models.DayBucket{EpochDay: today - (daysKept - 1), Searches: 3} // oldest day still shown
+	saved[2] = models.DayBucket{EpochDay: today - daysKept, Searches: 99}      // one day too old
+
+	c := New()
+	c.restoreDays(saved, now)
+
+	var total uint64
+	for _, d := range c.Snapshot().Days {
+		total += d.Searches
+	}
+	assert.EqualValues(t, 8, total, "the out-of-window bucket must be dropped")
+}
+
+func TestDaysSurviveASnapshotRoundTrip(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	c := New()
+	c.bumpDay(time.Now())
+	c.bumpDay(time.Now())
+	require.NoError(t, c.PersistNow())
+
+	restored := Restore().Snapshot()
+	var total uint64
+	for _, d := range restored.Days {
+		total += d.Searches
+	}
+	assert.EqualValues(t, 2, total)
+}
+
+func TestRestoreReadsALegacyFileWithHoursAndNoDays(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DATA_DIR", dir)
+	legacy := `{"FirstSeen":"2026-01-01T00:00:00Z","Total":7,"Searches":2,"Hours":[{"EpochHour":472392,"Searches":2}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "traffic.json"), []byte(legacy), 0o644))
+
+	snap := Restore().Snapshot()
+	assert.EqualValues(t, 7, snap.Total)
+	assert.EqualValues(t, 2, snap.Searches)
+	for _, d := range snap.Days {
+		assert.Zero(t, d.Searches, "a legacy file starts with an empty grid")
+	}
 }
 
 func TestRecordRequestOnlyCountsSuccessfulSearches(t *testing.T) {

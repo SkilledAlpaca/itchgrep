@@ -2,7 +2,6 @@ package templates
 
 import (
 	"context"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -140,22 +139,36 @@ func TestCountingSinceRendersAsALocalisableTimeElement(t *testing.T) {
 	assert.Contains(t, html, `datetime="`+firstSeen.UTC().Format(time.RFC3339)+`"`)
 }
 
-func TestHistogramLabelsEveryThirdBar(t *testing.T) {
-	// 24 bars with a label under each would crowd into illegibility; a label
-	// under every third one keeps the axis readable while still spanning the
-	// full day it describes.
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, now), History{}))
+func TestActivityGridRendersAsAnAccessibleTable(t *testing.T) {
+	today := gridNow.Unix() / 86400
+	snap := metrics.Snapshot{}
+	snap.Days[0] = models.DayBucket{EpochDay: today, Searches: 1234}
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, gridNow), History{}))
 
-	assert.Equal(t, 24, strings.Count(html, `class="stats-bar-col"`), "one column per hour")
-	assert.Equal(t, 8, strings.Count(html, `class="stats-bar-label"`), "a label on every third bar")
+	assert.Contains(t, html, "Searches, last 90 days</h2>")
+	assert.NotContains(t, html, "last 24 hours")
+	assert.NotContains(t, html, "stats-bar")
+	assert.Contains(t, html, "1,234 searches in the last 90 days. Busiest day: Oct 31, 2026 (1,234).")
 
-	epochs := regexp.MustCompile(`data-epoch="(\d+)"`).FindAllStringSubmatch(html, -1)
-	require.Len(t, epochs, 8)
-	for _, m := range epochs {
-		epoch, err := strconv.ParseInt(m[1], 10, 64)
-		require.NoError(t, err)
-		assert.Zero(t, epoch%3600, "data-epoch must be an hour boundary in unix seconds")
-	}
+	assert.Contains(t, html, `<caption class="visually-hidden">Searches, last 90 days (UTC)</caption>`)
+	assert.Contains(t, html, `role="region"`)
+	assert.Contains(t, html, `tabindex="0"`)
+	assert.Equal(t, 13, strings.Count(html, `<th scope="col">`), "one column header per week, empty where no month starts")
+	assert.Equal(t, 7, strings.Count(html, `<th scope="row"><span`), "all seven day names are present")
+	assert.Equal(t, 3, strings.Count(html, `<span aria-hidden="true">`), "Mon, Wed and Fri are visible")
+
+	// 90 in-window cells each carry hidden text plus a matching title; the
+	// one remaining slot is hidden from assistive technology.
+	assert.Equal(t, 7+90, strings.Count(html, `<span class="visually-hidden">`), "seven day names plus one hidden label per in-window cell")
+	assert.Contains(t, html, `title="Oct 31, 2026: 1,234 searches"><span class="visually-hidden">Oct 31, 2026: 1,234 searches</span>`)
+	assert.Equal(t, 1, strings.Count(html, `class="activity-cell activity-out" aria-hidden="true"`))
+	assert.NotContains(t, html, "<td class=\"activity-cell activity-l4\" tabindex", "cells are not focusable")
+}
+
+func TestActivityGridZeroStateSaysSo(t *testing.T) {
+	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, gridNow), History{}))
+	assert.Contains(t, html, "No searches recorded in the last 90 days yet.")
+	assert.NotContains(t, html, `activity-l1" title`, "no day is shaded")
 }
 
 func TestEmptyHistoryRendersNoSection(t *testing.T) {
@@ -185,6 +198,9 @@ func TestHistorySectionRendersRowsNewestFirstWithDeltas(t *testing.T) {
 	assert.Contains(t, html, "resumed from checkpoint")
 
 	// Only the resumed row says so.
+	// Searched from the history heading on: the activity grid above it spells
+	// out its own dates.
+	html = html[strings.Index(html, "Index history"):]
 	newest := strings.Index(html, "Aug 29, 2026")
 	oldest := strings.Index(html, "Aug 20, 2026")
 	require.True(t, newest >= 0 && oldest >= 0 && newest < oldest,
