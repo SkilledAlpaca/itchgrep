@@ -83,19 +83,19 @@ func (t Traffic) CountingSinceDateTime() string {
 	return t.snap.FirstSeen.UTC().Format(time.RFC3339)
 }
 
-// Activity-grid geometry: 13 weekly columns of 7 days, Sunday first like the
-// git contribution graph. The window is models.DaysKept days ending today, so
-// a grid that always ends on the current week's Sunday-to-Saturday column
-// shows between 85 and 90 of them depending on the weekday - the 91 slots
-// hold the window, and any slot older than it renders empty.
+// Activity-grid geometry: 14 weekly columns of 7 days, Sunday first like the
+// git contribution graph. The window is exactly models.DaysKept days ending
+// today. 14 columns always span at least 92 days (the last column starts on
+// the current week's Sunday), so the whole window fits, and the slots older
+// than it or after today render empty.
 const (
-	gridWeeks    = 13
+	gridWeeks    = 14
 	gridDays     = 7
 	secondsInDay = 24 * 60 * 60
 )
 
 // ActivityCell is one day of the grid. A cell outside the window (after today
-// in the last column, older than the ring in the first) has no level and no
+// in the last column, older than the window in the first) has no level and no
 // text, and the markup hides it from assistive technology.
 type ActivityCell struct {
 	InWindow bool
@@ -112,7 +112,7 @@ func (c ActivityCell) Class() string {
 	return "activity-cell activity-l" + strconv.Itoa(c.Level)
 }
 
-// ActivityRow is one weekday across all 13 weeks.
+// ActivityRow is one weekday across all 14 weeks.
 type ActivityRow struct {
 	Name  string // "Monday", for assistive technology
 	Short string // "Mon", shown only on Mon, Wed and Fri to keep the axis uncrowded
@@ -169,9 +169,7 @@ func (t Traffic) Grid() ActivityGrid {
 	weekday := int64(time.Unix(today*secondsInDay, 0).UTC().Weekday())
 	first := today - weekday - 7*(gridWeeks-1) // Sunday of the first column
 
-	// Count only what the grid shows, so the summary line never claims days
-	// the table does not carry.
-	lo := max(oldest, first)
+	lo := oldest
 	counts := make(map[int64]uint64, models.DaysKept)
 	for _, d := range t.snap.Days {
 		if d.EpochDay >= lo && d.EpochDay <= today {

@@ -70,51 +70,55 @@ var gridNow = time.Date(2026, 10, 31, 15, 0, 0, 0, time.UTC)
 
 func dayOf(t time.Time) int64 { return t.UTC().Unix() / 86400 }
 
-func TestGridIs13WeeksBy7DaysSundayFirstEndingToday(t *testing.T) {
-	// Sunday 2026-10-25 .. Saturday 2026-10-31: today is the bottom of the
-	// last column, and 12 earlier columns precede it.
-	g := NewTraffic(metrics.Snapshot{}, gridNow).Grid()
-
-	require.Len(t, g.Rows, 7)
-	require.Len(t, g.Rows[0].Cells, 13)
-	assert.Equal(t, "Sunday", g.Rows[0].Name)
-	assert.Equal(t, "Saturday", g.Rows[6].Name)
-
-	inWindow := 0
+func countInWindow(g ActivityGrid) int {
+	n := 0
 	for _, r := range g.Rows {
 		for _, c := range r.Cells {
 			if c.InWindow {
-				inWindow++
+				n++
 			}
 		}
 	}
-	// wd=6: the first column's Sunday is 90 days back, one day older than
-	// the ring keeps, so 90 of the 91 slots hold a day.
-	assert.Equal(t, 90, inWindow)
-	assert.False(t, g.Rows[0].Cells[0].InWindow, "the Sunday 90 days back is outside the window")
-	assert.True(t, g.Rows[1].Cells[0].InWindow)
-	assert.True(t, g.Rows[6].Cells[12].InWindow, "today is the last cell of the last column")
+	return n
 }
 
-func TestGridLeavesTheDaysAfterTodayOutsideTheWindow(t *testing.T) {
-	wed := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
-	g := NewTraffic(metrics.Snapshot{}, wed).Grid()
+func TestGridIs14WeeksBy7DaysSundayFirstEndingToday(t *testing.T) {
+	g := NewTraffic(metrics.Snapshot{}, gridNow).Grid() // Saturday
 
-	assert.True(t, g.Rows[3].Cells[12].InWindow, "Wednesday is today")
-	for r := 4; r < 7; r++ {
-		assert.False(t, g.Rows[r].Cells[12].InWindow, g.Rows[r].Name+" is in the future")
-		assert.Contains(t, g.Rows[r].Cells[12].Class(), "activity-out")
+	require.Len(t, g.Rows, 7)
+	require.Len(t, g.Rows[0].Cells, 14)
+	assert.Equal(t, "Sunday", g.Rows[0].Name)
+	assert.Equal(t, "Saturday", g.Rows[6].Name)
+	assert.True(t, g.Rows[6].Cells[13].InWindow, "today is the last cell of the last column")
+}
+
+func TestGridHoldsExactly90DaysOnEveryWeekday(t *testing.T) {
+	// Oct 25, 2026 is a Sunday; walk a full week of "today" values.
+	for d := 0; d < 7; d++ {
+		now := time.Date(2026, 10, 25+d, 12, 0, 0, 0, time.UTC)
+		g := NewTraffic(metrics.Snapshot{}, now).Grid()
+		assert.Equal(t, 90, countInWindow(g), now.Weekday().String())
+		assert.True(t, g.Rows[d].Cells[13].InWindow, "today sits in its weekday row")
 	}
-	// Four weeks into October: a Wednesday shows 85+3 = 88 days.
-	total := 0
-	for _, r := range g.Rows {
-		for _, c := range r.Cells {
-			if c.InWindow {
-				total++
-			}
-		}
+}
+
+func TestGridLeavesOutOfWindowSlotsEmpty(t *testing.T) {
+	// Sunday: the last column holds only today; 6 future cells are empty.
+	sun := NewTraffic(metrics.Snapshot{}, time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)).Grid()
+	for r := 1; r < 7; r++ {
+		assert.False(t, sun.Rows[r].Cells[13].InWindow, sun.Rows[r].Name+" is in the future")
+		assert.Contains(t, sun.Rows[r].Cells[13].Class(), "activity-out")
 	}
-	assert.Equal(t, 88, total)
+	// Today minus 89 days is Tuesday Jul 28, so Sunday and Monday lead out.
+	assert.False(t, sun.Rows[0].Cells[0].InWindow)
+	assert.False(t, sun.Rows[1].Cells[0].InWindow)
+	assert.True(t, sun.Rows[2].Cells[0].InWindow)
+
+	// Saturday: the whole last column is in the window.
+	sat := NewTraffic(metrics.Snapshot{}, gridNow).Grid()
+	for r := 0; r < 7; r++ {
+		assert.True(t, sat.Rows[r].Cells[13].InWindow)
+	}
 }
 
 func TestActivityLevelMath(t *testing.T) {
@@ -138,15 +142,15 @@ func TestGridPlacesCountsLevelsAndHiddenText(t *testing.T) {
 	snap.Days[2] = models.DayBucket{EpochDay: today - 100, Searches: 99999} // outside the window
 	g := NewTraffic(snap, gridNow).Grid()
 
-	last := g.Rows[6].Cells[12]
+	last := g.Rows[6].Cells[13]
 	assert.Equal(t, 4, last.Level)
 	assert.Equal(t, "Oct 31, 2026: 1,234 searches", last.Label)
 
-	friday := g.Rows[5].Cells[12]
+	friday := g.Rows[5].Cells[13]
 	assert.Equal(t, 1, friday.Level)
 	assert.Equal(t, "Oct 30, 2026: 1 search", friday.Label, "singular for one")
 
-	assert.Equal(t, 0, g.Rows[4].Cells[12].Level)
+	assert.Equal(t, 0, g.Rows[4].Cells[13].Level)
 	assert.EqualValues(t, 1235, g.Total, "the out-of-window bucket must not be counted")
 	assert.EqualValues(t, 1234, g.Busiest)
 }
@@ -154,13 +158,11 @@ func TestGridPlacesCountsLevelsAndHiddenText(t *testing.T) {
 func TestGridLabelsTheColumnHoldingEachFirstOfTheMonth(t *testing.T) {
 	g := NewTraffic(metrics.Snapshot{}, gridNow).Grid()
 
-	// Oct 25 is column 12, so Oct 1 (Thursday of the week of Sun Sep 27) is
-	// column 8 and Sep 1 (Tuesday of the week of Sun Aug 30) is column 4.
-	// Nov 1 is after today, and Aug 1 is before the window starts.
-	want := map[int]string{8: "Oct", 4: "Sep", 0: ""}
-	for col, label := range want {
-		assert.Equal(t, label, g.Months[col], "column %d", col)
-	}
+	// Oct 25 is column 13, so Oct 1 (Thursday of the week of Sun Sep 27) is
+	// column 9, Sep 1 (Tuesday of the week of Sun Aug 30) is column 5, and
+	// Aug 1 (a Saturday, the week of Sun Jul 26) is before the window.
+	assert.Equal(t, "Oct", g.Months[9])
+	assert.Equal(t, "Sep", g.Months[5])
 	var labelled []string
 	for _, m := range g.Months {
 		if m != "" {

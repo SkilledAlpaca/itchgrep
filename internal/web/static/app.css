@@ -1005,7 +1005,7 @@ a:hover {
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: var(--cell-gap);
-  width: calc(var(--label-width) + 13 * (var(--cell) + var(--cell-gap)) + var(--cell-gap));
+  width: calc(var(--label-width) + 14 * (var(--cell) + var(--cell-gap)) + var(--cell-gap));
   font-size: 1.1rem;
   line-height: 1.2;
   color: var(--text-dim);

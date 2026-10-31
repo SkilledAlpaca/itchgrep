@@ -153,15 +153,15 @@ func TestActivityGridRendersAsAnAccessibleTable(t *testing.T) {
 	assert.Contains(t, html, `<caption class="visually-hidden">Searches, last 90 days (UTC)</caption>`)
 	assert.Contains(t, html, `role="region"`)
 	assert.Contains(t, html, `tabindex="0"`)
-	assert.Equal(t, 13, strings.Count(html, `<th scope="col">`), "one column header per week, empty where no month starts")
+	assert.Equal(t, 14, strings.Count(html, `<th scope="col">`), "one column header per week, empty where no month starts")
 	assert.Equal(t, 7, strings.Count(html, `<th scope="row"><span`), "all seven day names are present")
 	assert.Equal(t, 3, strings.Count(html, `<span aria-hidden="true">`), "Mon, Wed and Fri are visible")
 
 	// 90 in-window cells each carry hidden text plus a matching title; the
-	// one remaining slot is hidden from assistive technology.
+	// other 8 slots (gridNow is a Saturday) are hidden from assistive technology.
 	assert.Equal(t, 7+90, strings.Count(html, `<span class="visually-hidden">`), "seven day names plus one hidden label per in-window cell")
 	assert.Contains(t, html, `title="Oct 31, 2026: 1,234 searches"><span class="visually-hidden">Oct 31, 2026: 1,234 searches</span>`)
-	assert.Equal(t, 1, strings.Count(html, `class="activity-cell activity-out" aria-hidden="true"`))
+	assert.Equal(t, 8, strings.Count(html, `class="activity-cell activity-out" aria-hidden="true"`))
 	assert.NotContains(t, html, "<td class=\"activity-cell activity-l4\" tabindex", "cells are not focusable")
 }
 
