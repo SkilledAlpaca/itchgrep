@@ -2,8 +2,10 @@
 
 This directory's `htmx.min.js` is a vendored, third-party file - it is not
 written or maintained by this project. It is embedded into the webserver
-binary via `//go:embed static` in `internal/web/static.go` and served at
-`/static/htmx.min.js`.
+binary via the `//go:embed` in `internal/web/static/static.go` (which lists
+the served files by name, so add a new asset there) and served at
+`/static/htmx.min.<hash>.js`, where `<hash>` is a content fingerprint that
+changes whenever the file does.
 
 ## Version
 

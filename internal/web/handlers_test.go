@@ -15,6 +15,7 @@ import (
 	"itchgrep/internal/cache"
 	"itchgrep/internal/metrics"
 	"itchgrep/internal/storage"
+	"itchgrep/internal/web/templates"
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
 
@@ -705,4 +706,53 @@ func TestCanonicalURLIsAFixedPoint(t *testing.T) {
 		assert.LessOrEqual(t, len(first.Query), maxQueryLen, target)
 		assert.Equal(t, strings.TrimSpace(first.Query), first.Query, target)
 	}
+}
+
+func TestStaticAssetCachingFollowsTheFingerprint(t *testing.T) {
+	r := chi.NewRouter()
+	r.Handle("/static/*", StaticHandler())
+	do := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+
+	for _, name := range []string{"app.css", "app.js", "htmx.min.js"} {
+		fingerprinted := do(templates.Asset(name))
+		assert.Equal(t, http.StatusOK, fingerprinted.Code, name)
+		assert.Equal(t, "public, max-age=31536000, immutable", fingerprinted.Header().Get("Cache-Control"), name)
+		assert.NotEmpty(t, fingerprinted.Body.Bytes(), name)
+
+		bare := do("/static/" + name)
+		assert.Equal(t, http.StatusOK, bare.Code, name)
+		assert.Equal(t, "public, max-age=300", bare.Header().Get("Cache-Control"), name)
+		assert.Equal(t, fingerprinted.Body.String(), bare.Body.String(), name)
+	}
+
+	// HTML cached across a deploy names the previous hashes: serve the current
+	// file, but never pin it under the wrong hash.
+	current := do(templates.Asset("app.css"))
+	stale := do("/static/app.000000000000.css")
+	assert.Equal(t, http.StatusOK, stale.Code)
+	assert.Equal(t, "public, max-age=300", stale.Header().Get("Cache-Control"))
+	assert.Equal(t, current.Body.String(), stale.Body.String())
+
+	for _, path := range []string{"/static/nope.css", "/static/app.notahash.css", "/static/app.000000000000.png", "/static/", "/static/static.go", "/static/VENDOR.md",
+		"/static/static_test.go", "/static/app.css/", "/static/../static.go"} {
+		assert.Equal(t, http.StatusNotFound, do(path).Code, path)
+	}
+}
+
+func TestFingerprintedAssetsCountAsStaticTraffic(t *testing.T) {
+	// The /stats breakdown is keyed on chi's route pattern, so the hash in the
+	// path must not leak into the bucket.
+	m := metrics.New()
+	r := chi.NewRouter()
+	r.Use(RequestLogger(false, nil, m))
+	r.Handle("/static/*", StaticHandler())
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, templates.Asset("app.css"), nil))
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/static/app.js", nil))
+
+	assert.Equal(t, uint64(2), m.Snapshot().Static)
 }

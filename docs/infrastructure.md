@@ -128,19 +128,29 @@ for the standing entry covering the full Cloudflare account inventory; this
 section isn't a second copy of that question, just the creation steps for
 setting up a tunnel from nothing.
 
-### The WAF managed-challenge rule
+### WAF rules
 
-The operator reports a Cloudflare WAF (Web Application Firewall) custom rule exists, applying a **Managed Challenge** to the expression:
+Checked against the live zone on 2026-10-31. The rules were created after an incident in August 2026, when Googlebot (from the `66.249.64.0/19` range) and OpenAI's `OAI-SearchBot` exhaustively crawled every filter-permutation query URL the site's UI can generate — an effectively unbounded URL space, since every tag/price/sort combination is its own URL. The code-level fix for the same incident is `robots.txt`'s `Disallow: /*?*` (`internal/web/robots.go`); both bots respect it, so the WAF rules are a backstop for crawlers and scanners that don't.
 
-```
-(http.request.uri.query ne "" and not cf.client.bot)
-```
+Custom rules, evaluated in this order:
 
-In plain terms: any request carrying a query string (`?...`) is challenged, unless Cloudflare's own bot-detection recognizes the requester as a known, legitimate bot. This was created after an incident in August 2026, where Googlebot (from the `66.249.64.0/19` range) and OpenAI's `OAI-SearchBot` exhaustively crawled every filter-permutation query URL the site's UI can generate — an effectively unbounded URL space, since every tag/price/sort combination is its own URL.
+1. **Block** CMS and PHP probe paths (`.php`, `.phtml`, `.aspx`, `.jsp`, `/wp-`, `/wordpress`, `/cgi-bin/`, `/vendor/`, `/phpmyadmin`, `/xmlrpc`, `/.env`, `/.git`), two scraper user agents on URLs with a query string (`meta-webindexer`, `Lightpanda`), and one seedbox ASN. The rule excludes `cf.client.bot` where that matters.
+2. **Managed challenge** on the path `/` only, for a query longer than 100 characters, a `not` parameter with three or more comma-separated values (raw or `%2C`), or traffic from a few hosting and proxy ASNs.
+3. **Managed challenge** on the path `/` with a non-empty query, for stale browser user agents (Chrome older than 140, Firefox 120 and 121, and a truncated `Safari/537.3` user agent).
 
-The primary, code-level fix for the same incident is `robots.txt`'s `Disallow: /*?*` (`internal/web/robots.go`) — both bots involved respect `robots.txt`, so the WAF rule is now a backstop for crawlers or scanners that don't.
+There is also one rate-limit rule: the path `/`, 20 requests per 10 seconds per IP, blocked for 10 seconds.
 
-**What breaks if this rule is removed:** nothing breaks immediately, but the site becomes vulnerable to the same exhaustive-crawl pattern recurring, from any bot that ignores `robots.txt` — each such crawl runs the expensive fuzzy-search path on every hit (see `internal/web/robots.go`'s own comment).
+`/results` is deliberately excluded from the challenge rules: htmx requests it in the background, and a challenge page returned to an htmx request cannot be solved. `/static/*` is never challenged.
+
+**What breaks if these rules are removed:** nothing breaks immediately, but the site is exposed to the same exhaustive-crawl pattern from any bot that ignores `robots.txt` — each such crawl runs the expensive fuzzy-search path on every hit (see `internal/web/robots.go`'s own comment).
+
+### Static asset caching
+
+The zone's Browser Cache TTL (4 hours) overrides the origin's `Cache-Control` for anything shorter, and Cloudflare's edge keeps its own copy. Serving CSS and JS at fixed URLs therefore meant a deploy could pair new HTML with the old stylesheet and script for hours.
+
+The templates now link content-fingerprinted paths, such as `/static/app.3f2a9c1b7d04.css` (`internal/web/static/static.go`, `templates.Asset`). The hash is the first 12 hex characters of the file's SHA-256, computed at startup, so every release that changes a file names a URL no cache has seen. A request whose hash matches the current file is served with `Cache-Control: public, max-age=31536000, immutable`. The bare name (`/static/app.css`) is served with `max-age=300`. So is a well-formed but stale hash (`/static/app.<any other 12 hex characters>.css`): the handler serves the current file, never with `immutable`. This covers the window after every deploy. Cloudflare caches the HTML pages for the origin's five minutes, and browsers keep back/forward copies, so for a short while some HTML still names the previous hashes. A `404` there would give those visitors an unstyled page without scripts, which is the incident this scheme exists to prevent. Unknown files, the wrong extension, and a hash segment that is not exactly 12 lowercase hex characters return `404`.
+
+The fingerprint is in the path on purpose, not a `?v=` query string. That keeps asset caching independent of the zone's cache level (whether it keys on the query string) and of the query-string WAF rules above. Nothing in the zone needs to be purged on deploy.
 
 ### DNS
 
