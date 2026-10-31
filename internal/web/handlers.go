@@ -191,11 +191,18 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	// crawler counts separately. Only here and not on /results: that endpoint is
 	// a fragment fetched by htmx, which cannot follow a redirect to a full page.
 	//
-	// No loop is possible because the target is the output of PageURL, which
+	// A 302 with a short max-age rather than a 301: what counts as canonical
+	// depends on the tag caps and on which exchange-rate table is loaded (a
+	// currency is valid only if the table has it), so a permanent redirect would
+	// bake in today's rules in every browser that saw it. robots.txt already
+	// disallows query strings, so permanence bought nothing.
+	//
+	// It converges in one hop because the target is the output of PageURL, which
 	// parses back to the same filters (TestCanonicalURLIsAFixedPoint), and the
 	// comparison is against that exact string.
 	if canonical := filters.PageURL(page); canonical != requestedForm(r) {
-		http.Redirect(w, r, canonical, http.StatusMovedPermanently)
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", fragmentMaxAge))
+		http.Redirect(w, r, canonical, http.StatusFound)
 		return
 	}
 
@@ -542,7 +549,10 @@ func clampQuery(q string) string {
 	for cut > 0 && !utf8.RuneStart(q[cut]) {
 		cut--
 	}
-	return q[:cut]
+	// Trimmed again: the cut can land just after whitespace, and a query that
+	// still ends in a space is not a fixed point of this function, which would
+	// make the canonical redirect take a second hop.
+	return strings.TrimSpace(q[:cut])
 }
 
 func pageTitle(f templates.Filters) string {

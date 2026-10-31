@@ -113,8 +113,6 @@ func priceAttrs(f Filters, asset models.Asset, rates money.Rates) templ.Attribut
 	return attrs
 }
 
-// tagClass marks a card's tag chip as already applied, so a card does not
-// silently offer a filter that would do nothing.
 // currentIf is the aria-current attribute for a control that reflects state
 // already in force, or nothing.
 func currentIf(active bool) templ.Attributes {
@@ -124,6 +122,8 @@ func currentIf(active bool) templ.Attributes {
 	return nil
 }
 
+// tagClass marks a card's tag chip as already applied, so a card does not
+// silently offer a filter that would do nothing.
 func tagClass(f Filters, tag string) string {
 	if f.HasTag(tag) {
 		return "tag is-active"

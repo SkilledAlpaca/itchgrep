@@ -645,12 +645,13 @@ func TestIndexRedirectsToItsCanonicalAddress(t *testing.T) {
 		"/?q=x&sort=relevance":        "/?q=x",
 	} {
 		w := get(t, r, target)
-		assert.Equal(t, http.StatusMovedPermanently, w.Code, target)
+		assert.Equal(t, http.StatusFound, w.Code, target)
 		assert.Equal(t, want, w.Header().Get("Location"), target)
 
 		// The target must be a fixed point, or this is a redirect loop.
+		assert.Equal(t, fmt.Sprintf("public, max-age=%d", fragmentMaxAge), w.Header().Get("Cache-Control"), target)
 		again := get(t, r, w.Header().Get("Location"))
-		assert.NotEqual(t, http.StatusMovedPermanently, again.Code, "redirect loop from "+target)
+		assert.NotEqual(t, http.StatusFound, again.Code, "redirect loop from "+target)
 	}
 }
 
@@ -660,7 +661,7 @@ func TestCanonicalIndexAddressIsNotRedirected(t *testing.T) {
 		"/", "/?q=pixel+art", "/?tags=a%2Cb", "/?not=a&tags=b", "/?page=2&tags=a",
 		"/?author=Ana", "/?price=free", "/?like=123", "/?q=x&sort=title",
 	} {
-		assert.NotEqual(t, http.StatusMovedPermanently, get(t, r, target).Code, target)
+		assert.NotEqual(t, http.StatusFound, get(t, r, target).Code, target)
 	}
 }
 
@@ -670,7 +671,7 @@ func TestResultsFragmentIsNeverRedirected(t *testing.T) {
 	r, _ := newTestRouter()
 	for _, target := range []string{"/results?tags=d,c,b,a&page=1", "/results?page=1&tags=a,b,c,d,e,f"} {
 		w := get(t, r, target)
-		assert.NotEqual(t, http.StatusMovedPermanently, w.Code, target)
+		assert.NotEqual(t, http.StatusFound, w.Code, target)
 		assert.Empty(t, w.Header().Get("Location"), target)
 	}
 }
@@ -687,10 +688,21 @@ func TestCanonicalURLIsAFixedPoint(t *testing.T) {
 		"/?like=12&sort=relevance&price=under5&cur=eur&page=3",
 		"/?sort=popular&q=x&sort=title",
 		"/?tags=A,%20B,c_d,e!",
+		// The 200-byte cut: a space lands at the boundary, then a multi-byte
+		// rune straddles it, and a deep page rides along.
+		"/?q=" + strings.Repeat("a", 199) + "+bbbb",
+		"/?q=" + strings.Repeat("a", 198) + "+++bbbb&page=3",
+		"/?q=" + strings.Repeat("a", 199) + "%C3%A9tail",
+		"/?q=" + strings.Repeat("%E2%82%AC", 70) + "&page=7",
+		"/?q=" + strings.Repeat("a", 200) + "+&tags=b,a&page=2",
 	} {
 		first := parseFilters(httptest.NewRequest(http.MethodGet, target, nil), money.Fallback())
 		canonical := first.PageURL(1)
 		second := parseFilters(httptest.NewRequest(http.MethodGet, canonical, nil), money.Fallback())
 		assert.Equal(t, canonical, second.PageURL(1), target)
+		assert.Equal(t, first.Query, second.Query, target)
+		assert.True(t, utf8.ValidString(first.Query), target)
+		assert.LessOrEqual(t, len(first.Query), maxQueryLen, target)
+		assert.Equal(t, strings.TrimSpace(first.Query), first.Query, target)
 	}
 }
