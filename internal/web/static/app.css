@@ -59,7 +59,8 @@
     --text-faint: #687180; /* AA only: 4.64 on --bg, 4.93 on white */
     /* 7.56 on --bg, 8.03 on white: link and accent text reach AAA. */
     --accent: #105d26;
-    --accent-dim: #105d26;
+    /* Hover fill: darker than --accent so hover is visible; white on it is 10.4. */
+    --accent-dim: #0b4a1e;
     --accent-contrast: #ffffff;
     /* Darker than the dark-theme amber: #e3b341 on white fails contrast.
      * 7.44 on --bg, 7.91 on white. */
@@ -123,8 +124,7 @@ a:hover {
  * than colour (WCAG 1.4.1). Chips, nav buttons and cards are not running text
  * and keep their own affordances. */
 .prose a,
-.masthead-meta p a,
-.currency-note a {
+.masthead-meta p a {
   text-decoration: underline;
   text-underline-offset: 0.2em;
 }
@@ -555,6 +555,12 @@ a:hover {
    ring was cut to a sliver. Draw it inside the segment instead. */
 .segment:focus-visible {
   outline-offset: -2px;
+}
+
+/* The active price segment is a link filled with --accent; an accent ring
+   drawn inside it would vanish (1:1). */
+.segment.is-active:focus-visible {
+  outline-color: var(--accent-contrast);
 }
 
 .segment:hover {
@@ -1229,6 +1235,14 @@ a:hover {
     text-align: center;
     background: var(--bg);
     border-right: 0;
+  }
+}
+
+/* Forced colors repaint the container background, so the 1px gap dividers
+ * above disappear. Draw a real border instead. */
+@media (max-width: 640px) and (forced-colors: active) {
+  .segment {
+    border: 1px solid CanvasText;
   }
 }
 
