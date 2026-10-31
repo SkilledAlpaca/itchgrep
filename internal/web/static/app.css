@@ -13,13 +13,25 @@
   --bg-input: #0f1116;
   --border: #2b303b;
   --border-strong: #3a4150;
+  /* Edge of an interactive control (inputs, select, segmented control, save
+   * button). WCAG 1.4.11 wants 3:1 against the surface, which --border and
+   * --border-strong, tuned as quiet dividers, do not reach. Measured against
+   * --bg / --bg-input: 3.84 / 4.01. */
+  --border-control: #6b7484;
   --text: #e6e9ef;
-  --text-dim: #9aa3b2;
-  --text-faint: #6b7484;
+  /* Text tokens are chosen against --bg-raised, the dimmest surface they sit
+   * on. --text-dim reaches 7:1 (AAA) everywhere; --text-faint is the quiet
+   * register and stops at AA, 5.05 on --bg-raised and 5.55 on --bg. */
+  --text-dim: #a9b1be;
+  --text-faint: #868f9e;
   --accent: #7ee787;
-  --accent-dim: #2ea043;
+  /* Hover fill for accent buttons; --accent-contrast on it is 7.46. */
+  --accent-dim: #3fb950;
   --accent-contrast: #08130a;
-  --warn: #d29922;
+  --warn: #e3b341;
+  /* Height of the sticky .searchbar, so the sticky sidebar and the focus
+   * scroll offset can clear it. */
+  --searchbar-h: 7.4rem;
   /* Search-activity grid. Level 0 is an outline only; levels 1-4 are fills.
    * Each reaches 3:1 against --bg (WCAG 1.4.11), and adjacent levels differ
    * by at least 1.37:1. Measured: border 3.84, then 3.36, 5.37, 8.59, 11.79. */
@@ -41,14 +53,18 @@
     --bg-input: #ffffff;
     --border: #dfe3e9;
     --border-strong: #c4cad4;
+    --border-control: #848d9c; /* 3.15 on --bg, 3.35 on white */
     --text: #12151a;
-    --text-dim: #59616f;
-    --text-faint: #838b98;
-    --accent: #1a7f37;
-    --accent-dim: #1a7f37;
+    --text-dim: #4a5160; /* 7.49 on --bg, 7.96 on white */
+    --text-faint: #687180; /* AA only: 4.64 on --bg, 4.93 on white */
+    /* 7.56 on --bg, 8.03 on white: link and accent text reach AAA. */
+    --accent: #105d26;
+    /* Hover fill: darker than --accent so hover is visible; white on it is 10.4. */
+    --accent-dim: #0b4a1e;
     --accent-contrast: #ffffff;
-    /* Darker than the dark-theme amber: #d29922 on white fails contrast. */
-    --warn: #9a6700;
+    /* Darker than the dark-theme amber: #e3b341 on white fails contrast.
+     * 7.44 on --bg, 7.91 on white. */
+    --warn: #6f4a00;
     /* Inverted ramp: more searches is darker on a light page. Measured
      * against --bg: border 3.64, then 3.09, 4.60, 6.64, 9.81. */
     --activity-0-border: #7a8290;
@@ -71,6 +87,9 @@ html {
   /* 62.5% of 16px = 10px, so 1rem = 10px and the rem sizes below read as px. */
   font-size: 62.5%;
   -webkit-text-size-adjust: 100%;
+  /* Keyboard focus scrolls elements into view; without this they can land
+   * under the sticky search bar (WCAG 2.4.11 / 2.4.12). */
+  scroll-padding-top: calc(var(--searchbar-h) + 1rem);
 }
 
 body {
@@ -99,6 +118,15 @@ a {
 
 a:hover {
   text-decoration: underline;
+}
+
+/* Links inside a sentence are told apart from the text around them by more
+ * than colour (WCAG 1.4.1). Chips, nav buttons and cards are not running text
+ * and keep their own affordances. */
+.prose a,
+.masthead-meta p a {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
 }
 
 :focus-visible {
@@ -179,7 +207,9 @@ a:hover {
   height: 2.2rem;
   margin-left: 0.6rem;
   background: var(--accent);
-  animation: blink 1.2s steps(1) infinite;
+  /* Three blinks, then solid: nothing blinks for more than 5 seconds
+   * (WCAG 2.2.2). */
+  animation: blink 1.2s steps(1) 3;
 }
 
 @keyframes blink {
@@ -195,6 +225,9 @@ a:hover {
 }
 
 .masthead-meta {
+  /* A flex item defaults to min-width: auto and refuses to shrink below its
+   * longest line, which forced a horizontal scroll at 320px (WCAG 1.4.10). */
+  min-width: 0;
   text-align: right;
   font-size: 1.4rem;
   color: var(--text-dim);
@@ -210,6 +243,7 @@ a:hover {
    search box, but unmistakably clickable. */
 .masthead-links {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.8rem;
   justify-content: flex-end;
   margin-top: 1rem;
@@ -283,7 +317,7 @@ a:hover {
   font-size: 1.6rem;
   color: var(--text);
   background: var(--bg-input);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius);
 }
 
@@ -293,14 +327,6 @@ a:hover {
 
 .searchbar input[type="text"]:focus {
   border-color: var(--accent);
-}
-
-/* The border tint alone is a weak focus affordance and disappears entirely for
-   anyone who cannot distinguish it, so the outline is kept for keyboard focus
-   rather than suppressed as it used to be. */
-.searchbar input[type="text"]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .searchbar button {
@@ -319,7 +345,7 @@ a:hover {
 
 .searchbar button:hover {
   background: var(--accent-dim);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 
 /* htmx toggles .htmx-request on the form while a search is in flight. */
@@ -371,9 +397,12 @@ a:hover {
    * which is exactly when a person decides to narrow it. Capped to the
    * viewport and scrollable in its own right, or a long list would push its
    * own bottom off the screen. */
-  top: 1.2rem;
-  max-height: calc(100vh - 2.4rem);
+  top: calc(var(--searchbar-h) + 1.2rem);
+  max-height: calc(100vh - var(--searchbar-h) - 2.4rem);
   overflow-y: auto;
+  /* Keyboard focus scrolls a link flush to the list's edge, which would clip
+   * its focus ring; keep a margin the ring fits in. */
+  scroll-padding: 0.6rem;
   padding: 1.2rem;
   background: var(--bg-raised);
   border: 1px solid var(--border);
@@ -410,7 +439,7 @@ a:hover {
   font-size: 1.3rem;
   color: var(--text);
   background: var(--bg-input);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-control);
   border-radius: 6px;
 }
 
@@ -445,23 +474,21 @@ a:hover {
   text-decoration: none;
 }
 
-/* Deliberately quiet until the row is hovered: excluding a tag is the rarer
-   intent, and a column of minus signs would compete with the counts. */
+/* Always visible, in the faint register: a control that only appears on hover
+   is undiscoverable on touch screens, where it was still tappable. It is at
+   least 24px wide with the row's 2px gap, so the adjacent tag link and this
+   one are separate targets (WCAG 2.5.8). */
 .facet-exclude {
   display: flex;
   align-items: center;
+  justify-content: center;
+  min-width: 2.8rem;
   padding: 0 0.6rem;
   font-size: 1.4rem;
   line-height: 1;
   color: var(--text-faint);
   text-decoration: none;
   border-radius: 6px;
-  opacity: 0;
-}
-
-.facet-list li:hover .facet-exclude,
-.facet-exclude:focus {
-  opacity: 1;
 }
 
 .facet-exclude:hover {
@@ -505,7 +532,7 @@ a:hover {
 
 .segmented {
   display: flex;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -522,6 +549,18 @@ a:hover {
 
 .segment:last-child {
   border-right: 0;
+}
+
+/* .segmented clips its children to the pill shape, so the default outset focus
+   ring was cut to a sliver. Draw it inside the segment instead. */
+.segment:focus-visible {
+  outline-offset: -2px;
+}
+
+/* The active price segment is a link filled with --accent; an accent ring
+   drawn inside it would vanish (1:1). */
+.segment.is-active:focus-visible {
+  outline-color: var(--accent-contrast);
 }
 
 .segment:hover {
@@ -566,6 +605,12 @@ a:hover {
   border: 1px dashed var(--border-strong);
 }
 
+/* Must come before .chip.is-excluded:hover: both have the same specificity, and
+   the later one wins, which used to turn an excluded chip green on hover. */
+.chip.is-removable:hover {
+  background: var(--accent-dim);
+}
+
 /* An exclusion reads as the opposite of a filter, so it should not look like
    one. Outlined in the warning colour rather than filled in the accent. */
 .chip.is-excluded {
@@ -600,7 +645,7 @@ a:hover {
   font: inherit;
   color: var(--text);
   background: var(--bg-input);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-control);
   border-radius: 6px;
 }
 
@@ -622,10 +667,6 @@ a:hover {
 .currency-note a {
   color: inherit;
   text-decoration: underline;
-}
-
-.chip.is-removable:hover {
-  background: var(--accent-dim);
 }
 
 .clear-filters {
@@ -675,9 +716,9 @@ a:hover {
   }
 }
 
-/* Quiet by default - a solid glyph sitting on every thumbnail would compete
- * with the art itself - full contrast once saved or focused/hovered, so the
- * state is still clearly visible and the control is still easy to find. */
+/* Kept at full opacity: fading the whole button also faded its border and glyph
+ * below 3:1 (WCAG 1.4.11). The solid --bg fill and thin border keep it quiet
+ * enough not to compete with the art. */
 .asset-save {
   position: absolute;
   top: 0.6rem;
@@ -690,22 +731,19 @@ a:hover {
   line-height: 1;
   color: var(--text);
   background: var(--bg);
-  opacity: 0.55;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: 999px;
   cursor: pointer;
-  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  transition: color 0.12s ease, border-color 0.12s ease;
 }
 
-.asset-save:hover,
-.asset-save:focus-visible {
-  opacity: 1;
+.asset-save:hover {
+  border-color: var(--accent);
 }
 
 .asset-save.is-saved {
   color: var(--accent);
   border-color: var(--accent);
-  opacity: 1;
 }
 
 .asset-link {
@@ -716,6 +754,11 @@ a:hover {
 
 .asset-link:hover {
   text-decoration: none;
+}
+
+/* .asset clips its children (rounded corners), so draw the ring inside. */
+.asset-link:focus-visible {
+  outline-offset: -2px;
 }
 
 .asset-link:hover .asset-title {
@@ -867,11 +910,10 @@ a:hover {
   border-radius: 5px;
 }
 
-/* The sentinel htmx watches to load the next page. It needs height so that it
- * can be revealed by scrolling, but must not push a visible gap. */
+/* The load-more control spans the whole grid. It used to be an invisible
+ * sentinel with an 8rem height; that rule now stretched the visible button. */
 #asset-load-trigger {
   grid-column: 1 / -1;
-  height: 8rem;
 }
 
 /* ---------------------------------------------------------------- prose  */
@@ -884,6 +926,9 @@ a:hover {
   max-width: 68rem;
   margin-inline: auto;
   padding-top: 2rem;
+  /* The About page prints full repository URLs, which have no break points and
+   * pushed the page wider than a 320px viewport. */
+  overflow-wrap: anywhere;
 }
 
 /* Wider than reading prose: this page is cards, a table and an activity grid,
@@ -935,7 +980,7 @@ a:hover {
 
 .stats-cell dt {
   margin: 0 0 0.3rem;
-  font-size: 0.85rem;
+  font-size: 1.2rem;
   color: var(--text-dim);
 }
 
@@ -1148,7 +1193,7 @@ a:hover {
 
 .history-cell dt {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 1.2rem;
   color: var(--text-dim);
 }
 
@@ -1172,6 +1217,32 @@ a:hover {
 
   .searchbar button {
     padding: 1.1rem 1.4rem;
+  }
+
+  /* Four or five nowrap segments are wider than a phone, and the page scrolled
+   * sideways to fit them (WCAG 1.4.10). Let them wrap onto rows; the 1px gaps
+   * show the container's border colour, so the dividers survive any wrap
+   * point. */
+  .segmented {
+    flex-wrap: wrap;
+    gap: 1px;
+    background: var(--border-control);
+    border-radius: var(--radius);
+  }
+
+  .segment {
+    flex: 1 1 auto;
+    text-align: center;
+    background: var(--bg);
+    border-right: 0;
+  }
+}
+
+/* Forced colors repaint the container background, so the 1px gap dividers
+ * above disappear. Draw a real border instead. */
+@media (max-width: 640px) and (forced-colors: active) {
+  .segment {
+    border: 1px solid CanvasText;
   }
 }
 
