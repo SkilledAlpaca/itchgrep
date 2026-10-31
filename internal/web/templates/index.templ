@@ -75,7 +75,7 @@ templ Masthead(age Freshness, coverage Coverage) {
 			@IndexAge(age, coverage)
 		</div>
 		<div class="masthead-meta">
-			<p>search itch.io/game-assets by text instead of just tags.</p>
+			<p class="masthead-tagline">search itch.io/game-assets by text instead of just tags.</p>
 			<p>
 				originally created by
 				<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }
@@ -89,8 +89,8 @@ templ Masthead(age Freshness, coverage Coverage) {
 			// beside the credit that explains what it is. New, Saved and
 			// Stats are different: pages of this site, not outbound links, so
 			// they belong beside Search rather than behind it.
-			// A plain navigation, not an htmx swap. Swapping /about into
-			// #page-content left the visitor reading about-content under
+			// A plain navigation, not an htmx swap. Swapping /about into the
+			// page in place left the visitor reading about-content under
 			// whatever URL they were already on - refresh and share both
 			// resurrected the wrong page. Search state survives the round
 			// trip anyway: every applied filter lives in the query string.

@@ -471,5 +471,9 @@ if (NARROW) {
 // state from painting first.
 syncFacets(document);
 
-// Going back restores a saved copy of the page, which was snapshotted open.
-document.addEventListener('htmx:historyRestore', function () { syncFacets(document); });
+// Going back restores a saved copy of the page. htmx took that snapshot during a
+// swap, so the region was still marked busy and the sidebar was open; reset both.
+document.addEventListener('htmx:historyRestore', function () {
+	setResultsBusy(false);
+	syncFacets(document);
+});

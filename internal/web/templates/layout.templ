@@ -53,6 +53,10 @@ templ LayoutHead(title string, head templ.Component, shell Shell, content templ.
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<meta name="description" content="Full-text search over itch.io game assets, by title, author, description and tag."/>
 			<meta name="color-scheme" content="dark light"/>
+			// htmx injects an inline <style> for .htmx-indicator unless told not
+			// to, and the CSP (style-src 'self') blocks it with a console error.
+			// The spinner is styled in app.css instead.
+			<meta name="htmx-config" content='{"includeIndicatorStyles":false}'/>
 			<title>
 				{ title }
 			</title>

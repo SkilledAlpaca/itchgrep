@@ -277,6 +277,19 @@ a:hover {
   margin: 0;
 }
 
+/* On a phone the stacked header pushed the first result below the fold. Drop
+   the tagline (the page itself says what it is) and the top padding; the
+   credit stays. */
+@media (max-width: 600px) {
+  .masthead {
+    padding-top: 1.2rem;
+  }
+
+  .masthead-tagline {
+    display: none;
+  }
+}
+
 /* These were faint uppercase text sitting under two lines of faint prose, which
    made the only two navigable things in the header the least visible things in
    it. Bordered targets instead: still quiet enough not to compete with the
