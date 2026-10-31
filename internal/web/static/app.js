@@ -336,8 +336,24 @@ document.addEventListener('click', function (e) {
 		var grid = document.querySelector('[data-saved-grid]');
 		if (grid && grid.contains(btn)) {
 			var card = btn.closest('.asset');
-			if (card) card.remove();
-			refreshSavedEmptyState();
+			if (card) {
+				// Removing the focused card would drop focus on <body>. Hand
+				// it to the next card's save button, else the previous one's,
+				// else the empty-state notice (WCAG 2.4.3).
+				var sibling = card.nextElementSibling;
+				while (sibling && !sibling.matches('.asset')) sibling = sibling.nextElementSibling;
+				if (!sibling) {
+					sibling = card.previousElementSibling;
+					while (sibling && !sibling.matches('.asset')) sibling = sibling.previousElementSibling;
+				}
+				card.remove();
+				refreshSavedEmptyState();
+				var target = sibling && sibling.querySelector('[data-save-toggle]');
+				if (!target) target = document.getElementById('saved-empty');
+				if (target) target.focus();
+			} else {
+				refreshSavedEmptyState();
+			}
 		}
 	} else {
 		saveGame({

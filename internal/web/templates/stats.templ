@@ -138,6 +138,20 @@ templ StatsPage(tr Traffic, history History) {
 			<span class="activity-cell activity-l4"></span>
 			<span>More</span>
 		</div>
+		// The shading differs by lightness alone, so the same figures are
+		// listed as text (WCAG 1.4.1). Omitted when there are none: the
+		// summary line above already says so.
+		if days := grid.Days(); len(days) > 0 {
+			<details class="activity-days">
+				<summary>Daily counts</summary>
+				<p>Days not listed had no searches.</p>
+				<ul>
+					for _, d := range days {
+						<li>{ d.Label }</li>
+					}
+				</ul>
+			</details>
+		}
 		if !history.Empty() {
 			<h2>Index history</h2>
 			<div class="history-list">

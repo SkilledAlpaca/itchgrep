@@ -99,11 +99,22 @@ func resultSummary(r Results) string {
 // it is a count of. The filters are named because the count alone can repeat
 // ("17 assets" after adding a tag that excluded nothing), and a live region
 // whose text did not change may not be announced at all.
+//
+// A reached cap is appended because the sidebar says so only in the swapped
+// region, which is not live: the visitor is otherwise never told why the tag
+// links went dead.
 func resultStatus(f Filters, r Results) string {
+	status := resultSummary(r)
 	if summary := filterSummary(f, r.LikeTitle); summary != "" {
-		return resultSummary(r) + " for " + summary
+		status += " for " + summary
 	}
-	return resultSummary(r)
+	if f.AtTagLimit() {
+		status += ". Tag limit reached."
+	}
+	if f.AtNotTagLimit() {
+		status += ". Exclusion limit reached."
+	}
+	return status
 }
 
 // filterLink is the one shape every filter link on the site takes: an anchor
@@ -332,11 +343,12 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 			// open on a wide one, where CSS hides the summary.
 			<details class="facets-details" open>
 				<summary class="facets-toggle">Filter by tag</summary>
+				<label class="facet-search-label" for="facet-search">Find a tag</label>
 				<input
 					type="text"
+					id="facet-search"
 					class="facet-search"
 					placeholder="find a tag..."
-					aria-label="Find a tag"
 					autocomplete="off"
 					data-facet-search
 				/>

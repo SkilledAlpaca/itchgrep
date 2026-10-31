@@ -211,3 +211,20 @@ func TestGridBusiestDayTieGoesToTheMostRecent(t *testing.T) {
 	g := NewTraffic(snap, gridNow).Grid()
 	assert.Equal(t, "Oct 29, 2026", g.BusiestDay.Format("Jan 2, 2006"))
 }
+
+func TestGridDaysListsNonZeroInWindowDaysOldestFirst(t *testing.T) {
+	today := dayOf(gridNow)
+	snap := metrics.Snapshot{}
+	snap.Days[0] = models.DayBucket{EpochDay: today, Searches: 1234}
+	snap.Days[1] = models.DayBucket{EpochDay: today - 1, Searches: 1}
+	snap.Days[2] = models.DayBucket{EpochDay: today - 40, Searches: 7}
+	snap.Days[3] = models.DayBucket{EpochDay: today - 100, Searches: 99999} // outside the window
+	days := NewTraffic(snap, gridNow).Grid().Days()
+
+	var labels []string
+	for _, d := range days {
+		labels = append(labels, d.Label)
+	}
+	assert.Equal(t, []string{"Sep 21, 2026: 7 searches", "Oct 30, 2026: 1 search", "Oct 31, 2026: 1,234 searches"}, labels)
+	assert.Empty(t, NewTraffic(metrics.Snapshot{}, gridNow).Grid().Days())
+}

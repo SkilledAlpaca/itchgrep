@@ -133,6 +133,22 @@ type ActivityGrid struct {
 	BusiestDay time.Time
 }
 
+// Days lists the in-window days with at least one search, oldest first, as
+// the visible text alternative to the grid's shading (WCAG 1.4.1: the levels
+// differ by lightness alone). Columns run oldest to newest and each column
+// top to bottom, which is date order because every column is one week.
+func (g ActivityGrid) Days() []ActivityCell {
+	var days []ActivityCell
+	for c := 0; c < gridWeeks; c++ {
+		for r := 0; r < gridDays; r++ {
+			if cell := g.Rows[r].Cells[c]; cell.InWindow && cell.Count > 0 {
+				days = append(days, cell)
+			}
+		}
+	}
+	return days
+}
+
 // Summary is the visible gist of the grid, for readers who skip the table.
 func (g ActivityGrid) Summary() string {
 	if g.Total == 0 {
