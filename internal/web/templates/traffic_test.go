@@ -159,17 +159,36 @@ func TestGridLabelsTheColumnHoldingEachFirstOfTheMonth(t *testing.T) {
 	g := NewTraffic(metrics.Snapshot{}, gridNow).Grid()
 
 	// Oct 25 is column 13, so Oct 1 (Thursday of the week of Sun Sep 27) is
-	// column 9, Sep 1 (Tuesday of the week of Sun Aug 30) is column 5, and
-	// Aug 1 (a Saturday, the week of Sun Jul 26) is before the window.
-	assert.Equal(t, "Oct", g.Months[9])
+	// column 9, and Sep 1 (Tuesday of the week of Sun Aug 30) is column 5.
+	// Aug 1 is before the window, so the window's opening month is named on
+	// its first column instead: the window starts Mon Aug 3, in column 1
+	// (column 0 is entirely outside it on a Saturday).
+	assert.Equal(t, "", g.Months[0])
+	assert.Equal(t, "Aug", g.Months[1])
 	assert.Equal(t, "Sep", g.Months[5])
-	var labelled []string
+	assert.Equal(t, "Oct", g.Months[9])
+	var labelled int
 	for _, m := range g.Months {
 		if m != "" {
-			labelled = append(labelled, m)
+			labelled++
 		}
 	}
-	assert.Equal(t, []string{"Sep", "Oct"}, labelled, "one label per first-of-month inside the window")
+	assert.Equal(t, 3, labelled)
+}
+
+func TestGridLeavesTheOpeningMonthUnlabelledWhenTheNextIsClose(t *testing.T) {
+	// Wed 2026-11-25 minus 89 days is Fri Aug 28, in column 0; Sep 1 is in
+	// column 1, so an "Aug" label would overprint "Sep".
+	g := NewTraffic(metrics.Snapshot{}, time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)).Grid()
+	assert.Equal(t, "", g.Months[0])
+	assert.Equal(t, "Sep", g.Months[1])
+}
+
+func TestGridLabelsAMonthThatStartsInTheLastColumn(t *testing.T) {
+	// Sunday Nov 1 is today, alone in the last column.
+	g := NewTraffic(metrics.Snapshot{}, time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)).Grid()
+	assert.Equal(t, "Nov", g.Months[13])
+	assert.Equal(t, "Oct", g.Months[8])
 }
 
 func TestGridSummaryCoversTheZeroAndNonzeroCases(t *testing.T) {

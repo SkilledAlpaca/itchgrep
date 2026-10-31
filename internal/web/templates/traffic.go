@@ -160,7 +160,7 @@ func dayLabel(day time.Time, count uint64) string {
 	return fmt.Sprintf("%s: %s %s", day.Format("Jan 2, 2006"), humaniseCount(int64(count)), noun)
 }
 
-// Grid lays the snapshot's daily ring out as 13 weeks ending with the current
+// Grid lays the snapshot's daily ring out as 14 weeks ending with the current
 // one. All arithmetic is on UTC epoch days, so the grid reads the same
 // whatever zone the server or the viewer is in.
 func (t Traffic) Grid() ActivityGrid {
@@ -169,10 +169,9 @@ func (t Traffic) Grid() ActivityGrid {
 	weekday := int64(time.Unix(today*secondsInDay, 0).UTC().Weekday())
 	first := today - weekday - 7*(gridWeeks-1) // Sunday of the first column
 
-	lo := oldest
 	counts := make(map[int64]uint64, models.DaysKept)
 	for _, d := range t.snap.Days {
-		if d.EpochDay >= lo && d.EpochDay <= today {
+		if d.EpochDay >= oldest && d.EpochDay <= today {
 			counts[d.EpochDay] = d.Searches
 		}
 	}
@@ -180,7 +179,7 @@ func (t Traffic) Grid() ActivityGrid {
 	// Ascending, with >=, so a tie goes to the most recent day.
 	var g ActivityGrid
 	var peak uint64
-	for day := lo; day <= today; day++ {
+	for day := oldest; day <= today; day++ {
 		n := counts[day]
 		g.Total += n
 		if n > 0 && n >= peak {
@@ -215,6 +214,24 @@ func (t Traffic) Grid() ActivityGrid {
 				Count:    n,
 				Label:    dayLabel(when, n),
 			}
+		}
+	}
+
+	// Like the git graph, name the month the window opens in when no 1st
+	// does, on the first column that holds a day of it - unless the next
+	// label is under three columns away, where the two would overprint.
+	// (On a Saturday the window opens in column 1; column 0 is all outside.)
+	fc := int((oldest - first) / 7)
+	if g.Months[fc] == "" {
+		next := gridWeeks
+		for c := fc + 1; c < gridWeeks; c++ {
+			if g.Months[c] != "" {
+				next = c
+				break
+			}
+		}
+		if next-fc >= 3 {
+			g.Months[fc] = time.Unix(oldest*secondsInDay, 0).UTC().Format("Jan")
 		}
 	}
 	return g

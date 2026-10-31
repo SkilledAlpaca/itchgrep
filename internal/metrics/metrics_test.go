@@ -83,6 +83,10 @@ func TestRestoreDaysDropsBucketsOlderThanTheWindow(t *testing.T) {
 		total += d.Searches
 	}
 	assert.EqualValues(t, 8, total, "the out-of-window bucket must be dropped")
+
+	// A restored day keeps counting where it left off rather than resetting.
+	c.bumpDay(now)
+	assert.EqualValues(t, 6, c.days[today%daysKept].Searches)
 }
 
 func TestDaysSurviveASnapshotRoundTrip(t *testing.T) {
