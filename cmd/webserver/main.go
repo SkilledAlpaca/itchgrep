@@ -226,9 +226,10 @@ func initializeCache() *cache.Cache {
 
 	if err := c.RefreshDataCache(); err != nil {
 		logging.Error("Initial cache load failed, will retry in background every %v: %v", initialCacheLoadRetryInterval, err)
-		// Do not block startup / ListenAndServe on this — Cloud Run enforces
-		// a startup deadline. Requests get 503 (cache.ErrNotReady) until a
-		// retry succeeds.
+		// Do not block startup / ListenAndServe on this: the healthcheck
+		// (start_period 10s) and cloudflared's service_healthy gate both need
+		// the listener up long before a first crawl publishes. Requests get
+		// 503 (cache.ErrNotReady) until a retry succeeds.
 		go func() {
 			ticker := time.NewTicker(initialCacheLoadRetryInterval)
 			defer ticker.Stop()

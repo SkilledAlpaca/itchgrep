@@ -58,7 +58,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/trigger-fetch", handleFetchTrigger)
 
-	port := fmt.Sprintf(":%s", os.Getenv("PORT")) // as per cloud run standard
+	port := fmt.Sprintf(":%s", os.Getenv("PORT"))
 	if port == ":" {
 		port = ":8080"
 	}
@@ -644,7 +644,7 @@ func loadCrawlConfig() crawlConfig {
 	// SCRAPE_MAX_PAGES caps how many pages are fetched in total, across every
 	// slice. A full crawl is thousands of pages and takes about six hours at
 	// a polite request rate, which makes it a painful way to smoke-test the
-	// rest of the pipeline (indexing, archiving, upload, webserver startup).
+	// rest of the pipeline (indexing, publishing, webserver pickup).
 	// Setting this small exercises every one of those stages in a couple of
 	// minutes. Leave it unset in production.
 	if v := os.Getenv("SCRAPE_MAX_PAGES"); v != "" {
@@ -701,7 +701,7 @@ func loadOrDiscoverTags(cfg crawlConfig) ([]models.Tag, error) {
 }
 
 // crawler walks the planned slices, collecting assets and deduplicating them
-// by GameId. Assets appear in roughly nine tag views each, so without the
+// by GameId. Assets appear in several tag views each, so without the
 // dedup set the same asset would be fetched and stored many times over.
 type crawler struct {
 	cfg          crawlConfig

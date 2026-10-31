@@ -19,7 +19,8 @@
 # that the sidecar existed to route around.
 #
 # Both share the `itchgrep-data` volume, mounted at /data. That directory IS
-# the storage layer: assets.json, tags.json, checkpoint.json and index.bleve/.
+# the storage layer: index.bleve/ plus the JSON files named in
+# internal/storage/storage.go.
 # There is no object store and no emulator - the previous fake-gcs-server
 # container existed only to stand in for GCS, which this workload never needed
 # (one writer, no ACLs, no listing, no lifecycle rules).
@@ -137,7 +138,7 @@ services:
       # floor outside of that).
       COVERAGE_FLOOR: "${COVERAGE_FLOOR:-0.75}"
       # Abandon a view once it stops yielding new assets, as a fraction of a
-      # page. Assets appear in ~5 views each, so without this the overlap
+      # page. Assets appear in several views each, so without this the overlap
       # dominates the crawl.
       SLICE_MIN_YIELD: "${SLICE_MIN_YIELD:-0.05}"
       # MAX_TAGS (how many tags discovery may visit) is deliberately not set

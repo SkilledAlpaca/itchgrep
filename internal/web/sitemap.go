@@ -13,7 +13,7 @@ const sitemapMaxAge = 86400
 
 // HandleSitemap serves /sitemap.xml, built per request from the cache's
 // bounded tag universe rather than the live index - no bleve query involved,
-// so this needs neither the rate-limited group nor an ErrNotReady path: a
+// so it needs no ErrNotReady path (it is still rate-limited, like every route but the probes): a
 // cache that has not loaded yet just has an empty tag list to add to the
 // fixed pages.
 func (h *handler) HandleSitemap(w http.ResponseWriter, r *http.Request) {

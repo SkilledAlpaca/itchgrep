@@ -15,7 +15,7 @@ const openSearchMaxAge = 86400
 // HandleOpenSearch serves /opensearch.xml, the descriptor a browser uses to
 // offer this site as a search engine. Static like robots.txt - it depends on
 // neither the request nor the loaded dataset - so it needs no handler
-// receiver and is registered outside the rate-limited group the same way.
+// receiver.
 func HandleOpenSearch(w http.ResponseWriter, r *http.Request) {
 	body, err := templates.NewOpenSearch().Render()
 	if err != nil {

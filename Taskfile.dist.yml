@@ -9,7 +9,7 @@ version: "3"
 
 vars:
   # Both services need to agree on this. It is the whole storage layer:
-  # assets.json, tags.json, checkpoint.json and index.bleve/.
+  # index.bleve/ plus the JSON files named in internal/storage/storage.go.
   DATA_DIR: '{{.DATA_DIR | default "./data"}}'
 
 tasks:

@@ -13,9 +13,9 @@
 #   src/  - the git checkout of this repo itself (what scripts/update.sh
 #           pulls into and what `docker compose` is run from).
 #   logs/ - LOG_EXPORT_DIR: where scripts/export-logs.sh writes
-#           access.jsonl / security.jsonl / app.log.
-#   data/ - DATA_PATH: the crawl database volume mounted into the webserver
-#           container.
+#           access.jsonl / security.jsonl / app.log / crawler.log.
+#   data/ - DATA_PATH: the crawl database volume mounted into both the
+#           webserver and dataservice containers.
 #
 # Ownership on data/: both container images now run as uid 65532 (the
 # distroless :nonroot base image — see Dockerfile.webserver and

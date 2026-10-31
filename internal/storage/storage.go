@@ -1,5 +1,6 @@
 // Package storage persists everything the crawl produces: the asset list, the
-// tag universe, an in-progress crawl checkpoint, and the bleve search index.
+// tag universe, an in-progress crawl checkpoint, the bleve search index, and
+// the small JSON files for exchange rates, crawl stats, traffic, and history.
 //
 // It is a plain directory on disk, shared between the dataservice and the
 // webserver. This used to be Google Cloud Storage (with fake-gcs-server

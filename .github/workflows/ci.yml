@@ -1,5 +1,5 @@
-# Guards main and every pull request: the module must build, generated
-# templ code must match its source and stay gofmt-clean, go vet and the
+# Guards main and every pull request: the module must build from freshly
+# generated templ code, hand-written Go must stay gofmt-clean, go vet and the
 # test suite must pass, and govulncheck must find no reachable
 # vulnerabilities. The templ CLI version is read from go.mod so it can
 # never drift from the version the repo actually builds with.
