@@ -236,8 +236,3 @@ func (t Traffic) Grid() ActivityGrid {
 	}
 	return g
 }
-
-// HumaneCount formats a scalar the same way the coverage figures are: grouped
-// thousands, so a bare "96903" beside them does not read as a different kind
-// of number.
-func HumaneCount(n uint64) string { return humaniseCount(int64(n)) }

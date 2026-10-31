@@ -8,6 +8,7 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 		evt.detail.shouldSwap = true;
 		evt.detail.isError = false;
 	}
+	rememberLoadMoreFocus(evt);
 });
 
 // The sidebar shows the top few dozen tags and carries the rest hidden
@@ -107,28 +108,14 @@ function localiseRelativeTimestamps(root) {
 	}
 }
 
-// "/" focuses the search box, as in every other search tool. Ignored while
-// typing anywhere text could be entered - an input, a textarea, a select
-// (arrow-keying its options should not steal focus away) or the summary of an
-// open <details>, since space/enter there already have a job. document.getElementById
-// returns null on pages with no search box (e.g. /saved), and both branches
-// below already no-op on null, so this never throws there.
-//
-// Escape is the answering half: it blurs the box regardless of how focus got
-// there, so it is always available as an exit.
+// Escape leaves the search box, so the keyboard is never stuck in it.
+// There is deliberately no key that jumps *to* it: a single-character
+// shortcut cannot be turned off or remapped, which WCAG 2.1.4 requires, and
+// the box is already the first control after the skip link.
 document.addEventListener('keydown', function (e) {
+	if (e.key !== 'Escape') return;
 	var input = document.getElementById('query-input');
-	if (e.key === 'Escape') {
-		if (input && document.activeElement === input) input.blur();
-		return;
-	}
-	if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
-	var t = e.target;
-	if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable || t.closest('summary'))) return;
-	if (!input) return;
-	e.preventDefault();
-	input.focus();
-	input.select();
+	if (input && document.activeElement === input) input.blur();
 });
 
 // ------------------------------------------------------------------ saved --
@@ -381,4 +368,112 @@ document.addEventListener('htmx:afterSwap', function (evt) {
 	var root = evt.target || document;
 	localiseTimestamps(root);
 	applySavedState(root);
+	syncFacets(root);
+	moveFocusAfterSwap(root);
+});
+
+// ----------------------------------------------------------------- focus --
+//
+// A swap that removes the element that had focus drops focus on <body>, so the
+// next Tab restarts at the top of the page, about a hundred stops from where
+// the visitor was (WCAG 2.4.3). Nothing here runs on the initial page load,
+// only after an htmx swap, so it never steals focus from a page that has only
+// just opened.
+
+// The load-more link is replaced by the cards it fetched, and a replacement
+// has no id for htmx to restore focus to (see AssetPage), so remember the card
+// that came before it. The first new card is its next sibling once the swap is
+// done. Only when the visitor asked for the page - a click or Enter on the
+// link, or focus sitting on it - and not when it fired on scroll: moving focus
+// then would yank it away from wherever they were reading.
+var loadMoreAfter = null;
+
+function rememberLoadMoreFocus(evt) {
+	loadMoreAfter = null;
+	var target = evt.detail.target;
+	if (!target || !target.classList || !target.classList.contains('load-more')) return;
+	var cfg = evt.detail.requestConfig;
+	var by = cfg && cfg.triggeringEvent;
+	if (document.activeElement === target || (by && by.type === 'click')) {
+		loadMoreAfter = target.previousElementSibling;
+	}
+}
+
+function moveFocusAfterSwap(root) {
+	if (loadMoreAfter) {
+		var first = loadMoreAfter.nextElementSibling;
+		loadMoreAfter = null;
+		var link = first && first.querySelector('.asset-link');
+		if (link) link.focus();
+		return;
+	}
+
+	if (root.id !== 'results-region') return;
+	setResultsBusy(false);
+	// The search box and the Search button survive the swap, so a visitor
+	// typing a query keeps their place; only a swap that removed the focused
+	// control (a facet, chip, sort or card link) leaves focus on <body>.
+	if (document.activeElement && document.activeElement !== document.body) return;
+	// The results heading, or the notice's own heading when the response was an
+	// error page that has no results in it.
+	var heading = root.querySelector('#results') || root.querySelector('h2');
+	if (!heading) return;
+	if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+	heading.focus();
+}
+
+// --------------------------------------------------------------- loading --
+//
+// A busy flag on the region so assistive technology and CSS can both tell a
+// swap is pending. The spinner itself is shown through hx-indicator (see
+// Index), not from here.
+function setResultsBusy(busy) {
+	var region = document.getElementById('results-region');
+	if (!region) return;
+	if (busy) {
+		region.setAttribute('aria-busy', 'true');
+	} else {
+		region.removeAttribute('aria-busy');
+	}
+}
+
+document.addEventListener('htmx:beforeRequest', function (evt) {
+	if (evt.detail.target && evt.detail.target.id === 'results-region') setResultsBusy(true);
+});
+
+// A failed request is not swapped, so afterSwap never clears the flag.
+document.addEventListener('htmx:responseError', function () { setResultsBusy(false); });
+document.addEventListener('htmx:sendError', function () { setResultsBusy(false); });
+
+// --------------------------------------------------------------- sidebar --
+//
+// The tag list is a <details> so a phone can fold it away and show the first
+// result above the fold. The server renders it open, which is right for a wide
+// screen and for scripting being off; on a narrow one it is folded here. CSS
+// hides the summary on a wide screen, so there is nothing to fold it with.
+var NARROW = window.matchMedia ? window.matchMedia('(max-width: 900px)') : null;
+
+function syncFacets(root) {
+	var all = root.querySelectorAll('.facets-details');
+	for (var i = 0; i < all.length; i++) {
+		all[i].open = !(NARROW && NARROW.matches);
+	}
+}
+
+// Resizing across the breakpoint (rotating a tablet) puts it in the state the
+// new width wants.
+if (NARROW) {
+	NARROW.addEventListener('change', function () { syncFacets(document); });
+}
+
+// Deferred scripts run after parsing, so the sidebar is already in the
+// document; folding it here rather than on DOMContentLoaded keeps the open
+// state from painting first.
+syncFacets(document);
+
+// Going back restores a saved copy of the page. htmx took that snapshot during a
+// swap, so the region was still marked busy and the sidebar was open; reset both.
+document.addEventListener('htmx:historyRestore', function () {
+	setResultsBusy(false);
+	syncFacets(document);
 });

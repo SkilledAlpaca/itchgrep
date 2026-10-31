@@ -55,12 +55,12 @@ func TestAttributionSurvivesOnEveryPage(t *testing.T) {
 }
 
 func TestStatsLinksToAboutAsAPlainNavigation(t *testing.T) {
-	// The index page swaps /about into #page-content via htmx to keep the
+	// The index page used to swap /about into the page via htmx to keep the
 	// search form's state alive. The stats page copied that link, but it has
 	// no state to keep - the swap left visitors reading about-content under a
 	// /stats URL, where refresh and share both resurrect the wrong page. Here
 	// the link must be an ordinary navigation.
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), History{}))
+	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, time.Now()), History{}))
 
 	assert.Contains(t, html, `href="/about"`)
 	assert.NotContains(t, html, `hx-get="/about"`,
@@ -72,7 +72,7 @@ func TestStatsPageRendersEveryBreakdownRow(t *testing.T) {
 	// this asserts the page actually shows every bucket rather than stopping
 	// short of the ones added alongside routeOther.
 	snap := metrics.Snapshot{New: 12, Feed: 34, Tag: 56, Saved: 78, Other: 90}
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, time.Now()), History{}))
+	html := render(t, StatsPage(NewTraffic(snap, time.Now()), History{}))
 
 	assert.Contains(t, html, "New arrivals page")
 	assert.Contains(t, html, "12")
@@ -92,7 +92,7 @@ func TestStatsHeadlineRendersFourCellsInOrder(t *testing.T) {
 	// back the count goes - from the per-route breakdown below, so it reads
 	// as a summary rather than one undifferentiated grid.
 	snap := metrics.Snapshot{Total: 100, Searches: 40, Started: now.Add(-90 * time.Minute)}
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, now), History{}))
+	html := render(t, StatsPage(NewTraffic(snap, now), History{}))
 
 	require.Contains(t, html, `<dl class="stats-grid stats-headline">`)
 	headline := html[strings.Index(html, `<dl class="stats-grid stats-headline">`):]
@@ -110,7 +110,7 @@ func TestStatsTableListsEveryRouteInAFixedOrder(t *testing.T) {
 	// The order mirrors how a reader thinks about the site: whole pages
 	// before the fragment and asset requests they trigger, then the
 	// specialised pages, ending with the catch-all overflow bucket.
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, now), History{}))
+	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, now), History{}))
 
 	require.Contains(t, html, `<table class="stats-table">`)
 	table := html[strings.Index(html, `<table class="stats-table">`):]
@@ -136,7 +136,7 @@ func TestStatsTableRowsSumToTheTotal(t *testing.T) {
 		c.RecordRequest(route, false, 200)
 	}
 	snap := c.Snapshot()
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, now), History{}))
+	html := render(t, StatsPage(NewTraffic(snap, now), History{}))
 
 	table := html[strings.Index(html, `<table class="stats-table">`):]
 	table = table[:strings.Index(table, `</table>`)]
@@ -160,7 +160,7 @@ func TestCountingSinceRendersAsALocalisableTimeElement(t *testing.T) {
 	// should be replaced.
 	firstSeen := now.Add(-30 * 24 * time.Hour)
 	tr := NewTraffic(metrics.Snapshot{FirstSeen: firstSeen}, now)
-	html := render(t, StatsPage(Freshness{}, Coverage{}, tr, History{}))
+	html := render(t, StatsPage(tr, History{}))
 
 	assert.Contains(t, html, `class="js-local"`)
 	assert.Contains(t, html, `datetime="`+firstSeen.UTC().Format(time.RFC3339)+`"`)
@@ -170,7 +170,7 @@ func TestActivityGridRendersAsAnAccessibleTable(t *testing.T) {
 	today := gridNow.Unix() / 86400
 	snap := metrics.Snapshot{}
 	snap.Days[0] = models.DayBucket{EpochDay: today, Searches: 1234}
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(snap, gridNow), History{}))
+	html := render(t, StatsPage(NewTraffic(snap, gridNow), History{}))
 
 	assert.Contains(t, html, "Searches, last 90 days</h2>")
 	assert.NotContains(t, html, "last 24 hours")
@@ -197,7 +197,7 @@ func TestActivityGridRendersAsAnAccessibleTable(t *testing.T) {
 }
 
 func TestActivityGridZeroStateSaysSo(t *testing.T) {
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, gridNow), History{}))
+	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, gridNow), History{}))
 	assert.Contains(t, html, "No searches recorded in the last 90 days yet.")
 	assert.NotContains(t, html, `activity-l1" title`, "no day is shaded")
 }
@@ -206,7 +206,7 @@ func TestEmptyHistoryRendersNoSection(t *testing.T) {
 	// A deploy before this feature shipped, or one with no crawl since, has
 	// nothing recorded - the section must not appear at all rather than
 	// appear with nothing in it.
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), History{}))
+	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, time.Now()), History{}))
 
 	assert.NotContains(t, html, "Index history")
 	assert.NotContains(t, html, "history-row")
@@ -219,7 +219,7 @@ func TestHistorySectionRendersRowsNewestFirstWithDeltas(t *testing.T) {
 		{When: time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), Indexed: 96903, Catalogue: 108697,
 			DurationSeconds: 3600 + 12*60, Pages: 4200, SlicesDone: 314, SlicesPlanned: 320, Resumed: true},
 	})
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), history))
+	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, time.Now()), history))
 
 	assert.Contains(t, html, "Index history")
 	assert.Contains(t, html, "Aug 29, 2026 — 96,903 assets (+1,204)",
@@ -243,7 +243,7 @@ func TestHistoryDeltaUsesARealMinusSign(t *testing.T) {
 		{Indexed: 96903},
 		{Indexed: 95699},
 	})
-	html := render(t, StatsPage(Freshness{}, Coverage{}, NewTraffic(metrics.Snapshot{}, time.Now()), history))
+	html := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, time.Now()), history))
 
 	assert.Contains(t, html, "−1,204", "a shrinking index must not read as a hyphenated range")
 	assert.NotContains(t, html, "-1,204")
@@ -323,12 +323,12 @@ func TestTheLoadMoreTriggerOnlyAppearsWhenMoreExist(t *testing.T) {
 	// Letting an empty response be the stop signal costs one wasted request at
 	// the bottom of every list - a full index pass returning nothing.
 	last := sampleResults()
-	assert.NotContains(t, render(t, AssetPage(Filters{}, last)), "asset-load-trigger")
+	assert.NotContains(t, render(t, AssetPage(Filters{}, last)), "load-more")
 
 	more := sampleResults()
 	more.HasMore = true
 	html := render(t, AssetPage(Filters{}, more))
-	assert.Contains(t, html, "asset-load-trigger")
+	assert.Contains(t, html, "load-more")
 	assert.Contains(t, html, `hx-get="/results?page=2"`)
 }
 
@@ -484,7 +484,7 @@ func TestArrivalsPageRendersCardsNewestFirst(t *testing.T) {
 		{GameId: "1", Title: "Freshly Arrived", Link: "https://a.itch.io/f"},
 	}
 	age := NewFreshness(time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), 0)
-	html := render(t, ArrivalsPage(assets, money.Fallback(), age, Coverage{}))
+	html := render(t, ArrivalsPage(assets, money.Fallback(), age))
 
 	assert.Contains(t, html, "New this week")
 	assert.Contains(t, html, "Freshly Arrived")
@@ -495,7 +495,7 @@ func TestArrivalsPageExplainsAnEmptyIndex(t *testing.T) {
 	// An index built before this feature shipped has nothing stamped yet. That
 	// has to read as "wait for the next crawl", not as a page that looks
 	// broken or forgot to render its results.
-	html := render(t, ArrivalsPage(nil, money.Fallback(), Freshness{}, Coverage{}))
+	html := render(t, ArrivalsPage(nil, money.Fallback(), Freshness{}))
 
 	assert.Contains(t, html, "next weekly crawl")
 	assert.NotContains(t, html, `id="asset-list"`)
@@ -536,7 +536,7 @@ func TestSaveButtonUsesTheDisplayedPriceNotTheRawOne(t *testing.T) {
 func TestSavedPageStatesItsPrivacyPosture(t *testing.T) {
 	// The one thing this page must never leave implicit: nothing saved here
 	// is sent to, or knowable by, the server.
-	html := render(t, SavedPage(Freshness{}, Coverage{}))
+	html := render(t, SavedPage())
 
 	assert.Contains(t, html, "never")
 	assert.Contains(t, html, "this browser")
@@ -546,7 +546,7 @@ func TestSavedPageDegradesHonestlyWithoutScripting(t *testing.T) {
 	// This is the one page on the site that cannot work with scripting off -
 	// a saved list kept off the server has nowhere else to come from - so it
 	// has to say that rather than render a silently empty grid.
-	html := render(t, SavedPage(Freshness{}, Coverage{}))
+	html := render(t, SavedPage())
 
 	assert.Contains(t, html, "<noscript>")
 	assert.Contains(t, html, "needs JavaScript")
@@ -557,9 +557,9 @@ func TestSavedPageShellHasAnEmptyGridAndACardTemplate(t *testing.T) {
 	// of its own to put in the grid, only the empty container and the
 	// <template> app.js clones from - so the grid it renders has to start
 	// with exactly one child, the (initially hidden) empty-state notice.
-	html := render(t, SavedPage(Freshness{}, Coverage{}))
+	html := render(t, SavedPage())
 
-	assert.Contains(t, html, `id="asset-list" data-saved-grid`)
+	assert.Contains(t, html, `id="asset-list" class="asset-grid" data-saved-grid`)
 	assert.Contains(t, html, `id="saved-card-template"`)
 	assert.Contains(t, html, `id="saved-empty" class="notice" hidden`)
 
@@ -652,9 +652,9 @@ func TestArrivalsCardsAreNotLiveHtmxLinks(t *testing.T) {
 	// /new has no #results-region, so a card link left under htmx dies with
 	// htmx:targetError and navigates nowhere. The wrapper must disable htmx for
 	// every card, and the links must still carry a real href to fall back on.
-	html := render(t, ArrivalsPage(sampleResults().Assets, money.Fallback(), Freshness{}, Coverage{}))
+	html := render(t, ArrivalsPage(sampleResults().Assets, money.Fallback(), Freshness{}))
 
-	assert.Contains(t, html, `<div id="asset-list" hx-disable>`)
+	assert.Contains(t, html, `<div id="asset-list" class="asset-grid" hx-disable>`)
 	assert.Contains(t, html, `href="/?tags=2d"`)
 	assert.NotContains(t, html[:strings.Index(html, `id="asset-list"`)], "hx-get",
 		"nothing before the wrapper may be an htmx link")
@@ -685,7 +685,7 @@ func TestEveryFilterLinkIsNofollow(t *testing.T) {
 	for _, a := range links {
 		assert.Contains(t, a, `rel="nofollow"`, a)
 	}
-	assert.Contains(t, anchorsWith(html, "asset-load-trigger")[0], `rel="nofollow"`)
+	assert.Contains(t, anchorsWith(html, "load-more")[0], `rel="nofollow"`)
 }
 
 func TestBareFrontPageSidebarLinksToTagPages(t *testing.T) {

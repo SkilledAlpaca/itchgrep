@@ -56,7 +56,7 @@ type HistoryRow struct {
 func (r HistoryRow) When() string { return r.rec.When.UTC().Format("Jan 2, 2006") }
 
 // Indexed is the published asset count.
-func (r HistoryRow) Indexed() string { return HumaneCount(uint64(r.rec.Indexed)) }
+func (r HistoryRow) Indexed() string { return humaniseCount(r.rec.Indexed) }
 
 // DeltaLabel is the change in indexed assets since the previous recorded
 // crawl, or a note that there is no previous one to compare against.
@@ -77,9 +77,9 @@ func (r HistoryRow) Summary() string {
 // misreads as a range or a hyphenated word at a glance.
 func formatDelta(delta int64) string {
 	if delta < 0 {
-		return "−" + HumaneCount(uint64(-delta))
+		return "−" + humaniseCount(-delta)
 	}
-	return "+" + HumaneCount(uint64(delta))
+	return "+" + humaniseCount(delta)
 }
 
 // CoverageLabel is the crawl's own coverage reading, independent of whatever
@@ -90,7 +90,7 @@ func (r HistoryRow) CoverageLabel() string {
 		return "unknown"
 	}
 	pct := float64(r.rec.Indexed) / float64(r.rec.Catalogue) * 100
-	return fmt.Sprintf("%.1f%% of %s", pct, HumaneCount(uint64(r.rec.Catalogue)))
+	return fmt.Sprintf("%.1f%% of %s", pct, humaniseCount(r.rec.Catalogue))
 }
 
 // DurationLabel is how long the run took, from its own start to publish.
@@ -107,20 +107,20 @@ func formatDuration(seconds int64) string {
 }
 
 // NewAssetsLabel is how many game ids this crawl saw for the first time.
-func (r HistoryRow) NewAssetsLabel() string { return HumaneCount(uint64(r.rec.NewAssets)) }
+func (r HistoryRow) NewAssetsLabel() string { return humaniseCount(r.rec.NewAssets) }
 
 // RemovedAssetsLabel is how many previously published game ids this crawl no
 // longer found.
-func (r HistoryRow) RemovedAssetsLabel() string { return HumaneCount(uint64(r.rec.RemovedAssets)) }
+func (r HistoryRow) RemovedAssetsLabel() string { return humaniseCount(r.rec.RemovedAssets) }
 
 // FreePaidLabel is the free/paid split of the published index.
 func (r HistoryRow) FreePaidLabel() string {
 	paid := r.rec.Indexed - r.rec.FreeAssets
-	return fmt.Sprintf("%s free / %s paid", HumaneCount(uint64(r.rec.FreeAssets)), HumaneCount(uint64(paid)))
+	return fmt.Sprintf("%s free / %s paid", humaniseCount(r.rec.FreeAssets), humaniseCount(paid))
 }
 
 // PagesLabel is how many pages this crawl fetched.
-func (r HistoryRow) PagesLabel() string { return HumaneCount(uint64(r.rec.Pages)) }
+func (r HistoryRow) PagesLabel() string { return humaniseCount(r.rec.Pages) }
 
 // SlicesLabel is how many of the planned slices this crawl finished.
 //
@@ -128,14 +128,14 @@ func (r HistoryRow) PagesLabel() string { return HumaneCount(uint64(r.rec.Pages)
 // reached before every slice runs, and the remainder are skipped on purpose
 // rather than abandoned - see crawler.done in cmd/dataservice.
 func (r HistoryRow) SlicesLabel() string {
-	return fmt.Sprintf("%s/%s", HumaneCount(uint64(r.rec.SlicesDone)), HumaneCount(uint64(r.rec.SlicesPlanned)))
+	return fmt.Sprintf("%s/%s", humaniseCount(r.rec.SlicesDone), humaniseCount(r.rec.SlicesPlanned))
 }
 
 // RefusalsLabel is how many 429s itch.io returned during this crawl.
-func (r HistoryRow) RefusalsLabel() string { return HumaneCount(uint64(r.rec.Refusals)) }
+func (r HistoryRow) RefusalsLabel() string { return humaniseCount(r.rec.Refusals) }
 
 // TagsLabel is the size of the tag universe this crawl planned against.
-func (r HistoryRow) TagsLabel() string { return HumaneCount(uint64(r.rec.Tags)) }
+func (r HistoryRow) TagsLabel() string { return humaniseCount(r.rec.Tags) }
 
 // Resumed reports whether this run picked up a checkpoint rather than
 // starting fresh - shown only when true, since "did not resume" is the normal

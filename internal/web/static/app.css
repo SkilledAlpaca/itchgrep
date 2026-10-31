@@ -111,6 +111,35 @@ main {
   padding: 0 2rem 6rem;
 }
 
+/* The first focusable element on every page. Off-screen until focused, then
+ * a solid accent button with a text-coloured ring: the ring is 13:1 or better
+ * against the page, well over the 3:1 a focus indicator needs. */
+.skip-link {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 100;
+  padding: 0.9rem 1.6rem;
+  font-weight: 700;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-radius: var(--radius);
+  text-decoration: none;
+  transform: translateY(-20rem);
+}
+
+.skip-link:focus {
+  transform: none;
+  outline: 3px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* <main> is a script and fragment-link focus target only (tabindex -1), never
+ * reached by Tab; a ring around the whole page body would only be noise. */
+main:focus {
+  outline: none;
+}
+
 a {
   color: var(--accent);
   text-decoration: none;
@@ -159,13 +188,17 @@ a:hover {
 
 /* ---------------------------------------------------------------- header  */
 
+/* A sibling of <main>, not inside it, so it carries main's own width and
+   gutters to line up with the content below. */
 .masthead {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 1rem 2rem;
-  padding: 2.8rem 0 1.8rem;
+  max-width: 132rem;
+  margin: 0 auto;
+  padding: 2.8rem 2rem 1.8rem;
 }
 
 /* The wordmark and, beneath it, what the index behind it is: how recent, and
@@ -222,6 +255,13 @@ a:hover {
   .wordmark .caret {
     animation: none;
   }
+
+  /* Rotation is the motion; the ring itself stays as the busy cue, dotted so
+   * it still reads as "working" when it is not turning. */
+  .spinner {
+    animation: none;
+    border-style: dotted;
+  }
 }
 
 .masthead-meta {
@@ -235,6 +275,19 @@ a:hover {
 
 .masthead-meta p {
   margin: 0;
+}
+
+/* On a phone the stacked header pushed the first result below the fold. Drop
+   the tagline (the page itself says what it is) and the top padding; the
+   credit stays. */
+@media (max-width: 600px) {
+  .masthead {
+    padding-top: 1.2rem;
+  }
+
+  .masthead-tagline {
+    display: none;
+  }
 }
 
 /* These were faint uppercase text sitting under two lines of faint prose, which
@@ -366,6 +419,12 @@ a:hover {
   display: block;
 }
 
+/* app.js marks the region busy while a swap is pending. */
+.results-region[aria-busy="true"],
+.results-region[aria-busy="true"] a {
+  cursor: progress;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -410,9 +469,62 @@ a:hover {
 }
 
 @media (max-width: 900px) {
+  /* No scroll box: the list sits behind a disclosure and, once opened, is
+   * part of the page's own scroll. A nested scroller of its own trapped touch
+   * scrolling. */
   .facets {
     position: static;
-    max-height: 32rem;
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
+/* The disclosure control exists for narrow screens only. Hidden here, the
+ * <details> element is open on a wide one and its content simply shows. */
+.facets-toggle {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .facets-heading {
+    margin-bottom: 0.6rem;
+  }
+
+  .facets-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 4.4rem;
+    margin-bottom: 0.9rem;
+    padding: 0.8rem 1.2rem;
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--bg-input);
+    border: 1px solid var(--border-control);
+    border-radius: 6px;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .facets-toggle::-webkit-details-marker {
+    display: none;
+  }
+
+  /* A chevron drawn from borders: pseudo-element text would be read aloud. */
+  .facets-toggle::after {
+    content: "";
+    flex: 0 0 auto;
+    width: 0.8rem;
+    height: 0.8rem;
+    margin-left: 1rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-0.2rem) rotate(45deg);
+  }
+
+  .facets-details[open] > .facets-toggle::after {
+    transform: translateY(0.2rem) rotate(-135deg);
   }
 }
 
@@ -501,6 +613,22 @@ a:hover {
   background: var(--accent);
 }
 
+/* At the tag cap the facet is plain text, since a link would lead to the page
+ * it is on. Muted and with no hover state, so it does not look clickable. */
+.facet.is-capped {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.facet.is-capped:hover {
+  color: var(--text-faint);
+  background: transparent;
+}
+
+.facet.is-capped:hover .facet-count {
+  color: var(--text-faint);
+}
+
 .facet-count {
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
@@ -516,6 +644,21 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.toolbar-lead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1.2rem;
+}
+
+/* Visible, so the focus ring that lands here after a filter swap is something
+ * a sighted keyboard user can see. */
+.results-heading {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
 }
 
 .toolbar-controls {
@@ -681,7 +824,7 @@ a:hover {
 
 /* ----------------------------------------------------------------- grid  */
 
-#asset-list {
+.asset-grid {
   display: grid;
   /* auto-fill rather than a fixed column count: the layout then responds to
    * the actual width instead of to two hardcoded breakpoints. */
@@ -781,6 +924,7 @@ a:hover {
 }
 
 .asset-title {
+  margin: 0;
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1.3;
@@ -794,7 +938,8 @@ a:hover {
 
 /* The author sits outside the card's link to itch.io, because it leads
    somewhere else: everything else by the same creator. */
-.asset-author {
+.asset-author,
+.asset-byline {
   display: inline-block;
   margin: 0.2rem 1.2rem 0;
   font-size: 1.3rem;
@@ -881,6 +1026,33 @@ a:hover {
   border-style: dashed;
 }
 
+/* At the tag cap a card's chip is plain text (a link would lead to the page it
+ * is on): muted, default cursor, and no hover fill. */
+.tag.is-capped {
+  color: var(--text-faint);
+  border-color: var(--border);
+  cursor: default;
+}
+
+.tag.is-capped:hover {
+  color: var(--text-faint);
+  background: transparent;
+  border-color: var(--border);
+}
+
+/* "+N" after the fifth chip. Chip-shaped so it reads as part of the row, dotted
+ * and faint so it does not read as one more tag to click. */
+.tag-more {
+  padding: 0.25rem 0.7rem;
+  font-size: 1.15rem;
+  line-height: 1.5;
+  color: var(--text-faint);
+  border: 1px dotted var(--border-strong);
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: default;
+}
+
 /* ---------------------------------------------------------------- states  */
 
 .notice {
@@ -911,8 +1083,8 @@ a:hover {
 }
 
 /* The load-more control spans the whole grid. It used to be an invisible
- * sentinel with an 8rem height; that rule now stretched the visible button. */
-#asset-load-trigger {
+ * sentinel with an 8rem height, selected by its id; it has no id now. */
+.load-more {
   grid-column: 1 / -1;
 }
 

@@ -67,10 +67,12 @@ func (c Coverage) Detail() string {
 }
 
 // humaniseCount groups thousands with commas. It is the one count formatter in
-// this package - the sidebar facet counts, /stats' traffic figures (via the
-// exported HumaneCount) and the history table all go through it, so a bare
-// "96903" never turns up beside a "96,903" formatted a different way.
-func humaniseCount(n int64) string {
+// this package - the sidebar facet counts, /stats' traffic figures and the
+// history table all go through it, so a bare "96903" never turns up beside a
+// "96,903" formatted a different way. Generic over the two integer widths the
+// callers hold (the index's int64 counts, the metrics' uint64 counters) so none
+// of them needs a conversion wrapper.
+func humaniseCount[N ~int | ~int64 | ~uint64](n N) string {
 	s := fmt.Sprintf("%d", n)
 	if len(s) <= 3 {
 		return s

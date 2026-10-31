@@ -47,7 +47,6 @@ templ NewTabHint() {
 }
 
 // priceLabel is what the badge on a card says.
-//
 // Three things are folded in here, in order of how much they change the
 // meaning. A pay-what-you-want asset with a zero minimum is free but not merely
 // free - "Name your price" is what itch.io calls it, and calling it "Free"
@@ -185,7 +184,12 @@ templ AssetCard(f Filters, asset models.Asset, rates money.Rates) {
 				/>
 			}
 			<div class="asset-body">
-				<div class="asset-title">{ asset.Title }</div>
+				// A heading so a screen reader user can move from result to
+				// result; the card link wraps it, which HTML allows. The link
+				// keeps its name from content (title, hint, description): naming
+				// it with aria-labelledby drops the visible description from the
+				// name and fails WCAG 2.5.3 Label in Name.
+				<h3 class="asset-title">{ asset.Title }</h3>
 				@NewTabHint()
 				if asset.Description != "" {
 					<p class="asset-description">{ asset.Description }</p>
@@ -293,13 +297,18 @@ templ AssetPage(f Filters, r Results) {
 		//
 		// With scripting off htmx does nothing, so it degrades to a plain link
 		// to the next page.
+		//
+		// No id, deliberately. htmx restores focus after a swap to an element
+		// with the same id as the one that had it, which here is the *next*
+		// load-more button at the bottom of 36 new cards. Without an id focus
+		// is left for app.js, which puts it on the first new card.
 		<a
-			id="asset-load-trigger"
 			class="load-more"
 			href={ templ.SafeURL(f.PageURL(r.Page + 1)) }
 			rel="nofollow"
 			hx-get={ f.FragmentURL(r.Page + 1) }
 			hx-trigger="revealed, click"
+			hx-target="this"
 			hx-swap="outerHTML"
 		>Load more results</a>
 	}

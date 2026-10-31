@@ -8,9 +8,8 @@ package templates
 // operator-side signals - a public probe counter is a feedback channel a
 // scanner author could use to tune around the matcher, and the error counters
 // tell an attacker how the origin is reacting. They stay in the log.
-templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
-	@Masthead(age, coverage)
-	<div id="page-content" class="prose stats-page">
+templ StatsPage(tr Traffic, history History) {
+	<div class="prose stats-page">
 		<h2>Traffic</h2>
 		<p>Counted in the process, never read back out of a log - see the
 		<a href="/about">About</a>
@@ -18,11 +17,11 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 		<dl class="stats-grid stats-headline">
 			<div class="stats-cell">
 				<dt>Total requests</dt>
-				<dd>{ HumaneCount(tr.Total()) }</dd>
+				<dd>{ humaniseCount(tr.Total()) }</dd>
 			</div>
 			<div class="stats-cell">
 				<dt>Searches served</dt>
-				<dd>{ HumaneCount(tr.Searches()) }</dd>
+				<dd>{ humaniseCount(tr.Searches()) }</dd>
 			</div>
 			<div class="stats-cell">
 				<dt>Uptime</dt>
@@ -45,43 +44,43 @@ templ StatsPage(age Freshness, coverage Coverage, tr Traffic, history History) {
 			<tbody>
 				<tr>
 					<th scope="row">Home page</th>
-					<td>{ HumaneCount(tr.Index()) }</td>
+					<td>{ humaniseCount(tr.Index()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Results fragment</th>
-					<td>{ HumaneCount(tr.Results()) }</td>
+					<td>{ humaniseCount(tr.Results()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">About page</th>
-					<td>{ HumaneCount(tr.About()) }</td>
+					<td>{ humaniseCount(tr.About()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Stats page</th>
-					<td>{ HumaneCount(tr.Stats()) }</td>
+					<td>{ humaniseCount(tr.Stats()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Static assets</th>
-					<td>{ HumaneCount(tr.Static()) }</td>
+					<td>{ humaniseCount(tr.Static()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">New arrivals page</th>
-					<td>{ HumaneCount(tr.New()) }</td>
+					<td>{ humaniseCount(tr.New()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Feed requests</th>
-					<td>{ HumaneCount(tr.Feed()) }</td>
+					<td>{ humaniseCount(tr.Feed()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Tag pages</th>
-					<td>{ HumaneCount(tr.Tag()) }</td>
+					<td>{ humaniseCount(tr.Tag()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Saved page</th>
-					<td>{ HumaneCount(tr.Saved()) }</td>
+					<td>{ humaniseCount(tr.Saved()) }</td>
 				</tr>
 				<tr>
 					<th scope="row">Other</th>
-					<td>{ HumaneCount(tr.Other()) }</td>
+					<td>{ humaniseCount(tr.Other()) }</td>
 				</tr>
 			</tbody>
 		</table>

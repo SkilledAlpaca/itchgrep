@@ -19,19 +19,11 @@ There is one job, `test`, running on a GitHub-hosted `ubuntu-latest` runner (a t
 
 ## Step by step
 
-```yaml
-steps:
-  - uses: actions/checkout@v4
-```
-Checks out the repository's code onto the runner. Every workflow needs this as its first step, or there's no code to test.
+The first step uses `actions/checkout` to check the repository's code out onto the runner. Every workflow needs this as its first step, or there's no code to test.
 
-```yaml
-  - uses: actions/setup-go@v5
-    with:
-      go-version-file: go.mod
-      cache: true
-```
-Installs the Go toolchain. `go-version-file: go.mod` means it reads the exact Go version from `go.mod`'s own `go 1.27.3` line rather than a version hardcoded into the workflow — so bumping the Go version in `go.mod` is the only change needed to also change what CI builds with. `cache: true` caches downloaded modules between runs, so CI doesn't re-download the same dependencies on every single run.
+The second step uses `actions/setup-go` to install the Go toolchain. Its `go-version-file: go.mod` input means it reads the exact Go version from `go.mod`'s own `go` line rather than a version hardcoded into the workflow — so bumping the Go version in `go.mod` is the only change needed to also change what CI builds with. Its `cache: true` input caches downloaded modules between runs, so CI doesn't re-download the same dependencies on every single run.
+
+Dependabot bumps the major versions of both actions, so this document deliberately doesn't quote them. Read the current `uses:` lines and inputs in `.github/workflows/ci.yml`.
 
 ```yaml
   - name: Install templ (pinned to go.mod's version)
@@ -104,7 +96,7 @@ The workflow declares no `permissions:` block and references no `secrets:` anywh
 A few things worth knowing if you've never touched a GitHub Actions YAML file before:
 
 - **Indentation is meaningful**, exactly like Python. A step that isn't indented under `steps:` at the right level simply won't run, usually with a YAML parse error rather than a helpful message.
-- **`uses:`** runs someone else's pre-built action (here, always pinned to a major version tag like `@v4` or `@v5`) — you're not going to write one of these from scratch. **`run:`** runs a literal shell command (or, with the `|` block-scalar syntax used above, several lines of shell script) on the runner.
+- **`uses:`** runs someone else's pre-built action (here, always pinned to a major version tag, which Dependabot keeps current) — you're not going to write one of these from scratch. **`run:`** runs a literal shell command (or, with the `|` block-scalar syntax used above, several lines of shell script) on the runner.
 - **`with:`** passes named inputs to a `uses:` action — it's specific to whichever action it's attached to; there's no way to know what inputs are valid without checking that action's own documentation.
 - To add a new check (for example, a linter), add a new step under `steps:` with a `name:` and either a `uses:` or `run:` — order matters, since steps run sequentially and a later step doesn't run if an earlier one fails.
 - To test a workflow change without waiting on a real push, open a draft pull request — the `pull_request:` trigger covers it the same as any other PR.
