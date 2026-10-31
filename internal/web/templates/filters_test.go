@@ -223,3 +223,41 @@ func TestEveryFilterSurvivesTheUrlRoundTripIncludingLike(t *testing.T) {
 	assert.Equal(t, "42", v.Get("like"))
 	assert.Equal(t, "/?author=ana&cur=EUR&like=42&not=3d&price=under-5&q=tiles&sort=price&tags=2d", f.ShareURL())
 }
+
+func TestRequiredAndExcludedTagsHaveSeparateCaps(t *testing.T) {
+	f := Filters{}
+	for _, tag := range []string{"a", "b", "c", "d", "e", "f"} {
+		f = f.WithNotTag(tag)
+	}
+	assert.Len(t, f.NotTags, MaxNotTags)
+	assert.True(t, f.AtNotTagLimit())
+	assert.False(t, f.AtTagLimit(), "a full exclusion list does not use up the required-tag budget")
+
+	f = f.WithTag("x")
+	assert.Equal(t, []string{"x"}, f.Tags)
+}
+
+func TestTheCapsAreFour(t *testing.T) {
+	// The WAF challenges three or more not= values and the public link space
+	// grows with every extra tag; changing either number is a decision, not a
+	// tweak (docs/patterns.md, "Add a search filter").
+	assert.Equal(t, 4, MaxTags)
+	assert.Equal(t, 4, MaxNotTags)
+}
+
+func TestBareMeansNothingEncodes(t *testing.T) {
+	assert.True(t, Filters{}.Bare())
+	assert.True(t, Filters{Sort: models.SortPopular}.Bare(), "the default sort is not encoded")
+	assert.False(t, Filters{Query: "x"}.Bare())
+	assert.False(t, Filters{Currency: "EUR"}.Bare(), "a tag page would drop the currency")
+	assert.False(t, Filters{}.WithTag("2d").Bare())
+}
+
+func TestNarrowedIgnoresTheQueryAndDisplayChoices(t *testing.T) {
+	assert.False(t, Filters{Query: "x", Currency: "EUR", Sort: models.SortTitle}.Narrowed())
+	assert.True(t, Filters{Price: models.PricingFree}.Narrowed())
+	assert.True(t, Filters{Like: "1"}.Narrowed())
+	assert.True(t, Filters{Author: "a"}.Narrowed())
+	assert.True(t, Filters{}.WithNotTag("a").Narrowed())
+	assert.True(t, Filters{Query: "x"}.Any())
+}

@@ -1,5 +1,7 @@
 package templates
 
+import "net/url"
+import "strings"
 import "itchgrep/pkg/models"
 import "itchgrep/pkg/money"
 
@@ -64,6 +66,28 @@ func facetTail(i int) bool {
 	return i >= sidebarTags
 }
 
+// facetHref is where a sidebar tag link goes. On the bare front page that is
+// the tag's own page, /tag/{slug}: crawlers get one clean, canonical, followable
+// path per tag, and everything else stays a nofollow query string. The htmx
+// attributes are unchanged either way, so with scripting on the click still
+// swaps results in place and pushes the /?tags= address.
+func facetHref(f Filters, slug string) string {
+	if f.Bare() {
+		return "/tag/" + url.PathEscape(slug)
+	}
+	return f.WithTag(slug).ShareURL()
+}
+
+// activeAttrs marks the control for the filter that is currently applied.
+var activeAttrs = templ.Attributes{"aria-current": "true"}
+
+func excludeAttrs(slug string) templ.Attributes {
+	return templ.Attributes{
+		"title":      "Hide assets tagged " + slug,
+		"aria-label": "Hide assets tagged " + slug,
+	}
+}
+
 func resultSummary(r Results) string {
 	if r.Total == 1 {
 		return "1 asset"
@@ -71,20 +95,57 @@ func resultSummary(r Results) string {
 	return humaniseCount(r.Total) + " assets"
 }
 
-// control renders one filter link. Every control on the page is the same shape:
-// an anchor whose href is the state it leads to, so the page works with
-// JavaScript disabled, plus the htmx attributes that swap the results in place
-// when it is not.
-templ control(class string, next Filters, label string) {
+// filterLink is the one shape every filter link on the site takes: an anchor
+// whose href is the state it leads to, so the page works with JavaScript
+// disabled, plus the htmx attributes that swap the results in place when it is
+// not. Everything that changes what the results show goes through here, so a
+// rule about filter links (rel, aria state) is made once.
+//
+// href is a parameter, not derived from next, because the one link that should
+// differ is the unfiltered sidebar's, which points at /tag/{slug} - see
+// facetHref. attrs carries per-link extras such as aria-current.
+templ filterLink(class string, href string, next Filters, attrs templ.Attributes) {
 	<a
 		class={ class }
-		href={ templ.SafeURL(next.ShareURL()) }
+		href={ templ.SafeURL(href) }
+		{ filterRel(href)... }
 		hx-get={ next.FragmentURL(1) }
 		hx-target="#results-region"
 		hx-swap="innerHTML"
+		{ attrs... }
 	>
-		{ label }
+		{ children... }
 	</a>
+}
+
+// filterRel marks a filter link rel="nofollow": the destinations differ only
+// by query string, and a crawler walking them multiplies every tag by every
+// other. The exception is a /tag/ path, which is the clean, sitemap-listed page
+// crawlers are meant to follow.
+func filterRel(href string) templ.Attributes {
+	if strings.HasPrefix(href, "/tag/") {
+		return nil
+	}
+	return templ.Attributes{"rel": "nofollow"}
+}
+
+// control is filterLink for the common case of a plain text label whose
+// destination is next's own address.
+templ control(class string, next Filters, label string) {
+	@filterLink(class, next.ShareURL(), next, nil) {
+		{ label }
+	}
+}
+
+// removable renders a control that removes a filter. The ✕ is decoration, so it
+// is hidden from assistive technology and the action is spelled out instead:
+// screen readers announce the glyph as "multiplication x". The leading spaces
+// are string expressions because templ trims literal whitespace at the edge of
+// an element, which would glue the hidden text onto the label.
+templ removable(class string, next Filters, label string) {
+	@filterLink(class, next.ShareURL(), next, nil) {
+		{ label }<span class="visually-hidden">{ " (remove filter)" }</span><span aria-hidden="true">{ " ✕" }</span>
+	}
 }
 
 // sortOption renders one segment of the sort control, active or not.
@@ -118,7 +179,9 @@ templ SortControl(f Filters, hasRecency bool) {
 // it, so the control is a toggle rather than a radio group with no way back.
 templ priceOption(f Filters, price string) {
 	if f.Price == price {
-		@control("segment is-active", f.WithPrice(price), priceFilterLabel(price)+" ✕")
+		@filterLink("segment is-active", f.WithPrice(price).ShareURL(), f.WithPrice(price), activeAttrs) {
+			{ priceFilterLabel(price) }<span class="visually-hidden">{ " (remove filter)" }</span><span aria-hidden="true">{ " ✕" }</span>
+		}
 	} else {
 		@control("segment", f.WithPrice(price), priceFilterLabel(price))
 	}
@@ -147,7 +210,7 @@ templ PriceControl(f Filters, hasPriceBands bool) {
 // the conversions are approximate by construction.
 templ CurrencyControl(f Filters, rates money.Rates) {
 	<form class="currency" method="get" action="/" hx-get="/results" hx-target="#results-region" hx-swap="innerHTML">
-		@hiddenFilters(f)
+		@hiddenFilters(f, false)
 		<label class="currency-label" for="currency-select">Show prices in</label>
 		<select id="currency-select" name="cur" class="currency-select">
 			<option value="" selected?={ f.Currency == "" }>as listed</option>
@@ -159,7 +222,9 @@ templ CurrencyControl(f Filters, rates money.Rates) {
 		if f.Currency != "" {
 			<span class="currency-note">
 				≈ converted at
-				<a href={ templ.SafeURL(rates.Source) } target="_blank" rel="noopener">ECB rates</a>
+				<a href={ templ.SafeURL(rates.Source) } target="_blank" rel="noopener">ECB rates
+					@NewTabHint()
+				</a>
 				of { rates.Date }
 			</span>
 		}
@@ -167,10 +232,16 @@ templ CurrencyControl(f Filters, rates money.Rates) {
 }
 
 // hiddenFilters carries the current filter state through a form submission, so
-// that changing the currency does not silently discard the tags and the query
-// the visitor already chose.
-templ hiddenFilters(f Filters) {
-	if f.Query != "" {
+// that changing the currency or running a new search does not silently discard
+// the tags and the query the visitor already chose.
+//
+// The two forms own different fields. The search box supplies q itself and
+// deliberately drops sort - its sensible default changes with the query, from
+// popularity to relevance - and like, since a typed search is a new intent
+// rather than a refinement of "similar to X". The currency form supplies cur
+// itself and keeps everything else.
+templ hiddenFilters(f Filters, forSearchBox bool) {
+	if !forSearchBox && f.Query != "" {
 		<input type="hidden" name="q" value={ f.Query }/>
 	}
 	for _, tag := range f.Tags {
@@ -179,7 +250,7 @@ templ hiddenFilters(f Filters) {
 	for _, tag := range f.NotTags {
 		<input type="hidden" name="not" value={ tag }/>
 	}
-	if f.Like != "" {
+	if !forSearchBox && f.Like != "" {
 		<input type="hidden" name="like" value={ f.Like }/>
 	}
 	if f.Author != "" {
@@ -188,8 +259,11 @@ templ hiddenFilters(f Filters) {
 	if f.Price != "" {
 		<input type="hidden" name="price" value={ f.Price }/>
 	}
-	if f.Sort != "" {
+	if !forSearchBox && f.Sort != "" {
 		<input type="hidden" name="sort" value={ f.Sort }/>
+	}
+	if forSearchBox && f.Currency != "" {
+		<input type="hidden" name="cur" value={ f.Currency }/>
 	}
 }
 
@@ -205,25 +279,25 @@ templ ActiveFilters(f Filters, likeTitle string) {
 				<span class="chip is-query">“{ f.Query }”</span>
 			}
 			for _, tag := range f.Tags {
-				@control("chip is-removable", f.WithoutTag(tag), tag+" ✕")
+				@removable("chip is-removable", f.WithoutTag(tag), tag)
 			}
 			for _, tag := range f.NotTags {
-				@control("chip is-removable is-excluded", f.WithoutNotTag(tag), "not "+tag+" ✕")
+				@removable("chip is-removable is-excluded", f.WithoutNotTag(tag), "not "+tag)
 			}
 			if f.Like != "" && likeTitle != "" {
 				// Guarded on likeTitle rather than just f.Like: an id that
 				// matched nothing has no title to name, and a chip reading
 				// "similar to  ✕" would be worse than no chip at all - the
 				// empty-result page below already explains the miss.
-				@control("chip is-removable", f.WithoutLike(), "similar to "+likeTitle+" ✕")
+				@removable("chip is-removable", f.WithoutLike(), "similar to "+likeTitle)
 			}
 			if f.Author != "" {
-				@control("chip is-removable is-author", f.WithAuthor(f.Author), "by "+f.Author+" ✕")
+				@removable("chip is-removable is-author", f.WithAuthor(f.Author), "by "+f.Author)
 			}
 			if f.Price != "" {
-				@control("chip is-removable", f.WithPrice(f.Price), priceFilterLabel(f.Price)+" ✕")
+				@removable("chip is-removable", f.WithPrice(f.Price), priceFilterLabel(f.Price))
 			}
-			if len(f.Tags) > 0 || len(f.NotTags) > 0 || f.Price != "" || f.Author != "" || f.Like != "" {
+			if f.Narrowed() {
 				@control("clear-filters", f.Cleared(), "Clear filters")
 			}
 		</div>
@@ -251,33 +325,36 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 			<ul class="facet-list">
 				for i, tag := range tags {
 					<li data-facet={ tag.Slug } data-facet-tail?={ facetTail(i) } hidden?={ facetTail(i) }>
-						<a
-							class="facet"
-							href={ templ.SafeURL(f.WithTag(tag.Slug).ShareURL()) }
-							hx-get={ f.WithTag(tag.Slug).FragmentURL(1) }
-							hx-target="#results-region"
-							hx-swap="innerHTML"
-						>
-							<span class="facet-name">{ tag.Slug }</span>
-							<span class="facet-count">{ humaniseCount(tag.Count) }</span>
-						</a>
+						if f.AtTagLimit() {
+							// Plain text, not a link: WithTag refuses at the
+							// cap, so the link would lead to the page it is on.
+							<span class="facet is-capped">
+								<span class="facet-name">{ tag.Slug }</span>
+								<span class="facet-count">{ humaniseCount(tag.Count) }</span>
+							</span>
+						} else {
+							@filterLink("facet", facetHref(f, tag.Slug), f.WithTag(tag.Slug), nil) {
+								<span class="facet-name">{ tag.Slug }</span>
+								<span class="facet-count">{ humaniseCount(tag.Count) }</span>
+							}
+						}
 						// A sibling of the facet link rather than a child of it:
 						// nesting one anchor inside another is invalid, and
 						// browsers resolve it by silently dropping the inner one.
-						<a
-							class="facet-exclude"
-							title={ "Hide assets tagged " + tag.Slug }
-							aria-label={ "Hide assets tagged " + tag.Slug }
-							href={ templ.SafeURL(f.WithNotTag(tag.Slug).ShareURL()) }
-							hx-get={ f.WithNotTag(tag.Slug).FragmentURL(1) }
-							hx-target="#results-region"
-							hx-swap="innerHTML"
-						>−</a>
+						// Omitted at the exclusion cap for the reason above.
+						if !f.AtNotTagLimit() {
+							@filterLink("facet-exclude", f.WithNotTag(tag.Slug).ShareURL(), f.WithNotTag(tag.Slug), excludeAttrs(tag.Slug)) {
+								−
+							}
+						}
 					</li>
 				}
 			</ul>
-			if len(f.Tags) >= MaxTags {
+			if f.AtTagLimit() {
 				<p class="facets-empty">Tag limit reached.</p>
+			}
+			if f.AtNotTagLimit() {
+				<p class="facets-empty">Exclusion limit reached.</p>
 			}
 		}
 	</aside>

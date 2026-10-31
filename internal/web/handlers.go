@@ -185,6 +185,27 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One address per result set. Dropped values, an unsorted or duplicated tag
+	// list, parameters at their default and unknown parameters are all different
+	// URLs for the same page, which a shared cache stores separately and a
+	// crawler counts separately. Only here and not on /results: that endpoint is
+	// a fragment fetched by htmx, which cannot follow a redirect to a full page.
+	//
+	// A 302 with a short max-age rather than a 301: what counts as canonical
+	// depends on the tag caps and on which exchange-rate table is loaded (a
+	// currency is valid only if the table has it), so a permanent redirect would
+	// bake in today's rules in every browser that saw it. robots.txt already
+	// disallows query strings, so permanence bought nothing.
+	//
+	// It converges in one hop because the target is the output of PageURL, which
+	// parses back to the same filters (TestCanonicalURLIsAFixedPoint), and the
+	// comparison is against that exact string.
+	if canonical := filters.PageURL(page); canonical != requestedForm(r) {
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", fragmentMaxAge))
+		http.Redirect(w, r, canonical, http.StatusFound)
+		return
+	}
+
 	results, err := h.find(filters, page)
 	if err != nil {
 		// The page itself still renders - masthead, search box, filters - with
@@ -205,6 +226,15 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	// filters makes sense on, so it carries the auto-discovery link every
 	// other page has no reason to.
 	templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters, results.LikeTitle), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
+}
+
+// requestedForm is the request's own address in the shape Filters.PageURL
+// writes, so the two compare directly.
+func requestedForm(r *http.Request) string {
+	if r.URL.RawQuery == "" {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + r.URL.RawQuery
 }
 
 // HandleResults serves one page of results as a fragment.
@@ -381,8 +411,16 @@ func parseFilters(r *http.Request, rates money.Rates) templates.Filters {
 	// Both encodings are accepted: ?tags=a,b is what the links generate, while
 	// ?tags=a&tags=b is what a plain HTML form submission produces from the
 	// hidden fields that carry the filters through a search.
+	//
+	// Parsing stops at the cap rather than looping over every value and letting
+	// WithTag refuse each one: an over-long URL has nothing past the cap worth
+	// reading, and the caller redirects it to the canonical form anyway.
+tags:
 	for _, raw := range q["tags"] {
 		for _, tag := range strings.Split(raw, ",") {
+			if f.AtTagLimit() {
+				break tags
+			}
 			if tag = normaliseTag(tag); tag != "" {
 				f = f.WithTag(tag)
 			}
@@ -391,8 +429,12 @@ func parseFilters(r *http.Request, rates money.Rates) templates.Filters {
 	// Applied after the inclusions, so that a URL asserting both ends up
 	// excluding: WithNotTag drops the tag from the required list, and the last
 	// instruction in the URL is the one that stands.
+not:
 	for _, raw := range q["not"] {
 		for _, tag := range strings.Split(raw, ",") {
+			if f.AtNotTagLimit() {
+				break not
+			}
 			if tag = normaliseTag(tag); tag != "" {
 				f = f.WithNotTag(tag)
 			}
@@ -507,7 +549,10 @@ func clampQuery(q string) string {
 	for cut > 0 && !utf8.RuneStart(q[cut]) {
 		cut--
 	}
-	return q[:cut]
+	// Trimmed again: the cut can land just after whitespace, and a query that
+	// still ends in a space is not a fixed point of this function, which would
+	// make the canonical redirect take a second hop.
+	return strings.TrimSpace(q[:cut])
 }
 
 func pageTitle(f templates.Filters) string {

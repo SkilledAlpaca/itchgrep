@@ -49,11 +49,38 @@ type Filters struct {
 	Currency string
 }
 
-// MaxTags bounds how many tags one request may apply. Each becomes a conjunct
-// in the search, and past a handful the result set is empty anyway, so this
-// exists to stop a hand-written URL turning into an expensive query rather than
-// to restrain any real use.
-const MaxTags = 8
+// MaxTags and MaxNotTags bound how many tags one request may require and how
+// many it may exclude. Each becomes a conjunct in the search, and past a handful
+// the result set is empty anyway. They are also the size of the crawlable
+// filter space: every extra tag multiplies the distinct URLs a bot can generate
+// by following sidebar links, so the cap is deliberately low. Exclusions are
+// capped separately because the WAF already challenges three or more not=
+// values; four leaves a person who passes the challenge a little room.
+const (
+	MaxTags    = 4
+	MaxNotTags = 4
+)
+
+// AtTagLimit reports whether another required tag would be refused. A control
+// that would lead there must not be rendered as a link, because WithTag returns
+// the filters unchanged and the link would point at the page it is on.
+func (f Filters) AtTagLimit() bool { return len(f.Tags) >= MaxTags }
+
+// AtNotTagLimit is AtTagLimit for exclusions.
+func (f Filters) AtNotTagLimit() bool { return len(f.NotTags) >= MaxNotTags }
+
+// Bare reports whether the filters encode to nothing, which is the front page
+// as a crawler first sees it. Only then is a sidebar tag link a plain
+// "/tag/{slug}": with anything else applied, the destination has to keep it.
+func (f Filters) Bare() bool { return len(f.Values()) == 0 }
+
+// Narrowed reports whether anything besides the query is narrowing the
+// catalogue, which is what separates "remove a filter" advice from "search for
+// something broader" advice on an empty page.
+func (f Filters) Narrowed() bool {
+	return len(f.Tags) > 0 || len(f.NotTags) > 0 ||
+		f.Price != "" || f.Author != "" || f.Like != ""
+}
 
 // Values encodes the filters as query parameters, omitting anything at its
 // default.
@@ -164,8 +191,7 @@ func (f Filters) FeedURL() string {
 // are shown, so offering to "clear filters" because someone chose to see euros
 // would be describing a display preference as a constraint.
 func (f Filters) Any() bool {
-	return f.Query != "" || len(f.Tags) > 0 || len(f.NotTags) > 0 ||
-		f.Price != "" || f.Author != "" || f.Like != ""
+	return f.Query != "" || f.Narrowed()
 }
 
 // HasTag reports whether a tag is already applied.
@@ -196,7 +222,7 @@ func contains(list []string, want string) bool {
 // resolving it in favour of the click that just happened is the only reading
 // that leaves the control doing what it says.
 func (f Filters) WithTag(tag string) Filters {
-	if f.HasTag(tag) || len(f.Tags) >= MaxTags {
+	if f.HasTag(tag) || f.AtTagLimit() {
 		return f
 	}
 	next := f.WithoutNotTag(tag)
@@ -214,7 +240,7 @@ func (f Filters) WithoutTag(tag string) Filters {
 // WithNotTag returns these filters with one tag excluded, dropping it from the
 // required list for the same reason WithTag drops the exclusion.
 func (f Filters) WithNotTag(tag string) Filters {
-	if f.HasNotTag(tag) || len(f.NotTags) >= MaxTags {
+	if f.HasNotTag(tag) || f.AtNotTagLimit() {
 		return f
 	}
 	next := f.WithoutTag(tag)
@@ -260,18 +286,6 @@ func (f Filters) WithLike(gameId string) Filters {
 func (f Filters) WithoutLike() Filters {
 	next := f
 	next.Like = ""
-	return next
-}
-
-// WithCurrency returns these filters displaying prices in another currency, or
-// as listed if the same one is chosen again.
-func (f Filters) WithCurrency(currency string) Filters {
-	next := f
-	if f.Currency == currency {
-		next.Currency = ""
-	} else {
-		next.Currency = currency
-	}
 	return next
 }
 

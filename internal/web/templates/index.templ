@@ -78,7 +78,9 @@ templ Masthead(age Freshness, coverage Coverage) {
 			<p>search itch.io/game-assets by text instead of just tags.</p>
 			<p>
 				originally created by
-				<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }</a>.
+				<a href={ templ.SafeURL(AuthorURL) } target="_blank" rel="noopener">{ AuthorName }
+					@NewTabHint()
+				</a>.
 			</p>
 			// Five links, not the two this comment used to argue for. That
 			// count was about the original author's repository being a third
@@ -97,7 +99,9 @@ templ Masthead(age Freshness, coverage Coverage) {
 				<a href="/saved">Saved</a>
 				<a href="/about">About</a>
 				<a href="/stats">Stats</a>
-				<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">Source</a>
+				<a href={ templ.SafeURL(SourceURL) } target="_blank" rel="noopener">Source
+					@NewTabHint()
+				</a>
 			</nav>
 		</div>
 	</header>
@@ -105,9 +109,8 @@ templ Masthead(age Freshness, coverage Coverage) {
 
 // SearchBar keeps the applied filters as hidden fields, so submitting a new
 // search narrows the results already on screen rather than silently discarding
-// the tags the visitor picked. Sort is deliberately not carried: it is the one
-// control whose sensible default changes with the query, from popularity to
-// relevance.
+// the tags the visitor picked. Which fields it leaves out, and why, is
+// documented on hiddenFilters.
 templ SearchBar(f Filters) {
 	<form
 		class="searchbar"
@@ -129,21 +132,7 @@ templ SearchBar(f Filters) {
 			autocapitalize="off"
 			spellcheck="false"
 		/>
-		for _, tag := range f.Tags {
-			<input type="hidden" name="tags" value={ tag }/>
-		}
-		for _, tag := range f.NotTags {
-			<input type="hidden" name="not" value={ tag }/>
-		}
-		if f.Author != "" {
-			<input type="hidden" name="author" value={ f.Author }/>
-		}
-		if f.Price != "" {
-			<input type="hidden" name="price" value={ f.Price }/>
-		}
-		if f.Currency != "" {
-			<input type="hidden" name="cur" value={ f.Currency }/>
-		}
+		@hiddenFilters(f, true)
 		<button type="submit">Search</button>
 		<div class="spinner" aria-hidden="true"></div>
 	</form>

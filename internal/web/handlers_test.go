@@ -82,7 +82,7 @@ func TestAppliedFiltersSurviveANewSearch(t *testing.T) {
 	// silently dropped. Losing the tags a visitor just picked because they then
 	// typed a word would be the worst kind of surprise.
 	r, _ := newTestRouter()
-	body := get(t, r, "/?tags=2d,pixel-art&price=free").Body.String()
+	body := get(t, r, "/?price=free&tags=2d%2Cpixel-art").Body.String()
 
 	assert.Contains(t, body, `<input type="hidden" name="tags" value="2d">`)
 	assert.Contains(t, body, `<input type="hidden" name="tags" value="pixel-art">`)
@@ -621,4 +621,88 @@ func TestIndexAdvertisesTheFeedForTheCurrentFilters(t *testing.T) {
 	body := w.Body.String()
 	assert.Contains(t, body, `<link rel="alternate" type="application/atom+xml"`)
 	assert.Contains(t, body, `href="/feed?tags=2d"`)
+}
+
+func TestParsingStopsAtTheCaps(t *testing.T) {
+	f := parseFilters(httptest.NewRequest(http.MethodGet,
+		"/?tags=a,b,c,d,e,f&tags=g&not=h,i,j,k,l,m", nil), money.Fallback())
+
+	assert.Equal(t, []string{"a", "b", "c", "d"}, f.Tags)
+	assert.Equal(t, []string{"h", "i", "j", "k"}, f.NotTags)
+}
+
+func TestIndexRedirectsToItsCanonicalAddress(t *testing.T) {
+	r, _ := newTestRouter()
+	for target, want := range map[string]string{
+		"/?tags=d,c,b,a":              "/?tags=a%2Cb%2Cc%2Cd",
+		"/?tags=a,b,c,d,e,f":          "/?tags=a%2Cb%2Cc%2Cd",
+		"/?q=&tags=a&tags=b":          "/?tags=a%2Cb",
+		"/?tags=a,a,b":                "/?tags=a%2Cb",
+		"/?page=1":                    "/",
+		"/?utm_source=x":              "/",
+		"/?price=cheap&sort=whatever": "/",
+		"/?tags=b,a&page=2":           "/?page=2&tags=a%2Cb",
+		"/?q=x&sort=relevance":        "/?q=x",
+	} {
+		w := get(t, r, target)
+		assert.Equal(t, http.StatusFound, w.Code, target)
+		assert.Equal(t, want, w.Header().Get("Location"), target)
+
+		// The target must be a fixed point, or this is a redirect loop.
+		assert.Equal(t, fmt.Sprintf("public, max-age=%d", fragmentMaxAge), w.Header().Get("Cache-Control"), target)
+		again := get(t, r, w.Header().Get("Location"))
+		assert.NotEqual(t, http.StatusFound, again.Code, "redirect loop from "+target)
+	}
+}
+
+func TestCanonicalIndexAddressIsNotRedirected(t *testing.T) {
+	r, _ := newTestRouter()
+	for _, target := range []string{
+		"/", "/?q=pixel+art", "/?tags=a%2Cb", "/?not=a&tags=b", "/?page=2&tags=a",
+		"/?author=Ana", "/?price=free", "/?like=123", "/?q=x&sort=title",
+	} {
+		assert.NotEqual(t, http.StatusFound, get(t, r, target).Code, target)
+	}
+}
+
+func TestResultsFragmentIsNeverRedirected(t *testing.T) {
+	// htmx cannot follow a redirect to a full page, and the fragment's URL is
+	// not the one shared or indexed.
+	r, _ := newTestRouter()
+	for _, target := range []string{"/results?tags=d,c,b,a&page=1", "/results?page=1&tags=a,b,c,d,e,f"} {
+		w := get(t, r, target)
+		assert.NotEqual(t, http.StatusFound, w.Code, target)
+		assert.Empty(t, w.Header().Get("Location"), target)
+	}
+}
+
+func TestCanonicalURLIsAFixedPoint(t *testing.T) {
+	// parseFilters followed by PageURL must be idempotent for any input, or the
+	// canonical redirect loops. Add a row for every new filter.
+	for _, target := range []string{
+		"/?tags=z,y,x,w,v&not=z,u,t,s,r,q",
+		"/?tags=a&not=a",
+		"/?tags=a,b,c,d,e&not=a",
+		"/?tags=a,b,c,d&not=a,e,f,g,h,i",
+		"/?q=%20%20spaced%20&author=%20Ana%20",
+		"/?like=12&sort=relevance&price=under5&cur=eur&page=3",
+		"/?sort=popular&q=x&sort=title",
+		"/?tags=A,%20B,c_d,e!",
+		// The 200-byte cut: a space lands at the boundary, then a multi-byte
+		// rune straddles it, and a deep page rides along.
+		"/?q=" + strings.Repeat("a", 199) + "+bbbb",
+		"/?q=" + strings.Repeat("a", 198) + "+++bbbb&page=3",
+		"/?q=" + strings.Repeat("a", 199) + "%C3%A9tail",
+		"/?q=" + strings.Repeat("%E2%82%AC", 70) + "&page=7",
+		"/?q=" + strings.Repeat("a", 200) + "+&tags=b,a&page=2",
+	} {
+		first := parseFilters(httptest.NewRequest(http.MethodGet, target, nil), money.Fallback())
+		canonical := first.PageURL(1)
+		second := parseFilters(httptest.NewRequest(http.MethodGet, canonical, nil), money.Fallback())
+		assert.Equal(t, canonical, second.PageURL(1), target)
+		assert.Equal(t, first.Query, second.Query, target)
+		assert.True(t, utf8.ValidString(first.Query), target)
+		assert.LessOrEqual(t, len(first.Query), maxQueryLen, target)
+		assert.Equal(t, strings.TrimSpace(first.Query), first.Query, target)
+	}
 }

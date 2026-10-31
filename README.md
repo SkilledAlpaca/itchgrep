@@ -9,8 +9,8 @@ itch.io offers no text search scoped to assets — you browse by tag, and any
 one view stops at roughly 7,200 results, so whatever ranks below that is
 unreachable however you page. itchgrep crawls the catalogue into its own
 search index and searches titles, descriptions, tags, and authors at once,
-adding tag exclusion, unlimited tag combinations, cross-currency price
-comparison, and live facet counts on top.
+adding tag exclusion (up to four required and four excluded tags per search),
+cross-currency price comparison, and live facet counts on top.
 
 ![Searching the itch.io asset catalogue by text, shown in the light theme on
 the left of the diagonal and the dark theme on the right](.github/screenshot-search.png)
