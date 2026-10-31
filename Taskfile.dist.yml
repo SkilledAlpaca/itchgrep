@@ -54,7 +54,7 @@ tasks:
     env:
       # A partial run, so it also disarms COVERAGE_FLOOR and shrinks tag
       # discovery. Deliberately not {{.DATA_DIR}}: the resulting index covers
-      # ~1% of the catalogue and must not replace a real one.
+      # ~1% of the catalog and must not replace a real one.
       DATA_DIR: "./data-smoke"
       SCRAPE_MAX_PAGES: "40"
       PORT: "8080"

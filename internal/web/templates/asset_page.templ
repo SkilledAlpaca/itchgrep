@@ -172,7 +172,7 @@ templ AssetCard(f Filters, asset models.Asset, rates money.Rates) {
 			// the asset; "Thumbnail for X" read out ahead of "X" doubled it.
 			//
 			// src is rendered as a plain string attribute by templ, not one of
-			// its recognised URL attributes, so the sanitized value is
+			// its recognized URL attributes, so the sanitized value is
 			// converted back to string explicitly rather than left as the
 			// templ.SafeURL the generated code for src cannot accept.
 			if asset.ThumbUrl != "" {

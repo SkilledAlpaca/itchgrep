@@ -35,7 +35,7 @@ func NewSitemap(tags []string) urlset {
 	return doc
 }
 
-// Render serialises the sitemap as a complete XML document, including the
+// Render serializes the sitemap as a complete XML document, including the
 // declaration a consumer expects at the top of the response body.
 func (doc urlset) Render() ([]byte, error) {
 	body, err := xml.MarshalIndent(doc, "", "  ")

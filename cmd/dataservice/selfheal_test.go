@@ -43,7 +43,7 @@ func TestIndexNeedsRebuildOnAMangledMeta(t *testing.T) {
 }
 
 // TestIndexNeedsRebuildOnAValidScorchIndex is the negative case: an index
-// built the normal way, with the current mapping, must be recognised as
+// built the normal way, with the current mapping, must be recognized as
 // already fine so a healthy deploy never pays for a rebuild it does not need.
 func TestIndexNeedsRebuildOnAValidScorchIndex(t *testing.T) {
 	dir := t.TempDir() + "/idx"

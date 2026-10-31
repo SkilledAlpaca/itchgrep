@@ -1,7 +1,7 @@
 # Getting started
 
 This is the path from a clean machine to a working local copy of itchgrep,
-searching a small real slice of the itch.io asset catalogue. It assumes
+searching a small real slice of the itch.io asset catalog. It assumes
 nothing already installed and no prior familiarity with Git, Go, containers,
 or the command line beyond typing a command and reading its output.
 
@@ -24,7 +24,7 @@ A few terms used throughout, defined once here:
 ## What you'll have at the end
 
 A search page at `http://localhost:8081`, running against a small,
-deliberately partial copy of the itch.io asset catalogue that your own
+deliberately partial copy of the itch.io asset catalog that your own
 machine crawled in a couple of minutes — not the full ~108,000-asset index
 the production site serves, but the same code, doing the same thing, at a
 scale that doesn't take six hours.
@@ -187,7 +187,7 @@ terminal window — you'll want to watch both.
 
 **Terminal 1 — start the crawler with a small page limit,** so it finishes
 in a couple of minutes instead of the roughly six hours a full crawl of the
-whole catalogue takes:
+whole catalog takes:
 
 COMMAND: `SCRAPE_MAX_PAGES=40 task dataservice`
 Purpose: Starts the dataservice binary. Because no data has ever been
@@ -289,10 +289,10 @@ restart needed. [docs/troubleshooting.md](troubleshooting.md) covers how to
 tell this apart from an actually broken index if it doesn't self-resolve.
 
 Once data lands, reloading `http://localhost:8081` shows a real, searchable
-page of itch.io game assets, a masthead stating how much of the catalogue is
+page of itch.io game assets, a masthead stating how much of the catalog is
 indexed and how old it is, and working search, tags, and filters — all
 running against the roughly 40-page slice from step 4, not the full
-catalogue.
+catalog.
 
 ## Errors you might hit
 

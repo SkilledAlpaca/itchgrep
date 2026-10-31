@@ -360,7 +360,7 @@ func GetRates() (money.Rates, error) {
 	return r, nil
 }
 
-// PutStats records how much of the catalogue a crawl actually collected.
+// PutStats records how much of the catalog a crawl actually collected.
 func PutStats(s models.Stats) error { return writeJSON(StatsFileName, s) }
 
 // GetStats returns the completeness of the published dataset. A missing file is
@@ -453,7 +453,7 @@ type Checkpoint struct {
 	Assets      []models.Asset
 	DoneSlices  []string // Slice.Label() values already finished
 	MaxRootRank int64    // so slice-only assets keep ranking behind root-ranked ones
-	TotalAssets int64    // catalogue size when the checkpoint was taken
+	TotalAssets int64    // catalog size when the checkpoint was taken
 
 	// Recency is the newest-view rank per game id, held separately because it
 	// is collected across slices and only stamped onto the assets once the

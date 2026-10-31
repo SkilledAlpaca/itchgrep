@@ -16,7 +16,7 @@ import (
 // the incoming request the way every other link in the templates package is.
 //
 // A plain const rather than something read from the environment: nothing else
-// in this codebase parameterises the public origin (see internal/config,
+// in this codebase parameterizes the public origin (see internal/config,
 // which only holds settings the two binaries must agree on), and a
 // self-referential feed id, sitemap entry or search descriptor is wrong
 // precisely when this drifts from where the site is actually reachable,
@@ -106,7 +106,7 @@ func NewFeed(f Filters, assets []models.Asset, rates money.Rates, newestCrawl ti
 	return feed
 }
 
-// Render serialises the feed as a complete Atom document, including the XML
+// Render serializes the feed as a complete Atom document, including the XML
 // declaration a feed reader expects at the top of the response body.
 func (feed atomFeed) Render() ([]byte, error) {
 	body, err := xml.MarshalIndent(feed, "", "  ")

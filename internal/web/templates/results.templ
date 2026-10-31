@@ -92,7 +92,7 @@ func resultSummary(r Results) string {
 	if r.Total == 1 {
 		return "1 asset"
 	}
-	return humaniseCount(r.Total) + " assets"
+	return humanizeCount(r.Total) + " assets"
 }
 
 // resultStatus is what the live region says after a swap: the count, and what
@@ -360,12 +360,12 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 								// cap, so the link would lead to the page it is on.
 								<span class="facet is-capped">
 									<span class="facet-name">{ tag.Slug }</span>
-									<span class="facet-count">{ humaniseCount(tag.Count) }</span>
+									<span class="facet-count">{ humanizeCount(tag.Count) }</span>
 								</span>
 							} else {
 								@filterLink("facet", facetHref(f, tag.Slug), f.WithTag(tag.Slug), nil) {
 									<span class="facet-name">{ tag.Slug }</span>
-									<span class="facet-count">{ humaniseCount(tag.Count) }</span>
+									<span class="facet-count">{ humanizeCount(tag.Count) }</span>
 								}
 							}
 							// A sibling of the facet link rather than a child of it:

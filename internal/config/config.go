@@ -18,10 +18,10 @@ import (
 // being rebuilt.
 //
 // A week, because the two costs point in opposite directions: a full crawl
-// takes about six hours at the polite default rate, while the catalogue grows
+// takes about six hours at the polite default rate, while the catalog grows
 // by a few dozen assets in that time. Daily would spend a quarter of every day
 // re-fetching assets that have not changed, for a freshness nobody browsing an
-// asset catalogue would notice.
+// asset catalog would notice.
 const DefaultCrawlInterval = 168 * time.Hour
 
 // CrawlInterval reads CRAWL_INTERVAL. Zero means scheduled rebuilds are off and
@@ -80,7 +80,7 @@ func EnvFloat(name string, def float64) float64 {
 // is inherited from the two functions this was consolidated from rather than
 // chosen on purpose - it is harmless in practice, since nothing sets these
 // variables to an empty string on purpose - and is preserved rather than
-// unified so this change carries no behaviour difference for the crawl
+// unified so this change carries no behavior difference for the crawl
 // tuning that already depends on it (COVERAGE_TARGET, COVERAGE_FLOOR,
 // SLICE_MIN_YIELD).
 func EnvNonNegativeFloat(name string, def float64) float64 {

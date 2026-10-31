@@ -224,7 +224,7 @@ Common failures: N/A — this command itself doesn't fail.
 How to undo or recover: Not applicable — read-only.
 
 **Coverage below floor** — the crawl completed, but covered less of the
-catalogue than `COVERAGE_FLOOR` requires, so the previous (working) index
+catalog than `COVERAGE_FLOOR` requires, so the previous (working) index
 was deliberately left in place rather than replaced with something worse:
 
 ```
@@ -297,7 +297,7 @@ against that constant, not assumed.
 ## Disk filling up
 
 **On disk, under `DATA_PATH`:** `index.bleve/` (the published search
-index, roughly 740 MB at full catalogue size) is by far the largest thing
+index, roughly 740 MB at full catalog size) is by far the largest thing
 present. During a crawl, a second full copy briefly exists at
 `index.bleve.staging` while the new index is built, and the previous
 published index is kept briefly (suffix `.previous`) during the publish
@@ -438,7 +438,7 @@ In August 2026, Googlebot and OpenAI's `OAI-SearchBot` were observed
 exhaustively crawling every filter-permutation query URL the site's
 filtering UI can generate — an effectively unbounded URL space, since every
 combination of tags, price filter, and sort order produces its own URL, all
-describing the same underlying catalogue.
+describing the same underlying catalog.
 
 **Diagnosing whether you're seeing the same pattern:** in `access.jsonl`
 under `LOG_EXPORT_DIR`, count records with `"query": true` per user agent

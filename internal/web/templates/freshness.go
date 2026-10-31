@@ -134,7 +134,7 @@ func (f Freshness) Stale() bool {
 //
 // Coarse on purpose. These pages are served with max-age=300, so a shared cache
 // can hand out this string for five minutes after it was rendered; minute-level
-// precision would be precision the response cannot honour. Hours and days
+// precision would be precision the response cannot honor. Hours and days
 // survive that window intact.
 func (f Freshness) Label() string {
 	switch {

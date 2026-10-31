@@ -72,7 +72,7 @@ type Cache struct {
 	// and a "recently added" control over that data would order by nothing.
 	hasRecency bool
 
-	// stats is how much of itch.io's catalogue the loaded dataset covers, as
+	// stats is how much of itch.io's catalog the loaded dataset covers, as
 	// measured by the crawl that produced it. Zero when unrecorded.
 	stats models.Stats
 
@@ -181,7 +181,7 @@ func (c *Cache) HasPriceBands() bool {
 // work out whether a further page exists.
 func (c *Cache) PageSize() int64 { return c.pageSize }
 
-// TagSlugs is every slug in the discovered tag universe, alphabetised so the
+// TagSlugs is every slug in the discovered tag universe, alphabetized so the
 // sitemap it feeds is stable across requests rather than following whatever
 // order tags.json happened to store. See tagUniverse for why this is not
 // tagCounts.
@@ -445,7 +445,7 @@ func buildFuzzyQuery(queryString string, fuzzyness int, prefixLen int) *query.Di
 	authorQuery.SetFuzziness(fuzzyness)
 	// Tags are curated classification rather than prose, so a hit here is a
 	// stronger signal than one in a description that merely mentions the word.
-	// Slugs are hyphenated ("pixel-art"), which bleve's standard analyser
+	// Slugs are hyphenated ("pixel-art"), which bleve's standard analyzer
 	// splits into terms, so a "pixel art" query matches without special casing.
 	tagQuery := bleve.NewMatchQuery(queryString)
 	tagQuery.SetField("Tags")

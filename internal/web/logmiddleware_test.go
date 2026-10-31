@@ -95,7 +95,7 @@ func TestStatusZeroIsTreatedAsOK(t *testing.T) {
 // inside next.ServeHTTP - so reading it after that call returns, as
 // RequestLogger does, sees the real pattern for a matched route and "" for
 // one that fell through to NotFound. Exercised against a real chi.Mux, not a
-// mock, because that dispatch behaviour is chi's, not something a mock could
+// mock, because that dispatch behavior is chi's, not something a mock could
 // stand in for.
 func TestRoutePatternIsOnlyPopulatedAfterDispatch(t *testing.T) {
 	m := metrics.New()

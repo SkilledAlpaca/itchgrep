@@ -195,7 +195,7 @@ func TestSliceValidRejectsWhatItchIoRefuses(t *testing.T) {
 }
 
 func TestPagesToFetchCapsAtTheViewLimit(t *testing.T) {
-	// The whole catalogue implies ~3017 pages, but no view serves past 200.
+	// The whole catalog implies ~3017 pages, but no view serves past 200.
 	// Trusting the count produced ~2800 requests that could only 404.
 	whole := Slice{Count: 108578}
 	assert.EqualValues(t, MaxPagesPerView, whole.PagesToFetch(testItemsPerPage))
@@ -223,7 +223,7 @@ func TestFilterIsInvalidAlongsideASortOrASecondTag(t *testing.T) {
 }
 
 func TestPlanSlicesGivesBigTagsBothHalvesOfThePricePartition(t *testing.T) {
-	// free and store partition the catalogue, so together they contain every
+	// free and store partition the catalog, so together they contain every
 	// asset carrying an oversized tag - the one place the 200-page cap is
 	// genuinely escapable.
 	tags := []models.Tag{{Slug: "pixel-art", Count: 36324}}
@@ -317,7 +317,7 @@ func TestRootSliceIsPagedToTheCap(t *testing.T) {
 	// The root view is the only source of a global popularity rank. A Count of
 	// 0 here rounds PagesToFetch down to a single page, which leaves
 	// InvPopularity meaning "page within whichever slice found it first" for
-	// the entire catalogue - a silent failure with no error anywhere.
+	// the entire catalog - a silent failure with no error anywhere.
 	got := PlanSlices([]models.Tag{smallTag("fonts")}, testItemsPerPage)
 
 	root := got[0]
@@ -407,8 +407,8 @@ func TestGenreFiltersAreCrawlable(t *testing.T) {
 }
 
 func TestOnlyTheUntaggedNewestViewRanksRecency(t *testing.T) {
-	// A page number is a catalogue-wide recency position only in the view that
-	// covers the whole catalogue. The same care IsRoot takes, for the same
+	// A page number is a catalog-wide recency position only in the view that
+	// covers the whole catalog. The same care IsRoot takes, for the same
 	// reason: a filtered or tagged view ranks within its own subset.
 	assert.True(t, Slice{Sort: SortNewest}.IsNewestRoot())
 

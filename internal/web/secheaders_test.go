@@ -30,7 +30,7 @@ func TestSecurityHeadersSetOnOrdinaryResponse(t *testing.T) {
 
 // SecurityHeaders is mounted just inside middleware.Recoverer in
 // cmd/webserver/main.go, ahead of the probe filter and routing, precisely so
-// it still applies to a probe 404 - this pins that behaviour at the unit
+// it still applies to a probe 404 - this pins that behavior at the unit
 // level since main.go's ordering cannot be exercised directly.
 func TestSecurityHeadersSetOnProbe404(t *testing.T) {
 	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

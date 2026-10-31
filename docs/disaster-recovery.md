@@ -73,7 +73,7 @@ Whatever backs up this directory — the operator's host-level arrangement is th
 
 - `traffic.json` is rewritten every 5 minutes while the webserver runs (see [docs/observability.md](observability.md)) — some loss here is already an accepted trade-off even without any backup (a hard container kill loses up to 5 minutes of counts on its own), so anything daily or better fully covers it.
 - `assets.json`'s `FirstSeen` data and `history.json` change **once per crawl** — weekly by default (`CRAWL_INTERVAL=168h`; see [docs/configuration.md](configuration.md) for overriding it). A backup at least once per crawl interval means an outage never costs more than one crawl's worth of arrival-date and history data.
-- The files worth archiving are small JSON documents (a few megabytes for the whole catalogue); `index.bleve/` is regenerable and safe to exclude entirely (see above).
+- The files worth archiving are small JSON documents (a few megabytes for the whole catalog); `index.bleve/` is regenerable and safe to exclude entirely (see above).
 
 ## Restore
 

@@ -50,7 +50,7 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
   host port `62686`. This is the only port meant to ever be reachable from
   outside the host. It applies:
   - **Per-client rate limiting** (`internal/web/ratelimit.go`) — a search is
-    expensive (three disjunctions, two fuzzy, over the whole catalogue), and
+    expensive (three disjunctions, two fuzzy, over the whole catalog), and
     nothing else in the request path pushes back. Probe traffic (below)
     draws from the same per-client budget as real requests, so an unlimited
     scanner sweep can't write to disk faster than a real client could be

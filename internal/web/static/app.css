@@ -4,7 +4,7 @@
  * generic classless theme this page then had to fight with inline styles.
  *
  * Dark by default, light when the system asks for it. The accent is terminal
- * green: the tool is a grep over a catalogue, and it should look like one.
+ * green: the tool is a grep over a catalog, and it should look like one.
  */
 
 :root {
@@ -112,7 +112,7 @@ main {
 }
 
 /* The first focusable element on every page. Off-screen until focused, then
- * a solid accent button with a text-coloured ring: the ring is 13:1 or better
+ * a solid accent button with a text-colored ring: the ring is 13:1 or better
  * against the page, well over the 3:1 a focus indicator needs. */
 .skip-link {
   position: fixed;
@@ -150,7 +150,7 @@ a:hover {
 }
 
 /* Links inside a sentence are told apart from the text around them by more
- * than colour (WCAG 1.4.1). Chips, nav buttons and cards are not running text
+ * than color (WCAG 1.4.1). Chips, nav buttons and cards are not running text
  * and keep their own affordances. */
 .prose a,
 .masthead-meta p a {
@@ -763,7 +763,7 @@ a:hover {
 }
 
 /* An exclusion reads as the opposite of a filter, so it should not look like
-   one. Outlined in the warning colour rather than filled in the accent. */
+   one. Outlined in the warning color rather than filled in the accent. */
 .chip.is-excluded {
   color: var(--warn);
   background: transparent;
@@ -1098,8 +1098,8 @@ a:hover {
 
 /* ---------------------------------------------------------------- prose  */
 
-/* Centred in main rather than pinned to its left edge: main itself is a
- * 132rem centred column sized for the search results grid, so a prose page
+/* Centered in main rather than pinned to its left edge: main itself is a
+ * 132rem centered column sized for the search results grid, so a prose page
  * left-aligned inside it read as a column shoved into a corner with the
  * rest of the viewport left empty. */
 .prose {
@@ -1320,9 +1320,9 @@ a:hover {
   margin-left: 0.3rem;
 }
 
-/* In forced-colors mode the browser replaces every colour with the user's
+/* In forced-colors mode the browser replaces every color with the user's
  * palette, which would flatten the fills to one. Opt the cells out and derive
- * the four levels from the system text colour at rising strength, with a
+ * the four levels from the system text color at rising strength, with a
  * solid border on every cell so level 0 and the shape stay visible. */
 @media (forced-colors: active) {
   .activity-cell {
@@ -1422,7 +1422,7 @@ a:hover {
 
   /* Four or five nowrap segments are wider than a phone, and the page scrolled
    * sideways to fit them (WCAG 1.4.10). Let them wrap onto rows; the 1px gaps
-   * show the container's border colour, so the dividers survive any wrap
+   * show the container's border color, so the dividers survive any wrap
    * point. */
   .segmented {
     flex-wrap: wrap;

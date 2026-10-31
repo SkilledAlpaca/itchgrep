@@ -44,7 +44,7 @@ RUN CGO_ENABLED=0 go build -v -ldflags="-s -w" -o server ./cmd/webserver
 # mkdir/chown with, so the directory is created here and COPY --chown'd
 # below. Shipping /data in the image, owned by 65532, is what lets Docker
 # seed a fresh *named* volume with the right ownership on first use -
-# without it the volume materialises owned by root and every write from
+# without it the volume materializes owned by root and every write from
 # the nonroot process fails. The placeholder file is load-bearing:
 # measured on Docker 27, copy-up applies the image directory's ownership
 # to the volume root only when the directory is non-empty.

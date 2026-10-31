@@ -33,8 +33,8 @@ var allSorts = []string{SortDefault, SortNewest, SortNewAndPopular, SortTopRated
 const (
 	FilterNone = ""
 
-	// FilterFree and FilterPaid partition the catalogue. Measured 2026-08-09:
-	// free 53,021 + store 55,907 = 108,928 against a catalogue of 108,585, so
+	// FilterFree and FilterPaid partition the catalog. Measured 2026-08-09:
+	// free 53,021 + store 55,907 = 108,928 against a catalog of 108,585, so
 	// every asset is in exactly one. This is the only true partition itch.io
 	// exposes - tag facets are a set cover, with no "NOT tag-X" to split on -
 	// which makes it the most valuable filter by a wide margin: it gives every
@@ -82,7 +82,7 @@ var allFilters = []string{
 	"genre-puzzle",
 }
 
-// Slice is one browsable view of the catalogue: a URL that can be paged
+// Slice is one browsable view of the catalog: a URL that can be paged
 // through up to MaxPagesPerView times.
 //
 // The URL grammar itch.io accepts is narrow, and violating it fails loudly:
@@ -114,7 +114,7 @@ type Slice struct {
 	// already collected and the yield heuristic reads near-zero on all of them.
 	// Applied to a view reaching assets nothing else reaches, that abandons
 	// precisely the deep, unpopular tail - which is how small tags came to be
-	// sampled at 5% of their catalogue count while the crawl called itself
+	// sampled at 5% of their catalog count while the crawl called itself
 	// healthy.
 	//
 	// Set for the two view shapes that pay for the pages they cost:
@@ -206,8 +206,8 @@ func (s Slice) IsRoot() bool {
 	return s.Sort == SortDefault && s.Filter == FilterNone && len(s.Tags) == 0
 }
 
-// IsNewestRoot reports whether this is the whole catalogue in newest-first
-// order: the one view whose page numbers are a catalogue-wide recency ranking.
+// IsNewestRoot reports whether this is the whole catalog in newest-first
+// order: the one view whose page numbers are a catalog-wide recency ranking.
 //
 // The same care IsRoot takes applies here. Page 3 of the newest view of
 // tag-fonts means "third page of the newest fonts", which is not comparable
@@ -248,7 +248,7 @@ func (s Slice) PagesToFetch(itemsPerPage int64) int64 {
 // The plan rests on one observation: an asset is fully reachable if it carries
 // at least one tag whose total count fits within a single view. Assets carry
 // roughly nine tags each and most tags are small, so a slice per small tag
-// covers the large majority of the catalogue. What remains - assets whose
+// covers the large majority of the catalog. What remains - assets whose
 // every tag is too big to page through - is reached by pairing big tags with
 // each other.
 //
@@ -279,7 +279,7 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 	// 7,200 of a set spanning tens of thousands, and the popular end is what
 	// every other view has already collected, so these are sampled rather than
 	// paged in full. Measured across two full
-	// crawls, the tag slices below plateau at ~89% of the catalogue, and
+	// crawls, the tag slices below plateau at ~89% of the catalog, and
 	// applying free/store - a true partition - to every oversized tag moved
 	// that by 0.2 points. So the residual is not "assets whose every tag is too
 	// big to page through"; it is assets no tag view reaches at all, because
@@ -352,7 +352,7 @@ func PlanSlices(tags []models.Tag, itemsPerPage int64) []Slice {
 	// dataservice), so it has to be crawled before anything else assigns one.
 	//
 	// Its Count is the ceiling rather than 0. The root view spans the whole
-	// catalogue, so it is worth paging to the cap - and a Count of 0 makes
+	// catalog, so it is worth paging to the cap - and a Count of 0 makes
 	// PagesToFetch round down to a single page, which silently reduces the
 	// global popularity ranking to one page's worth and leaves every other
 	// asset ranked only within whichever slice happened to find it first.

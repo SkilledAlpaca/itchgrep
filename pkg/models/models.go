@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Asset represents a game asset. The whole collection is serialised to one
+// Asset represents a game asset. The whole collection is serialized to one
 // JSON file in the shared data directory; see internal/storage.
 type Asset struct {
 	GameId      string
@@ -33,7 +33,7 @@ type Asset struct {
 	//
 	// Kept as the displayed string rather than a number because itch.io prices
 	// in whichever currency the seller chose, and there is no exchange rate in
-	// the listing to normalise them with. A number would therefore be either
+	// the listing to normalize them with. A number would therefore be either
 	// wrong or unit-less; the string is at least exactly what a buyer sees.
 	Price string
 
@@ -51,7 +51,7 @@ type Asset struct {
 	// is therefore an ordering by recency in the same way InvPopularity is one
 	// by popularity: smaller is newer.
 	//
-	// Zero means "not seen in that view", which is most of the catalogue - the
+	// Zero means "not seen in that view", which is most of the catalog - the
 	// view stops at itch.io's 200-page ceiling, so only the newest ~7,200
 	// assets can have one. Anything without a rank sorts after everything with
 	// one; see RecencyRank.
@@ -78,7 +78,7 @@ const unranked = int64(1) << 40
 
 // RecencyRank is InvRecency with "unknown" mapped to a value that sorts last,
 // so a recency ordering does not silently present unranked assets as the newest
-// things in the catalogue.
+// things in the catalog.
 func (a Asset) RecencyRank() int64 {
 	if a.InvRecency <= 0 {
 		return unranked
@@ -120,7 +120,7 @@ func (a Asset) Pricing() string {
 // The values Pricing returns, and the values the ?price= parameter accepts.
 //
 // Pricing itself only ever returns the first two: free and paid partition the
-// catalogue exactly. The two ceilings are query-side narrowings of "paid", not
+// catalog exactly. The two ceilings are query-side narrowings of "paid", not
 // a third and fourth state an asset can be in, which is why they are listed
 // here but never stored on a document.
 const (
@@ -173,13 +173,13 @@ func (a Asset) String() string {
 //
 // Recorded because the number cannot be recovered afterwards: the webserver can
 // count what it loaded, but only the crawl ever saw how big itch.io said the
-// catalogue was at the time. Without it the site could report "96,903 assets"
+// catalog was at the time. Without it the site could report "96,903 assets"
 // and leave a visitor to assume that is all of them.
 type Stats struct {
 	// Indexed is how many assets the published index holds.
 	Indexed int64
-	// Catalogue is how many itch.io reported having when the crawl started.
-	Catalogue int64
+	// Catalog is how many itch.io reported having when the crawl started.
+	Catalog int64 `json:"Catalogue"`
 }
 
 // CrawlRecord is what one crawl knew about itself at publish time. Recorded
@@ -188,7 +188,7 @@ type CrawlRecord struct {
 	When            time.Time // publish time, UTC
 	DurationSeconds int64     // run start (this run, not checkpoint origin) to publish
 	Indexed         int64     // assets in the published index
-	Catalogue       int64     // itch.io's reported catalogue size at crawl start
+	Catalog         int64     `json:"Catalogue"` // itch.io's reported catalog size at crawl start
 	NewAssets       int64     // game ids absent from the previously published assets.json
 	RemovedAssets   int64     // game ids previously published, now gone
 	FreeAssets      int64     // Price == "" count; paid = Indexed - FreeAssets
@@ -211,14 +211,14 @@ type Tag struct {
 // IndexedAsset is a smaller version of Asset, used for indexing.
 //
 // Three of its fields duplicate information already present in the others.
-// That is deliberate: searching and filtering want the same data analysed two
-// different ways, and bleve applies one analyser per field.
+// That is deliberate: searching and filtering want the same data analyzed two
+// different ways, and bleve applies one analyzer per field.
 //
-//   - Tags is analysed normally, so "pixel-art" is searchable as "pixel art".
+//   - Tags is analyzed normally, so "pixel-art" is searchable as "pixel art".
 //   - TagSlugs holds the identical values as untouched keywords, so a filter can
 //     ask for exactly tag-2d and not also match every asset mentioning "2d".
 //   - SortTitle is the lowercased title as a single keyword, so an A-Z sort
-//     orders by the whole title rather than by its first analysed term.
+//     orders by the whole title rather than by its first analyzed term.
 type IndexedAsset struct {
 	GameId        string
 	Title         string
@@ -243,7 +243,7 @@ type IndexedAsset struct {
 	// dozen-odd currencies sellers price in.
 	//
 	// Unreadable prices are stored as UnknownPrice rather than 0, so that an
-	// asset whose currency this build did not recognise sorts last and matches
+	// asset whose currency this build did not recognize sorts last and matches
 	// no ceiling, instead of presenting itself as the cheapest thing on offer.
 	PriceUSD float64
 }

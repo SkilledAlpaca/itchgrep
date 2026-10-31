@@ -52,7 +52,7 @@ func IndexMapping() *mapping.IndexMappingImpl {
 	// ?like= source lookup use bleve.NewDocIDQuery, which reads the
 	// document's own ID, not a field indexed alongside it. Disabled rather
 	// than left to the dynamic defaults, so it costs nothing rather than one
-	// needless dynamically-analysed term per document.
+	// needless dynamically-analyzed term per document.
 	doc.AddSubDocumentMapping("GameId", bleve.NewDocumentDisabledMapping())
 
 	// text is the shape every searched-as-prose field shares: MatchQuery
@@ -68,9 +68,9 @@ func IndexMapping() *mapping.IndexMappingImpl {
 		return f
 	}
 
-	// kw is the exact-match counterpart: the keyword analyser leaves a value
+	// kw is the exact-match counterpart: the keyword analyzer leaves a value
 	// as one indivisible term, so a filter for "pixel-art" cannot also match
-	// everything merely tagged "art" the way the default analyser would by
+	// everything merely tagged "art" the way the default analyzer would by
 	// splitting it into "pixel" and "art". No term vectors - nothing
 	// phrase-queries a keyword field - and searchable unless told otherwise
 	// below.

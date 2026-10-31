@@ -15,7 +15,7 @@ import (
 // links every page to tags/not/sort/price permutations of itself, an
 // effectively infinite URL space, and in production Googlebot was observed
 // walking it at several requests per second with no end in sight. Each of
-// those URLs is a filtered rearrangement of the same catalogue, worthless to
+// those URLs is a filtered rearrangement of the same catalog, worthless to
 // index; the clean pages below carry everything a search engine needs.
 // Everything else is a normal page and stays allowed.
 //

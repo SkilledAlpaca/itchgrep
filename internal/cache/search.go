@@ -23,7 +23,7 @@ const maxFacetTags = 200
 type SearchOptions struct {
 	Query string
 	// Tags are combined with AND: an asset must carry every one of them. OR
-	// would have been the cheaper implementation and the wrong behaviour -
+	// would have been the cheaper implementation and the wrong behavior -
 	// adding a second tag to a filter is how a person narrows a search, and a
 	// filter that grows the result set when you add to it reads as broken.
 	Tags []string
@@ -102,7 +102,7 @@ func (o SearchOptions) resolvedSort() string {
 	}
 }
 
-// filtered reports whether anything narrows the catalogue. An unfiltered,
+// filtered reports whether anything narrows the catalog. An unfiltered,
 // unsorted, unsearched request is the front page, which has a much cheaper
 // answer than a search.
 func (o SearchOptions) filtered() bool {
@@ -142,7 +142,7 @@ func (c *Cache) Find(opts SearchOptions) (Results, error) {
 	// bookmark carrying ?price=under-5 against an index with no converted prices
 	// would otherwise return an empty page rather than the results the rest of
 	// the URL asks for. Dropping the clause is the reading a visitor would
-	// recognise; an empty page is not.
+	// recognize; an empty page is not.
 	if !c.HasPriceBands() && (opts.Price == models.PricingUnder5 || opts.Price == models.PricingUnder20) {
 		opts.Price = ""
 	}
@@ -222,7 +222,7 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	if from64 < 0 {
 		// A page number large enough to overflow that multiplication wraps
 		// negative. pageParam rejects it before a request reaches here (see
-		// maxPage), but bleve's SearchRequestOptions has no defined behaviour
+		// maxPage), but bleve's SearchRequestOptions has no defined behavior
 		// for a negative from, so any other caller gets the same "out of
 		// range" empty page browse() gives rather than whatever bleve would
 		// do with it.
@@ -282,7 +282,7 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 // disjunction, and that separation is the point: a filter must decide whether a
 // document is in the result set at all, whereas the text query decides where in
 // it the document ranks. Folding "free" into the disjunction would merely make
-// free assets score higher, which is not what a toggle labelled Free means.
+// free assets score higher, which is not what a toggle labeled Free means.
 func buildQuery(opts SearchOptions, likeTags []string) query.Query {
 	var conjuncts []query.Query
 
@@ -315,9 +315,9 @@ func buildQuery(opts SearchOptions, likeTags []string) query.Query {
 		conjuncts = append(conjuncts, bleve.NewDisjunctionQuery(veryFuzzyQuery, fuzzyQuery, exactQuery))
 	}
 
-	// TermQuery, not MatchQuery: TagSlugs is indexed with the keyword analyser,
+	// TermQuery, not MatchQuery: TagSlugs is indexed with the keyword analyzer,
 	// so the stored term is the whole slug. A MatchQuery would run the query
-	// string through the default analyser and look for "pixel" and "art" as
+	// string through the default analyzer and look for "pixel" and "art" as
 	// separate terms, neither of which exists in that field.
 	for _, tag := range opts.Tags {
 		tq := bleve.NewTermQuery(tag)
@@ -563,7 +563,7 @@ func countTags(assets []models.Asset) []models.Tag {
 		out = append(out, models.Tag{Slug: slug, Count: n})
 	}
 	// Count descending, then slug, so the order is stable across refreshes
-	// rather than following Go's randomised map iteration.
+	// rather than following Go's randomized map iteration.
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {
 			return out[i].Count > out[j].Count

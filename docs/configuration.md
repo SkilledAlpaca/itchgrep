@@ -59,7 +59,7 @@ Change safety:
 | [`CRAWL_INTERVAL`](#crawl_interval) | `docker-compose.yml` (both services), `.env.example` (commented), `internal/config/config.go` | No | `168h` (1 week) | Go duration string, or `0` | How stale the index may get before an automatic rebuild | Safe to change |
 | [`SCRAPE_RPS`](#scrape_rps) | `docker-compose.yml`, `.env.example`, `internal/fetcher/fetcher.go` | No | `2` | Positive integer, ≤ `1000` | Outbound requests per second to itch.io during a crawl | Change only if you understand the consequences |
 | [`SCRAPE_MAX_PAGES`](#scrape_max_pages) | `docker-compose.yml`, `.env.example`, `cmd/dataservice/main.go` | No | Unset (unlimited) | Positive integer | Caps total pages fetched, for a fast partial "smoke" crawl | Change only if you understand the consequences |
-| [`COVERAGE_TARGET`](#coverage_target) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `0.95` | Non-negative float | Stops the crawl once this fraction of the catalogue is collected | Safe to change |
+| [`COVERAGE_TARGET`](#coverage_target) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `0.95` | Non-negative float | Stops the crawl once this fraction of the catalog is collected | Safe to change |
 | [`COVERAGE_FLOOR`](#coverage_floor) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `0.75` | Non-negative float | Refuses to publish a crawl that covers less than this fraction | Change only if you understand the consequences |
 | [`SLICE_MIN_YIELD`](#slice_min_yield) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `0.05` | Non-negative float | Abandons a crawl view once it stops finding new assets | Change only if you understand the consequences |
 | [`TAG_CACHE_MAX_AGE`](#tag_cache_max_age) | `docker-compose.yml`, `.env.example`, `internal/config/config.go`, `cmd/dataservice/main.go` (`loadCrawlConfig`) | No | `168h` | Positive Go duration | How long the cached tag list is reused before rediscovery | Safe to change |
@@ -141,7 +141,7 @@ behind the local "smoke crawl" described in
 
 - **Format**: a positive integer (page count).
 - **Obtaining a value**: `40` finishes in a couple of minutes against a
-  fresh, empty catalogue view; the `task smoke` recipe in `Taskfile.dist.yml`
+  fresh, empty catalog view; the `task smoke` recipe in `Taskfile.dist.yml`
   uses this value.
 - **Example**: `SCRAPE_MAX_PAGES=40`
 - **If missing**: unset, meaning no cap — a full crawl (roughly six hours).
@@ -153,7 +153,7 @@ behind the local "smoke crawl" described in
   `MAX_TAGS` is shrunk to `25` for that run, so tag discovery doesn't spend
   ~17 minutes walking the full tag universe before a "couple of minutes"
   smoke test even starts fetching pages. **Never set this in production**;
-  it produces an index covering roughly 1% of the catalogue.
+  it produces an index covering roughly 1% of the catalog.
 
 ### `COVERAGE_TARGET`
 

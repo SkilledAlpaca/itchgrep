@@ -25,7 +25,7 @@
 # container existed only to stand in for GCS, which this workload never needed
 # (one writer, no ACLs, no listing, no lifecycle rules).
 #
-# The first run crawls the whole itch.io asset catalogue (~108,000 assets) at a
+# The first run crawls the whole itch.io asset catalog (~108,000 assets) at a
 # deliberately polite 2 requests/second, so expect about six hours. It cannot be
 # done in one pass: itch.io serves at most 200 pages per browse view (~7,200
 # assets), so the crawl walks many tag-filtered views and deduplicates. The
@@ -116,7 +116,7 @@ services:
       # test would spend ~17 minutes discovering tags before fetching a single
       # page of the partial run it was meant to finish in a couple of minutes.
       SCRAPE_MAX_PAGES: "${SCRAPE_MAX_PAGES:-}"
-      # Stop crawling once this fraction of the catalogue has been collected.
+      # Stop crawling once this fraction of the catalog has been collected.
       # The last few percent costs disproportionately many requests.
       #
       # In practice this does not trigger: a full crawl exhausts every slice at
@@ -218,7 +218,7 @@ services:
       # proxy the inverse is true: leave it off and every visitor shares one
       # bucket, because every request arrives from the same address.
       TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
-      # Peers CF-Connecting-IP / X-Forwarded-For are honoured from. Empty
+      # Peers CF-Connecting-IP / X-Forwarded-For are honored from. Empty
       # means trust nobody, which is the only safe default for a stack that
       # can also be reached with no Cloudflare in front of it at all - the
       # local-only `docker compose up`. The default here names cloudflared's
@@ -283,7 +283,7 @@ services:
   # A Tunnel dials OUT to Cloudflare and keeps the connection open, so there is
   # no port forward, no static IP, and the origin address never appears in DNS.
   # An open inbound port is the thing being avoided here - not just for secrecy,
-  # but because a tunnelled origin cannot be reached at all except through
+  # but because a tunneled origin cannot be reached at all except through
   # Cloudflare, which is a much stronger property than a firewall rule.
   #
   # Route the tunnel's public hostname at http://webserver:8080 - the service

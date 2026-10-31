@@ -111,7 +111,7 @@ func TestJunkFilterValuesAreDropped(t *testing.T) {
 	assert.Empty(t, f.Sort)
 }
 
-func TestTagsAreNormalisedAndDeduped(t *testing.T) {
+func TestTagsAreNormalizedAndDeduped(t *testing.T) {
 	f := parseFilters(httptest.NewRequest(http.MethodGet, "/?tags=+2D+,2d,,pixel-art", nil), money.Fallback())
 	assert.Equal(t, []string{"2d", "pixel-art"}, f.Tags)
 }
@@ -142,7 +142,7 @@ func TestLikeIsBoundedInLength(t *testing.T) {
 }
 
 // loadedLikeCache builds a cache with real, itch.io-shaped (numeric) GameIds,
-// since ?like= is parsed off the URL and normaliseGameId only accepts
+// since ?like= is parsed off the URL and normalizeGameId only accepts
 // digits - unlike most fixtures elsewhere in this file, which use readable
 // ids that would never survive that parse.
 func loadedLikeCache(t *testing.T) *cache.Cache {

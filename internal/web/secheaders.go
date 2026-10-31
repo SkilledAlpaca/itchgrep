@@ -19,7 +19,7 @@ const contentSecurityPolicy = "default-src 'self'; img-src 'self' https://img.it
 // duplicated per-handler.
 //
 // No X-Frame-Options: frame-ancestors in the CSP above already forbids
-// framing, and every browser that honours it ignores the older header
+// framing, and every browser that honors it ignores the older header
 // anyway, so setting both would just be a second thing to keep in sync.
 //
 // No HSTS here. Cloudflare terminates TLS and can set it at the edge; doing

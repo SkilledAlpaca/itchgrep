@@ -48,7 +48,7 @@ func (t Traffic) Uptime() time.Duration {
 
 // UptimeLabel is the coarse reading of Uptime, in the same spirit as
 // Freshness.Label: these pages are cached for a minute, so second-level
-// precision would be precision the response cannot honour.
+// precision would be precision the response cannot honor.
 func (t Traffic) UptimeLabel() string {
 	d := t.Uptime()
 	switch {
@@ -104,7 +104,7 @@ type ActivityCell struct {
 	Label    string // "Oct 31, 2026: 1,234 searches" - hidden text and title
 }
 
-// Class is the level's CSS class, which carries the colour (see app.css).
+// Class is the level's CSS class, which carries the color (see app.css).
 func (c ActivityCell) Class() string {
 	if !c.InWindow {
 		return "activity-cell activity-out"
@@ -155,7 +155,7 @@ func (g ActivityGrid) Summary() string {
 		return "No searches recorded in the last 90 days yet."
 	}
 	return fmt.Sprintf("%s searches in the last 90 days. Busiest day: %s (%s).",
-		humaniseCount(int64(g.Total)), g.BusiestDay.Format("Jan 2, 2006"), humaniseCount(int64(g.Busiest)))
+		humanizeCount(int64(g.Total)), g.BusiestDay.Format("Jan 2, 2006"), humanizeCount(int64(g.Busiest)))
 }
 
 // activityLevel buckets a day's count against the window's busiest day:
@@ -173,7 +173,7 @@ func dayLabel(day time.Time, count uint64) string {
 	if count == 1 {
 		noun = "search"
 	}
-	return fmt.Sprintf("%s: %s %s", day.Format("Jan 2, 2006"), humaniseCount(int64(count)), noun)
+	return fmt.Sprintf("%s: %s %s", day.Format("Jan 2, 2006"), humanizeCount(int64(count)), noun)
 }
 
 // Grid lays the snapshot's daily ring out as 14 weeks ending with the current

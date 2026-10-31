@@ -79,29 +79,29 @@ function suffixUTC(text) {
 // Both are guarded by a marker attribute so a second pass - after an
 // htmx swap that did not touch a given element - leaves it alone rather
 // than converting an already-local rendering as though it were still UTC.
-function localiseTimestamps(root) {
-	localiseAbsoluteTimestamps(root);
-	localiseRelativeTimestamps(root);
+function localizeTimestamps(root) {
+	localizeAbsoluteTimestamps(root);
+	localizeRelativeTimestamps(root);
 }
 
-function localiseAbsoluteTimestamps(root) {
-	var nodes = root.querySelectorAll('time.js-local[datetime]:not([data-localised])');
+function localizeAbsoluteTimestamps(root) {
+	var nodes = root.querySelectorAll('time.js-local[datetime]:not([data-localized])');
 	for (var i = 0; i < nodes.length; i++) {
 		var when = new Date(nodes[i].getAttribute('datetime'));
 		if (isNaN(when.getTime())) continue;
-		nodes[i].setAttribute('data-localised', '');
+		nodes[i].setAttribute('data-localized', '');
 		var original = nodes[i].textContent;
 		nodes[i].textContent = formatLocalDateTime(when);
 		nodes[i].title = suffixUTC(original);
 	}
 }
 
-function localiseRelativeTimestamps(root) {
-	var nodes = root.querySelectorAll('time:not(.js-local)[datetime]:not([data-localised])');
+function localizeRelativeTimestamps(root) {
+	var nodes = root.querySelectorAll('time:not(.js-local)[datetime]:not([data-localized])');
 	for (var i = 0; i < nodes.length; i++) {
 		var when = new Date(nodes[i].getAttribute('datetime'));
 		if (isNaN(when.getTime())) continue;
-		nodes[i].setAttribute('data-localised', '');
+		nodes[i].setAttribute('data-localized', '');
 		var originalTitle = nodes[i].getAttribute('title') || '';
 		var local = formatLocalDateTime(when);
 		nodes[i].title = originalTitle ? local + ' (' + originalTitle + ')' : local;
@@ -262,7 +262,7 @@ function renderSavedGrid() {
 }
 
 // safeHTTPURL admits only http(s) URLs into href/src attributes. Server-side
-// renders get this sanitisation from templ; this is the same rule for the one
+// renders get this sanitization from templ; this is the same rule for the one
 // path that renders from localStorage instead - a store that outlives bugs
 // and is writable by extensions, so a javascript: or data: URL parked there
 // must die here rather than become a link.
@@ -370,7 +370,7 @@ document.addEventListener('click', function (e) {
 });
 
 document.addEventListener('DOMContentLoaded', function () {
-	localiseTimestamps(document);
+	localizeTimestamps(document);
 	applySavedState(document);
 	renderSavedGrid();
 });
@@ -382,7 +382,7 @@ document.addEventListener('DOMContentLoaded', function () {
 // listener.
 document.addEventListener('htmx:afterSwap', function (evt) {
 	var root = evt.target || document;
-	localiseTimestamps(root);
+	localizeTimestamps(root);
 	applySavedState(root);
 	syncFacets(root);
 	moveFocusAfterSwap(root);

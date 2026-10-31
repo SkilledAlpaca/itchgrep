@@ -16,7 +16,7 @@ import (
 
 // These tests run against a real bleve index built with the same mapping the
 // dataservice publishes. Nothing here would catch the failure that matters most
-// - a filter silently matching everything because the field was analysed the
+// - a filter silently matching everything because the field was analyzed the
 // wrong way - if the mapping were stubbed out.
 
 func fixtures() []models.Asset {
@@ -42,12 +42,12 @@ func newLoadedCache(t *testing.T, pageSize int64) *Cache {
 	t.Helper()
 	c := newLoadedCacheFromAssets(t, pageSize, fixtures())
 	// Through the real probe rather than hardcoded, so the fixture also asserts
-	// that an index built the normal way is recognised as carrying PriceUSD.
+	// that an index built the normal way is recognized as carrying PriceUSD.
 	require.True(t, c.hasPriceBands)
 	return c
 }
 
-// newLoadedCacheFromAssets is newLoadedCache generalised over the asset list,
+// newLoadedCacheFromAssets is newLoadedCache generalized over the asset list,
 // for the handful of tests that need a fixture newLoadedCache's fixed set
 // cannot express (e.g. an asset with no tags at all).
 func newLoadedCacheFromAssets(t *testing.T, pageSize int64, assets []models.Asset) *Cache {
@@ -113,8 +113,8 @@ func ids(r Results) []string {
 	return out
 }
 
-func TestTagFilterIsExactNotAnalysed(t *testing.T) {
-	// The failure this guards against is silent: with the default analyser
+func TestTagFilterIsExactNotAnalyzed(t *testing.T) {
+	// The failure this guards against is silent: with the default analyzer
 	// "pixel-art" indexes as the two terms "pixel" and "art", so filtering by
 	// the pixel-art tag would also return the asset tagged only "fonts" whose
 	// title happens to be "Art Deco Fonts".
@@ -144,7 +144,7 @@ func TestMultipleTagsNarrowRatherThanWiden(t *testing.T) {
 	assert.Empty(t, ids(none))
 }
 
-func TestPriceFilterSplitsTheCatalogue(t *testing.T) {
+func TestPriceFilterSplitsTheCatalog(t *testing.T) {
 	c := newLoadedCache(t, 36)
 
 	free, err := c.Find(SearchOptions{Price: models.PricingFree, Page: 1})
@@ -179,10 +179,10 @@ func TestSortOrders(t *testing.T) {
 
 	byTitle, err := c.Find(SearchOptions{Price: models.PricingPaid, Sort: models.SortTitle, Page: 1})
 	require.NoError(t, err)
-	// Ambient, Art Deco, Zebra. Sorted on the analysed Title field instead,
+	// Ambient, Art Deco, Zebra. Sorted on the analyzed Title field instead,
 	// "Art Deco Fonts" would lead on the term "art".
 	assert.Equal(t, []string{"3", "5", "2"}, ids(byTitle),
-		"A-Z must order by the whole title, not by its first analysed term")
+		"A-Z must order by the whole title, not by its first analyzed term")
 }
 
 func TestRelevanceWithoutAQueryFallsBackToPopularity(t *testing.T) {
@@ -297,7 +297,7 @@ func TestExcludedTagsRemoveRatherThanNarrow(t *testing.T) {
 func TestAnExclusionAloneStillMatchesEverythingElse(t *testing.T) {
 	// A boolean query with only negative clauses matches nothing unless
 	// something positive is asserted first. Without the explicit match-all,
-	// excluding one tag would empty the catalogue instead of trimming it.
+	// excluding one tag would empty the catalog instead of trimming it.
 	c := newLoadedCache(t, 36)
 
 	got, err := c.Find(SearchOptions{ExcludeTags: []string{"2d"}, Page: 1})
@@ -306,7 +306,7 @@ func TestAnExclusionAloneStillMatchesEverythingElse(t *testing.T) {
 }
 
 func TestAuthorIsMatchedExactlyNotSearched(t *testing.T) {
-	// AuthorKey is a keyword field for the same reason TagSlugs is: analysed,
+	// AuthorKey is a keyword field for the same reason TagSlugs is: analyzed,
 	// an author called "el" would also be found by every description mentioning
 	// the word, and a two-word name would match either half.
 	c := newLoadedCache(t, 36)
@@ -383,7 +383,7 @@ func TestBoundedPriceFiltersFallBackWhenTheIndexCannotSupportThem(t *testing.T) 
 	// Against an index with no PriceUSD the range matches nothing, so a stale
 	// bookmark carrying ?price=under-5 would return an empty page. Dropping the
 	// clause answers the rest of the URL instead, which is the reading a visitor
-	// would recognise. Free and paid are unaffected - they need no conversion.
+	// would recognize. Free and paid are unaffected - they need no conversion.
 	c := newLoadedCache(t, 36)
 	c.hasPriceBands = false
 
@@ -555,7 +555,7 @@ func TestLikeCombinesWithOtherFiltersAsAConjunct(t *testing.T) {
 
 func TestLikeOnASourceWithNoTagsMatchesNothing(t *testing.T) {
 	// Nothing to be "similar" by. This must not silently fall back to an
-	// unfiltered browse - that would show the whole catalogue under a control
+	// unfiltered browse - that would show the whole catalog under a control
 	// promising a narrowed one.
 	assets := []models.Asset{
 		{GameId: "bare", Title: "No Tags At All", InvPopularity: 1},

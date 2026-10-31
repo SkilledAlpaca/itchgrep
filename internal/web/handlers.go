@@ -176,7 +176,7 @@ func Handle404(w http.ResponseWriter, r *http.Request) {
 func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	filters := parseFilters(r, h.cache.Rates())
 
-	// Honoured here too, not just on the fragment endpoint, so that the
+	// Honored here too, not just on the fragment endpoint, so that the
 	// load-more link works with scripting off and so a deep-linked page of
 	// results survives being shared.
 	page, ok := pageParam(r)
@@ -422,7 +422,7 @@ func (h *handler) HandleFeed(w http.ResponseWriter, r *http.Request) {
 
 // parseFilters reads the filter state out of a request.
 //
-// Unrecognised values for the enumerated parameters are dropped rather than
+// Unrecognized values for the enumerated parameters are dropped rather than
 // rejected. They can only come from a hand-edited or stale URL, and answering
 // those with a 400 would put an error page behind a link that has an obvious,
 // harmless reading - whereas a bad ?page= is structural and does get rejected.
@@ -444,7 +444,7 @@ tags:
 			if f.AtTagLimit() {
 				break tags
 			}
-			if tag = normaliseTag(tag); tag != "" {
+			if tag = normalizeTag(tag); tag != "" {
 				f = f.WithTag(tag)
 			}
 		}
@@ -458,13 +458,13 @@ not:
 			if f.AtNotTagLimit() {
 				break not
 			}
-			if tag = normaliseTag(tag); tag != "" {
+			if tag = normalizeTag(tag); tag != "" {
 				f = f.WithNotTag(tag)
 			}
 		}
 	}
 
-	f.Like = normaliseGameId(q.Get("like"))
+	f.Like = normalizeGameId(q.Get("like"))
 
 	f.Author = clampAuthor(q.Get("author"))
 
@@ -492,15 +492,15 @@ not:
 		f.Sort = models.SortRecent
 	}
 
-	f.Currency = normaliseCurrency(q.Get("cur"), rates)
+	f.Currency = normalizeCurrency(q.Get("cur"), rates)
 
 	return f
 }
 
-// normaliseCurrency accepts only a currency the loaded snapshot can actually
+// normalizeCurrency accepts only a currency the loaded snapshot can actually
 // convert to. An unknown code is dropped rather than carried, so the control
 // never shows a selection that silently converts nothing.
-func normaliseCurrency(cur string, rates money.Rates) string {
+func normalizeCurrency(cur string, rates money.Rates) string {
 	cur = strings.ToUpper(strings.TrimSpace(cur))
 	if cur == "" || !rates.Has(cur) {
 		return ""
@@ -520,10 +520,10 @@ func clampAuthor(author string) string {
 	return author
 }
 
-// normaliseTag reduces a tag parameter to a slug, or to "" if it is not one.
+// normalizeTag reduces a tag parameter to a slug, or to "" if it is not one.
 // itch.io slugs are lowercase alphanumerics and hyphens; anything else is a
 // typo or an injection attempt, and either way matches no document.
-func normaliseTag(tag string) string {
+func normalizeTag(tag string) string {
 	tag = strings.ToLower(strings.TrimSpace(tag))
 	if tag == "" || len(tag) > maxTagLen {
 		return ""
@@ -538,12 +538,12 @@ func normaliseTag(tag string) string {
 	return tag
 }
 
-// normaliseGameId reduces a like= parameter to a GameId, or to "" if it is
+// normalizeGameId reduces a like= parameter to a GameId, or to "" if it is
 // not shaped like one. itch.io ids are decimal digits only, so anything else
 // cannot match a real asset and is dropped the same way an out-of-alphabet
 // tag is - the search layer then treats an empty Like exactly like the
 // parameter being absent.
-func normaliseGameId(id string) string {
+func normalizeGameId(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" || len(id) > maxGameIdLen {
 		return ""
@@ -559,7 +559,7 @@ func normaliseGameId(id string) string {
 // clampQuery bounds an incoming query so a pathological one cannot be turned
 // into an expensive index pass.
 //
-// Cut on a rune boundary, not a byte one. itch.io's catalogue is searched in
+// Cut on a rune boundary, not a byte one. itch.io's catalog is searched in
 // every script there is, and slicing a multi-byte character in half produces
 // invalid UTF-8 that then travels into the query, the page title and the value
 // of the search box.
@@ -610,7 +610,7 @@ func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
 	templates.SearchFailed().Render(r.Context(), w)
 }
 
-// HandleAbout serves /about: the project's credits and licence page.
+// HandleAbout serves /about: the project's credits and license page.
 //
 // Always the full document. This used to answer HX-Request with a bare
 // fragment for the masthead links to swap in place, but that left the

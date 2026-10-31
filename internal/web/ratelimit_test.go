@@ -96,7 +96,7 @@ func TestLimiterOverflowIdentitiesShareOneBudget(t *testing.T) {
 
 func TestClientIdentityIgnoresProxyHeadersByDefault(t *testing.T) {
 	// The headers are attacker-controlled on a directly-exposed server, so
-	// honouring them by default would let anyone mint a new identity per
+	// honoring them by default would let anyone mint a new identity per
 	// request and bypass the limit entirely.
 	l := testLimiter(1, 1, false, cidrs(t, "10.0.0.0/24"))
 

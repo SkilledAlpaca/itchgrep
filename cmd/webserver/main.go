@@ -314,7 +314,7 @@ func main() {
 		MaxHeaderBytes: 64 << 10,
 	}
 
-	// Cancelled on SIGINT (Ctrl-C locally) or SIGTERM (what `docker stop` and
+	// Canceled on SIGINT (Ctrl-C locally) or SIGTERM (what `docker stop` and
 	// `docker compose down` actually send) so a stop asks for a graceful
 	// shutdown instead of every in-flight request being cut off mid-response.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

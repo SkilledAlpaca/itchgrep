@@ -135,7 +135,7 @@ func TestCheckpointFromAnOlderSchemaIsRejected(t *testing.T) {
 	// Resuming across a schema change is silently lossy: the restored assets
 	// lack the new field and the slices that would have refilled it are already
 	// marked done. Price is the case in point - empty would have read as "free"
-	// for the 40% of the catalogue collected before the change.
+	// for the 40% of the catalog collected before the change.
 	useTempDir(t)
 
 	stale := Checkpoint{Version: CheckpointVersion - 1, Assets: testAssets(), TotalAssets: 108697}
@@ -463,7 +463,7 @@ func TestPutHistoryRoundTrips(t *testing.T) {
 		When:            time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
 		DurationSeconds: 3600,
 		Indexed:         96903,
-		Catalogue:       108697,
+		Catalog:         108697,
 		NewAssets:       1204,
 		RemovedAssets:   12,
 		FreeAssets:      83214,
