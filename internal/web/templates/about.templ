@@ -10,16 +10,8 @@ import "strconv"
 // someone who does not operate this site, and it points support at a person who
 // cannot answer for it. The credit below is the part worth keeping; the contact
 // details were theirs, not this deployment's.
-// AboutPage is the same prose as a whole document, for a visitor who arrived at
-// /about directly - a shared link, a new tab, or scripting off - rather than by
-// swapping it into a page that already has a masthead.
-templ AboutPage(age Freshness, coverage Coverage) {
-	@Masthead(age, coverage)
-	@About()
-}
-
 templ About() {
-	<div id="page-content" class="prose">
+	<div class="prose">
 		<h2>About</h2>
 		<p>
 			itchgrep searches <a href="https://itch.io/game-assets" target="_blank" rel="noopener">itch.io/game-assets

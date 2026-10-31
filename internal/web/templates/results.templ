@@ -95,6 +95,17 @@ func resultSummary(r Results) string {
 	return humaniseCount(r.Total) + " assets"
 }
 
+// resultStatus is what the live region says after a swap: the count, and what
+// it is a count of. The filters are named because the count alone can repeat
+// ("17 assets" after adding a tag that excluded nothing), and a live region
+// whose text did not change may not be announced at all.
+func resultStatus(f Filters, r Results) string {
+	if summary := filterSummary(f, r.LikeTitle); summary != "" {
+		return resultSummary(r) + " for " + summary
+	}
+	return resultSummary(r)
+}
+
 // filterLink is the one shape every filter link on the site takes: an anchor
 // whose href is the state it leads to, so the page works with JavaScript
 // disabled, plus the htmx attributes that swap the results in place when it is
@@ -314,50 +325,76 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 		if len(tags) == 0 {
 			<p class="facets-empty">No tags to narrow by.</p>
 		} else {
-			<input
-				type="text"
-				class="facet-search"
-				placeholder="find a tag..."
-				aria-label="Find a tag"
-				autocomplete="off"
-				data-facet-search
-			/>
-			<ul class="facet-list">
-				for i, tag := range tags {
-					<li data-facet={ tag.Slug } data-facet-tail?={ facetTail(i) } hidden?={ facetTail(i) }>
-						if f.AtTagLimit() {
-							// Plain text, not a link: WithTag refuses at the
-							// cap, so the link would lead to the page it is on.
-							<span class="facet is-capped">
-								<span class="facet-name">{ tag.Slug }</span>
-								<span class="facet-count">{ humaniseCount(tag.Count) }</span>
-							</span>
-						} else {
-							@filterLink("facet", facetHref(f, tag.Slug), f.WithTag(tag.Slug), nil) {
-								<span class="facet-name">{ tag.Slug }</span>
-								<span class="facet-count">{ humaniseCount(tag.Count) }</span>
+			// A disclosure so a phone does not open on a screenful of tags with
+			// the first result below the fold. Rendered open: with scripting off
+			// the list is simply there, as it always was, and the summary can
+			// still fold it. app.js folds it on a narrow viewport and keeps it
+			// open on a wide one, where CSS hides the summary.
+			<details class="facets-details" open>
+				<summary class="facets-toggle">Filter by tag</summary>
+				<input
+					type="text"
+					class="facet-search"
+					placeholder="find a tag..."
+					aria-label="Find a tag"
+					autocomplete="off"
+					data-facet-search
+				/>
+				<ul class="facet-list">
+					for i, tag := range tags {
+						<li data-facet={ tag.Slug } data-facet-tail?={ facetTail(i) } hidden?={ facetTail(i) }>
+							if f.AtTagLimit() {
+								// Plain text, not a link: WithTag refuses at the
+								// cap, so the link would lead to the page it is on.
+								<span class="facet is-capped">
+									<span class="facet-name">{ tag.Slug }</span>
+									<span class="facet-count">{ humaniseCount(tag.Count) }</span>
+								</span>
+							} else {
+								@filterLink("facet", facetHref(f, tag.Slug), f.WithTag(tag.Slug), nil) {
+									<span class="facet-name">{ tag.Slug }</span>
+									<span class="facet-count">{ humaniseCount(tag.Count) }</span>
+								}
 							}
-						}
-						// A sibling of the facet link rather than a child of it:
-						// nesting one anchor inside another is invalid, and
-						// browsers resolve it by silently dropping the inner one.
-						// Omitted at the exclusion cap for the reason above.
-						if !f.AtNotTagLimit() {
-							@filterLink("facet-exclude", f.WithNotTag(tag.Slug).ShareURL(), f.WithNotTag(tag.Slug), excludeAttrs(tag.Slug)) {
-								−
+							// A sibling of the facet link rather than a child of it:
+							// nesting one anchor inside another is invalid, and
+							// browsers resolve it by silently dropping the inner one.
+							// Omitted at the exclusion cap for the reason above.
+							if !f.AtNotTagLimit() {
+								@filterLink("facet-exclude", f.WithNotTag(tag.Slug).ShareURL(), f.WithNotTag(tag.Slug), excludeAttrs(tag.Slug)) {
+									−
+								}
 							}
-						}
-					</li>
+						</li>
+					}
+				</ul>
+				if f.AtTagLimit() {
+					<p class="facets-empty">Tag limit reached.</p>
 				}
-			</ul>
-			if f.AtTagLimit() {
-				<p class="facets-empty">Tag limit reached.</p>
-			}
-			if f.AtNotTagLimit() {
-				<p class="facets-empty">Exclusion limit reached.</p>
-			}
+				if f.AtNotTagLimit() {
+					<p class="facets-empty">Exclusion limit reached.</p>
+				}
+			</details>
 		}
 	</aside>
+}
+
+// ResultsFragment is the response to a first-page /results request: the region
+// itself plus the two things that have to travel with it but live elsewhere in
+// the document.
+//
+// The <title> is how the tab's title follows the filters (WCAG 2.4.2): htmx
+// applies a <title> found in a swapped response to the document. It is not part
+// of ResultsRegion because that component is also rendered inside the full
+// page, where a second <title> in the body would be invalid.
+//
+// The #result-status element is an out-of-band swap, "innerHTML" so the live
+// region node itself is kept and only its text changes. Replacing the node
+// would defeat the point - see Index.
+templ ResultsFragment(f Filters, r Results) {
+	<title>{ PageTitle(f, r.LikeTitle) }</title>
+	<p id="result-status" hx-swap-oob="innerHTML">{ resultStatus(f, r) }</p>
+	@ResultsRegion(f, r)
 }
 
 // ResultsRegion is everything below the search box: the sidebar, the controls
@@ -368,10 +405,17 @@ templ ResultsRegion(f Filters, r Results) {
 	@TagSidebar(f, r.Tags)
 	<div class="results-main">
 		<div class="toolbar">
-			// Announced on change, because applying a filter swaps the results
-			// silently: without this a screen reader user gets no confirmation
-			// that anything happened, let alone how much it narrowed things.
-			<span class="result-count" role="status" aria-live="polite">{ resultSummary(r) }</span>
+			<div class="toolbar-lead">
+				// The skip link's target and, after a filter swap, where focus
+				// lands (see app.js). Visible rather than visually hidden: a
+				// focus ring on an element nobody can see tells a sighted
+				// keyboard user nothing. tabindex -1 so it is a script and
+				// fragment target without becoming a tab stop.
+				<h2 id="results" class="results-heading" tabindex="-1">Results</h2>
+				// The count is the visible half. Announcing it is the job of
+				// #result-status, which lives outside this region.
+				<span class="result-count">{ resultSummary(r) }</span>
+			</div>
 			<div class="toolbar-controls">
 				@PriceControl(f, r.HasPriceBands)
 				@SortControl(f, r.HasRecency)
@@ -379,7 +423,7 @@ templ ResultsRegion(f Filters, r Results) {
 		</div>
 		@CurrencyControl(f, r.Rates)
 		@ActiveFilters(f, r.LikeTitle)
-		<div id="asset-list">
+		<div id="asset-list" class="asset-grid">
 			@AssetPage(f, r)
 		</div>
 	</div>

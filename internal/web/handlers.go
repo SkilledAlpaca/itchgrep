@@ -165,7 +165,7 @@ func pageParam(r *http.Request) (int64, bool) {
 func Handle404(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNotFound)
-	component := templates.Layout("Not found — ITCHGREP", templates.Error404())
+	component := templates.Layout("Not found — ITCHGREP", templates.Shell{}, templates.Error404())
 	component.Render(r.Context(), w)
 }
 
@@ -181,7 +181,7 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	// results survives being shared.
 	page, ok := pageParam(r)
 	if !ok {
-		http.Error(w, "Invalid page", http.StatusBadRequest)
+		h.badPage(w, r, filters.ShareURL())
 		return
 	}
 
@@ -217,7 +217,7 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		// No results reached, so nothing is known about the ?like= source's
 		// title yet - the feed link falls back to describing the filter by
 		// id alone, the same way it would for an unknown one.
-		templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters, ""), templates.Index(filters, templates.Results{Page: page}, h.freshness(), h.coverage())).Render(r.Context(), w)
+		templates.LayoutHead(templates.PageTitle(filters, ""), templates.FeedLink(filters, ""), h.searchShell(), templates.Index(filters, templates.Results{Page: page})).Render(r.Context(), w)
 		return
 	}
 
@@ -225,7 +225,26 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	// LayoutHead, not Layout: this is the one page a feed for the current
 	// filters makes sense on, so it carries the auto-discovery link every
 	// other page has no reason to.
-	templates.LayoutHead(pageTitle(filters), templates.FeedLink(filters, results.LikeTitle), templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
+	templates.LayoutHead(templates.PageTitle(filters, results.LikeTitle), templates.FeedLink(filters, results.LikeTitle), h.searchShell(), templates.Index(filters, results)).Render(r.Context(), w)
+}
+
+// badPage renders the styled 400 for a malformed ?page= on a full-page route.
+// The status stays 400, so it still shows up as a client error, but the body is
+// the site's own page with a way back instead of a bare "Invalid page".
+func (h *handler) badPage(w http.ResponseWriter, r *http.Request, firstPage string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusBadRequest)
+	templates.Layout("Invalid page — ITCHGREP", templates.Shell{Age: h.freshness(), Coverage: h.coverage()}, templates.BadPage(firstPage)).Render(r.Context(), w)
+}
+
+// shell is the page frame for every route that is not a result list.
+func (h *handler) shell() templates.Shell {
+	return templates.Shell{Age: h.freshness(), Coverage: h.coverage()}
+}
+
+// searchShell is the page frame for the routes built around a result list.
+func (h *handler) searchShell() templates.Shell {
+	return templates.Shell{Age: h.freshness(), Coverage: h.coverage(), Search: true}
 }
 
 // requestedForm is the request's own address in the shape Filters.PageURL
@@ -249,7 +268,11 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 
 	page, ok := pageParam(r)
 	if !ok {
-		http.Error(w, "Invalid page", http.StatusBadRequest)
+		// A fragment, not a page: htmx swaps this into the results region
+		// (app.js lets a 400 through), where a full document would nest one.
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusBadRequest)
+		templates.BadPage(filters.ShareURL()).Render(r.Context(), w)
 		return
 	}
 
@@ -279,7 +302,7 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 	// sidebar counts and the controls as well as the cards. Later pages are
 	// appended to the existing list, so they are cards alone.
 	if page == 1 {
-		templates.ResultsRegion(filters, results).Render(r.Context(), w)
+		templates.ResultsFragment(filters, results).Render(r.Context(), w)
 		return
 	}
 	templates.AssetPage(filters, results).Render(r.Context(), w)
@@ -341,12 +364,12 @@ func (h *handler) HandleNew(w http.ResponseWriter, r *http.Request) {
 		logging.Error("Error rendering /new: %s", err)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(statusFor(err))
-		templates.Layout("New — ITCHGREP", templates.ArrivalsPage(nil, h.cache.Rates(), h.freshness(), h.coverage())).Render(r.Context(), w)
+		templates.Layout("New — ITCHGREP", h.shell(), templates.ArrivalsPage(nil, h.cache.Rates(), h.freshness())).Render(r.Context(), w)
 		return
 	}
 
 	h.cacheable(w)
-	templates.Layout("New — ITCHGREP", templates.ArrivalsPage(found.Assets, h.cache.Rates(), h.freshness(), h.coverage())).Render(r.Context(), w)
+	templates.Layout("New — ITCHGREP", h.shell(), templates.ArrivalsPage(found.Assets, h.cache.Rates(), h.freshness())).Render(r.Context(), w)
 }
 
 // HandleFeed serves /feed: an Atom document for the current filters.
@@ -555,17 +578,6 @@ func clampQuery(q string) string {
 	return strings.TrimSpace(q[:cut])
 }
 
-func pageTitle(f templates.Filters) string {
-	switch {
-	case f.Query != "":
-		return f.Query + " — ITCHGREP"
-	case len(f.Tags) > 0:
-		return strings.Join(f.Tags, " + ") + " — ITCHGREP"
-	default:
-		return "ITCHGREP"
-	}
-}
-
 // statusFor maps a cache.Find error onto a response status.
 //
 // Everything that is not ErrNotReady is a server fault - a corrupt segment or
@@ -606,7 +618,7 @@ func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
 // navigations now, so nothing sends an HX-Request here any more.
 func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	h.cacheable(w)
-	templates.Layout("About — ITCHGREP", templates.AboutPage(h.freshness(), h.coverage())).Render(r.Context(), w)
+	templates.Layout("About — ITCHGREP", h.shell(), templates.About()).Render(r.Context(), w)
 }
 
 // HandleSaved serves /saved: the masthead around an empty grid that app.js
@@ -616,7 +628,7 @@ func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 // request, cacheable exactly like the other static shells.
 func (h *handler) HandleSaved(w http.ResponseWriter, r *http.Request) {
 	h.cacheable(w)
-	templates.Layout("Saved — ITCHGREP", templates.SavedPage(h.freshness(), h.coverage())).Render(r.Context(), w)
+	templates.Layout("Saved — ITCHGREP", h.shell(), templates.SavedPage()).Render(r.Context(), w)
 }
 
 // HandleStats serves the public traffic page. It renders inside the
@@ -625,5 +637,5 @@ func (h *handler) HandleSaved(w http.ResponseWriter, r *http.Request) {
 func (h *handler) HandleStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", statsMaxAge))
 	traffic := templates.NewTraffic(h.metrics.Snapshot(), time.Now())
-	templates.Layout("Stats — ITCHGREP", templates.StatsPage(h.freshness(), h.coverage(), traffic, h.history())).Render(r.Context(), w)
+	templates.Layout("Stats — ITCHGREP", h.shell(), templates.StatsPage(traffic, h.history())).Render(r.Context(), w)
 }

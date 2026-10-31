@@ -11,55 +11,55 @@ package templates
 // here works with it off by design; a saved list kept off the server has
 // nowhere else to live, so the <noscript> notice says that plainly instead of
 // leaving a visitor looking at an unexplained empty grid.
-templ SavedPage(age Freshness, coverage Coverage) {
-	@Masthead(age, coverage)
-	<div id="page-content">
-		<div class="prose">
-			<h2>Saved</h2>
+templ SavedPage() {
+	<div class="prose">
+		<h2>Saved</h2>
+		<p>
+			Saved items live only in this browser's local storage. A
+			save is never sent to this server - not the list, not even a
+			count of it - and it is never logged or synced anywhere
+			else. Clearing this browser's site data clears the list too.
+		</p>
+	</div>
+	<noscript>
+		<div class="notice">
+			<h2>This page needs JavaScript</h2>
 			<p>
-				Saved items live only in this browser's local storage. A
-				save is never sent to this server - not the list, not even a
-				count of it - and it is never logged or synced anywhere
-				else. Clearing this browser's site data clears the list too.
+				Saving happens entirely in your browser, with nothing
+				reaching the server - so there is no server-rendered list
+				this page can fall back to. Every other page here works
+				with scripting off; this is the one exception.
 			</p>
 		</div>
-		<noscript>
-			<div class="notice">
-				<h2>This page needs JavaScript</h2>
-				<p>
-					Saving happens entirely in your browser, with nothing
-					reaching the server - so there is no server-rendered list
-					this page can fall back to. Every other page here works
-					with scripting off; this is the one exception.
-				</p>
-			</div>
-		</noscript>
-		<div id="asset-list" data-saved-grid>
-			<div id="saved-empty" class="notice" hidden>
-				<h2>Nothing saved yet</h2>
-				<p>Use the ☆ on any result to save it here.</p>
-			</div>
+	</noscript>
+	<div id="asset-list" class="asset-grid" data-saved-grid>
+		<div id="saved-empty" class="notice" hidden>
+			<h2>Nothing saved yet</h2>
+			<p>Use the ☆ on any result to save it here.</p>
 		</div>
-		<template id="saved-card-template">
-			<article class="asset">
-				<button
-					type="button"
-					class="asset-save"
-					data-save-toggle
-					aria-pressed="true"
-				>★</button>
-				<a class="asset-link" target="_blank" rel="noopener">
-					<img data-role="thumb" loading="lazy" decoding="async" alt=""/>
-					<div class="asset-body">
-						<div class="asset-title" data-role="title"></div>
-						@NewTabHint()
-					</div>
-				</a>
-				<span class="asset-author" data-role="author"></span>
-				<div class="asset-meta">
-					<span class="asset-price" data-role="price"></span>
-				</div>
-			</article>
-		</template>
 	</div>
+	<template id="saved-card-template">
+		<article class="asset">
+			<button
+				type="button"
+				class="asset-save"
+				data-save-toggle
+				aria-pressed="true"
+			>★</button>
+			<a class="asset-link" target="_blank" rel="noopener">
+				<img data-role="thumb" loading="lazy" decoding="async" alt=""/>
+				<div class="asset-body">
+					<h3 class="asset-title" data-role="title"></h3>
+					@NewTabHint()
+				</div>
+			</a>
+			// Not a link here, unlike the search cards' author: a saved card has
+			// no filtered view to lead to, so it takes its own class rather than
+			// sharing .asset-author with something that behaves differently.
+			<span class="asset-byline" data-role="author"></span>
+			<div class="asset-meta">
+				<span class="asset-price" data-role="price"></span>
+			</div>
+		</article>
+	</template>
 }

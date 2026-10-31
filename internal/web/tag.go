@@ -43,7 +43,7 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 	filters := templates.Filters{Tags: []string{slug}}
 	page, ok := pageParam(r)
 	if !ok {
-		http.Error(w, "Invalid page", http.StatusBadRequest)
+		h.badPage(w, r, "/tag/"+slug)
 		return
 	}
 
@@ -53,12 +53,12 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 		logging.Error("Error rendering /tag/%s: %s", slug, err)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(statusFor(err))
-		templates.LayoutHead(pageTitle(filters), templates.CanonicalLink(canonical),
-			templates.Index(filters, templates.Results{Page: page}, h.freshness(), h.coverage())).Render(r.Context(), w)
+		templates.LayoutHead(templates.PageTitle(filters, ""), templates.CanonicalLink(canonical), h.searchShell(),
+			templates.Index(filters, templates.Results{Page: page})).Render(r.Context(), w)
 		return
 	}
 
 	h.cacheable(w)
-	templates.LayoutHead(pageTitle(filters), templates.CanonicalLink(canonical),
-		templates.Index(filters, results, h.freshness(), h.coverage())).Render(r.Context(), w)
+	templates.LayoutHead(templates.PageTitle(filters, ""), templates.CanonicalLink(canonical), h.searchShell(),
+		templates.Index(filters, results)).Render(r.Context(), w)
 }

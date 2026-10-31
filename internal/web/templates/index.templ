@@ -141,10 +141,22 @@ templ SearchBar(f Filters) {
 // Index renders the whole page, results included, so that any filtered URL is
 // a shareable link that lands on populated results rather than on an empty box
 // that then fetches them.
-templ Index(f Filters, r Results, age Freshness, coverage Coverage) {
-	@Masthead(age, coverage)
-	<div id="page-content">
+//
+// The shell (masthead, skip link, <main>) comes from LayoutHead; this renders
+// only what is inside <main>.
+templ Index(f Filters, r Results) {
+	// hx-indicator is inherited by every htmx request made below, so a facet,
+	// chip, sort or card link shows the search bar's spinner just as a submitted
+	// search does. Without it only the form itself ever looked busy.
+	<div class="search-page" hx-indicator=".searchbar .spinner">
 		@SearchBar(f)
+		// Outside #results-region, which every filter link swaps: a live region
+		// that is replaced is announced inconsistently, because assistive
+		// technology generally ignores the initial content of a node it has
+		// just been handed. This node is never swapped; ResultsFragment updates
+		// its text out of band. Empty on first load, so nothing is announced
+		// for a page the visitor just navigated to.
+		<p id="result-status" class="visually-hidden" role="status" aria-live="polite"></p>
 		<div id="results-region" class="results-region">
 			@ResultsRegion(f, r)
 		</div>

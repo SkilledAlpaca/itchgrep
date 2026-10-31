@@ -2,11 +2,22 @@ package templates
 
 templ Error404() {
 	// No age line: Handle404 is wired up without a cache to ask, and a 404 is
-	// about a URL that does not exist rather than about the data behind it.
-	@Masthead(Freshness{}, Coverage{})
+	// about a URL that does not exist rather than about the data behind it, so
+	// the handler passes it an empty Shell.
 	<div class="notice">
 		<h2>404 — nothing here</h2>
 		<p><a href="/">Back to search</a></p>
+	</div>
+}
+
+// BadPage answers a ?page= that is not a page number. It is the same notice
+// shape as the 404, with a way out: the first page of the same results, which
+// is what the visitor almost certainly wanted. firstPage is that address.
+templ BadPage(firstPage string) {
+	<div class="notice">
+		<h2>That page number is not valid</h2>
+		<p>Page numbers start at 1 and count up from the first page of results.</p>
+		<p><a href={ templ.SafeURL(firstPage) }>Back to the first page</a></p>
 	</div>
 }
 
@@ -18,9 +29,7 @@ templ NotReady() {
 	<div class="notice">
 		<h2>Index not ready yet</h2>
 		<p>
-			The crawl has not published an index yet. This page picks it up on
-			its own within a few seconds of it landing — watch progress with
-			<code>docker compose logs -f dataservice</code>.
+			The search index is still being built. Try again in a few minutes.
 		</p>
 	</div>
 }

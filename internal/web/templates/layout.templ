@@ -4,16 +4,48 @@ package templates
 // content (feed discovery, canonical links, ...) renders through this rather
 // than through LayoutHead with an explicit nil, so most handlers do not have
 // to know the extension point exists.
-templ Layout(title string, content templ.Component) {
-	@LayoutHead(title, nil, content)
+templ Layout(title string, shell Shell, content templ.Component) {
+	@LayoutHead(title, nil, shell, content)
+}
+
+// Shell is what the page frame needs to know that is not page content: the
+// masthead's two figures, and which skip link to offer. Every page renders the
+// same frame (skip link, masthead, <main>), so it lives here once rather than
+// at the top of six page templates.
+type Shell struct {
+	Age      Freshness
+	Coverage Coverage
+
+	// Search marks the pages built around a result list. Their skip link goes
+	// straight to it, past the sidebar's forty-odd links, instead of to the top
+	// of <main>.
+	Search bool
+}
+
+// skipHref and skipLabel describe the skip link, the first focusable element
+// on every page (WCAG 2.4.1). The masthead and, on search pages, the whole tag
+// sidebar are repeated blocks; a keyboard user otherwise tabs through all of
+// it to reach the first result.
+func (s Shell) skipHref() string {
+	if s.Search {
+		return "#results"
+	}
+	return "#main"
+}
+
+func (s Shell) skipLabel() string {
+	if s.Search {
+		return "Skip to results"
+	}
+	return "Skip to content"
 }
 
 // LayoutHead is the page shell with room for extra <head> markup - currently
 // just the results page's feed auto-discovery link. A second templ function
 // rather than a variadic or options struct: templ components have no
 // zero-argument-omission of their own, and head being nil-checked here keeps
-// every other caller's Layout(title, content) call unchanged.
-templ LayoutHead(title string, head templ.Component, content templ.Component) {
+// every other caller's Layout call free of it.
+templ LayoutHead(title string, head templ.Component, shell Shell, content templ.Component) {
 	<!DOCTYPE html>
 	<html lang="en">
 		<head>
@@ -43,7 +75,15 @@ templ LayoutHead(title string, head templ.Component, content templ.Component) {
 			<script src="/static/app.js" defer></script>
 		</head>
 		<body>
-			<main>
+			<a class="skip-link" href={ templ.SafeURL(shell.skipHref()) }>{ shell.skipLabel() }</a>
+			// The masthead is a sibling of <main>, not inside it: a <header>
+			// nested in <main> is not a banner landmark, and "skip to main"
+			// would land on the repeated masthead it was meant to skip.
+			@Masthead(shell.Age, shell.Coverage)
+			// tabindex -1 so the "Skip to content" fragment link moves focus
+			// here in every browser, not only those that track a sequential
+			// focus starting point. It is a script-focus target only.
+			<main id="main" tabindex="-1">
 				@content
 			</main>
 		</body>
