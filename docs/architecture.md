@@ -44,7 +44,7 @@ internal/
   web/             HTTP handlers and middleware
     templates/     templ views (.templ source, generated *_templ.go) and
                     hand-written Go view models
-    static/        embedded CSS, JS, vendored htmx (see static/VENDOR.md)
+    static/        embedded CSS, JS, vendored htmx, content hashes (see static/VENDOR.md)
 pkg/
   models/          shared data shapes
   money/           price parsing and currency conversion

@@ -19,7 +19,7 @@ func TestLiveRoutesAreNeverProbes(t *testing.T) {
 		"/", "/results", "/about", "/stats", "/new", "/feed", "/saved",
 		"/sitemap.xml", "/opensearch.xml", "/robots.txt", "/favicon.ico",
 		"/healthz", "/readyz",
-		"/static/app.css",
+		"/static/app.css", "/static/app.0123456789ab.css", "/static/htmx.min.0123456789ab.js",
 		// Tag pages are a prefix, not one path, so they cannot sit in
 		// liveRoutes - this asserts the pattern lists never grow something
 		// that would swallow them.

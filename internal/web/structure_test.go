@@ -8,6 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"itchgrep/internal/web/static"
 )
 
 func TestEveryPageStartsWithASkipLinkAndAHeaderOutsideMain(t *testing.T) {
@@ -100,7 +102,7 @@ func TestInvalidPageOnATagPageLinksBackToTheTag(t *testing.T) {
 func TestNoGlobalSlashShortcut(t *testing.T) {
 	// WCAG 2.1.4: a single-character shortcut must be removable or remappable.
 	// The decision was to remove it rather than build a toggle.
-	js, err := staticFS.ReadFile("static/app.js")
+	js, err := static.FS.ReadFile("app.js")
 	require.NoError(t, err)
 	assert.NotContains(t, string(js), `e.key !== '/'`)
 	assert.NotContains(t, string(js), `=== '/'`)
@@ -110,7 +112,7 @@ func TestTheStylesheetHasTheRulesTheTemplatesNeed(t *testing.T) {
 	// Classes the templates emit that are easy to lose in a CSS tidy-up: each
 	// has no other selector to fall back on, and a missing rule renders a
 	// capped chip or facet with link styling and a hover fill.
-	css, err := staticFS.ReadFile("static/app.css")
+	css, err := static.FS.ReadFile("app.css")
 	require.NoError(t, err)
 	for _, selector := range []string{
 		".skip-link", ".facet.is-capped", ".tag.is-capped", ".tag-more",

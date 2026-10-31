@@ -1,39 +1,47 @@
 package web
 
 import (
-	"embed"
-	"io/fs"
 	"net/http"
+	"strings"
+
+	"itchgrep/internal/web/static"
 )
 
-// staticFS holds the assets the page needs at runtime. They are embedded rather
-// than fetched from a CDN: this is a self-hosted tool whose whole point is a
-// local index, so it has no business failing to render because unpkg.com is
-// unreachable. It also removes three cross-origin requests from every page load
-// and any chance of an SRI mismatch when a CDN re-publishes a version.
-//
-//go:embed static
-var staticFS embed.FS
+// The assets are embedded (package static) rather than fetched from a CDN:
+// this is a self-hosted tool whose whole point is a local index, so it has no
+// business failing to render because unpkg.com is unreachable. It also removes
+// three cross-origin requests from every page load and any chance of an SRI
+// mismatch when a CDN re-publishes a version.
+
+const (
+	// immutableCache is for fingerprinted paths: the hash is the content, so
+	// the bytes behind that URL can never change.
+	immutableCache = "public, max-age=31536000, immutable"
+	// bareCache is for the unversioned names (old HTML still cached somewhere,
+	// a hand-typed URL). Short, because those bytes change on every release.
+	bareCache = "public, max-age=300"
+)
 
 // StaticHandler serves the embedded assets. Mount it at /static/.
 //
-// The embed rooted at "static" would otherwise serve them as /static/static/x,
-// so the directory is stripped from both ends: fs.Sub off the front of the
-// filesystem, StripPrefix off the front of the URL.
-//
-// The files only change when the binary does, so they are cached for an hour
-// and busted by rebuilding. Deliberately not "immutable": the paths carry no
-// version, so a rebuild has to be able to win.
+// Templates link /static/app.<hash>.css, and a matching hash is cached for a
+// year. That is what fixes a deploy changing HTML, CSS and JS together while a
+// CDN or browser still holds the old CSS: new HTML names new URLs, so there is
+// nothing stale to hit. The bare /static/app.css still works for HTML cached
+// from before this scheme, but is never long-cached. A hash that does not match
+// the current file is a 404, not the current bytes under an old name.
 func StaticHandler() http.Handler {
-	sub, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		// Only reachable if the embed directive above stops matching, which is
-		// a build-time mistake rather than a runtime condition.
-		panic("web: embedded static directory missing: " + err.Error())
-	}
-	server := http.StripPrefix("/static/", http.FileServer(http.FS(sub)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		server.ServeHTTP(w, r)
+		name, immutable, ok := static.Resolve(strings.TrimPrefix(r.URL.Path, "/static/"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if immutable {
+			w.Header().Set("Cache-Control", immutableCache)
+		} else {
+			w.Header().Set("Cache-Control", bareCache)
+		}
+		http.ServeFileFS(w, r, static.FS, name)
 	})
 }

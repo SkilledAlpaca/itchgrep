@@ -40,7 +40,7 @@ The published search index (`index.bleve/` inside the shared `/data` directory) 
 
 ## Vendored JavaScript: htmx
 
-`internal/web/static/htmx.min.js` is a vendored, third-party file, embedded into the webserver binary via `//go:embed static` and served at `/static/htmx.min.js`. It is not a Go module and does not appear in `go.mod`.
+`internal/web/static/htmx.min.js` is a vendored, third-party file, embedded into the webserver binary via the `//go:embed` in `internal/web/static/static.go` and served at a content-fingerprinted `/static/htmx.min.<hash>.js`. It is not a Go module and does not appear in `go.mod`.
 
 - **Version:** 1.9.10, confirmed from the string literally inside the minified file itself (`version:"1.9.10"`) — see `internal/web/static/VENDOR.md`, which documents this as the authoritative source of truth over any version number written down elsewhere, including in that same file.
 - **Why vendored instead of loaded from a CDN:** removes a cross-origin request and its DNS/TLS/latency cost from every page load, keeps the page working with no outbound network access, and removes any risk of a CDN silently serving a different build than the one this project tested against.
