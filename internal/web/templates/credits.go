@@ -14,6 +14,10 @@ const (
 	// the fork moves; a source link that 404s is worse than none.
 	SourceURL = "https://github.com/SkilledAlpaca/itchgrep"
 
+	// AccessibilityURL is the conformance statement, which lives in the
+	// repository so it is reviewed with the code it describes.
+	AccessibilityURL = SourceURL + "/blob/main/ACCESSIBILITY.md"
+
 	// UpstreamURL and AuthorURL credit the original author, who wrote the
 	// crawler, the index and the interface this is descended from.
 	UpstreamURL = "https://github.com/wintermute-cell/itchgrep"

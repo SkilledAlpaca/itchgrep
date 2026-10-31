@@ -19,6 +19,14 @@ the left of the diagonal and the dark theme on the right](.github/screenshot-sea
 Cover art and creator names are blurred in this screenshot; they belong to
 the asset authors, not to this project.</sub>
 
+## Accessibility
+
+[![WCAG 2.2 Level AA](https://img.shields.io/badge/WCAG_2.2-AA-1f7a3a)](ACCESSIBILITY.md)
+
+itchgrep conforms to WCAG 2.2 Level AA; the
+[accessibility statement](ACCESSIBILITY.md) covers how that was evaluated,
+the known limitations, and how to report a barrier.
+
 ## What it does
 
 - Searches four weighted fields at once (tags, title, description, author),

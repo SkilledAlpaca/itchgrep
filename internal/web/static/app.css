@@ -543,6 +543,14 @@ a:hover {
   color: var(--text-faint);
 }
 
+.facet-search-label {
+  display: block;
+  margin: 0 0 0.4rem;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
 .facet-search {
   width: 100%;
   margin-bottom: 0.9rem;
@@ -1341,6 +1349,27 @@ a:hover {
   .activity-l4 {
     background: CanvasText;
   }
+}
+
+.activity-days {
+  margin-bottom: 2rem;
+}
+
+.activity-days summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.activity-days p {
+  margin: 0.6rem 0;
+  font-size: 1.3rem;
+  color: var(--text-dim);
+}
+
+.activity-days ul {
+  margin: 0;
+  padding-left: 2rem;
+  columns: 22rem;
 }
 
 .history-row {

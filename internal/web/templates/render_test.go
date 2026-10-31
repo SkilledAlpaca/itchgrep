@@ -561,7 +561,7 @@ func TestSavedPageShellHasAnEmptyGridAndACardTemplate(t *testing.T) {
 
 	assert.Contains(t, html, `id="asset-list" class="asset-grid" data-saved-grid`)
 	assert.Contains(t, html, `id="saved-card-template"`)
-	assert.Contains(t, html, `id="saved-empty" class="notice" hidden`)
+	assert.Contains(t, html, `id="saved-empty" class="notice" tabindex="-1" hidden`)
 
 	gridStart := strings.Index(html, `id="asset-list"`)
 	templateStart := strings.Index(html, "<template")
@@ -830,4 +830,58 @@ func TestAboutStatesTheLimitsWithoutAStaleCount(t *testing.T) {
 	assert.NotContains(t, html, "97,000")
 	assert.NotContains(t, html, "without limit")
 	assert.Contains(t, html, "up to "+strconv.Itoa(MaxTags)+" tags can be required")
+}
+
+func TestStatsListsDailyCountsAsTextAlternativeToShading(t *testing.T) {
+	today := gridNow.Unix() / 86400
+	snap := metrics.Snapshot{}
+	snap.Days[0] = models.DayBucket{EpochDay: today, Searches: 1234}
+	snap.Days[1] = models.DayBucket{EpochDay: today - 1, Searches: 5}
+	html := render(t, StatsPage(NewTraffic(snap, gridNow), History{}))
+
+	assert.Contains(t, html, `<details class="activity-days"><summary>Daily counts</summary>`)
+	assert.Contains(t, html, "Days not listed had no searches.")
+	assert.Contains(t, html, "<li>Oct 31, 2026: 1,234 searches</li>")
+	assert.Contains(t, html, "<li>Oct 30, 2026: 5 searches</li>")
+	assert.Less(t, strings.Index(html, "<li>Oct 30, 2026"), strings.Index(html, "<li>Oct 31, 2026"), "oldest first")
+	assert.Less(t, strings.Index(html, `class="activity-legend"`), strings.Index(html, `class="activity-days"`), "after the legend")
+
+	empty := render(t, StatsPage(NewTraffic(metrics.Snapshot{}, gridNow), History{}))
+	assert.NotContains(t, empty, "activity-days", "nothing to list, so no disclosure")
+}
+
+func TestResultStatusAnnouncesReachedCaps(t *testing.T) {
+	r := sampleResults()
+	tags := Filters{}.WithTag("a").WithTag("b").WithTag("c").WithTag("d")
+	assert.Contains(t, resultStatus(tags, r), "Tag limit reached.")
+	assert.NotContains(t, resultStatus(tags, r), "Exclusion limit reached.")
+
+	not := Filters{}
+	for _, s := range []string{"a", "b", "c", "d"} {
+		not = not.WithNotTag(s)
+	}
+	require.True(t, not.AtNotTagLimit())
+	assert.Contains(t, resultStatus(not, r), "Exclusion limit reached.")
+	assert.NotContains(t, resultStatus(Filters{}.WithTag("a"), r), "limit reached")
+}
+
+func TestSavedEmptyNoticeIsFocusableAndNamesTheSaveButton(t *testing.T) {
+	html := render(t, SavedPage())
+	assert.Contains(t, html, `tabindex="-1"`)
+	assert.Contains(t, html, "Use the ☆ Save button on any result to save it here.")
+}
+
+func TestFindATagHasAVisibleLabel(t *testing.T) {
+	html := render(t, ResultsRegion(Filters{}, sampleResults()))
+	assert.Contains(t, html, `<label class="facet-search-label" for="facet-search">Find a tag</label>`)
+	assert.Contains(t, html, `id="facet-search"`)
+}
+
+func TestAboutLinksToTheAccessibilityStatementInANewTab(t *testing.T) {
+	html := render(t, About())
+	assert.Contains(t, html, "This site conforms to WCAG 2.2 Level AA.")
+	link := anchorsWith(html, `href="https://github.com/SkilledAlpaca/itchgrep/blob/main/ACCESSIBILITY.md"`)
+	require.Len(t, link, 1)
+	assert.Contains(t, link[0], `target="_blank"`)
+	assert.Contains(t, html, `accessibility statement<span class="visually-hidden"> (opens in new tab)</span>`)
 }
