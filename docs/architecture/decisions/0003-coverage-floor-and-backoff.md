@@ -1,5 +1,7 @@
 # 0003: Coverage floor gates publishing; repeated failures back off
 
+Status: Accepted (implemented)
+
 ## Context
 
 A crawl can end up incomplete for reasons that have nothing to do with a bug — a network blip, itch.io throttling harder than usual, a process killed mid-run. Coverage (the fraction of itch.io's reported catalogue actually collected) is a real, measured number, not a guarantee: `internal/fetcher/planner.go`'s own comments record that a *healthy, complete* crawl still only reaches roughly 89% of the catalogue, because the plan is a union of tag-filtered views and itch.io offers no way to query "assets with none of the discovered tags at all." A crawl that stalled early might report 40% coverage; one that never started collecting (a broken fetch from the first page onward) would report 0%.

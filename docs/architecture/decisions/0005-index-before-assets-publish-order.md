@@ -1,5 +1,7 @@
 # 0005: Publish the index before `assets.json`, always in that order
 
+Status: Accepted (implemented)
+
 ## Context
 
 The webserver has no signal, webhook, or IPC channel telling it a new crawl has published — it simply notices that `assets.json`'s modification time is newer than what it currently has loaded (`Cache.IsCacheExpired`, `internal/cache/cache.go`), checked at most once every 5 seconds, and then reloads (`Cache.doRefresh`, `cache.go`). `doRefresh` reads `assets.json` and opens `index.bleve/` as two separate operations, not one atomic snapshot of "the dataset as of one instant."

@@ -1,5 +1,7 @@
 # 0007: Visitor query text is never logged; IP addresses are truncated, not hashed
 
+Status: Accepted (implemented)
+
 ## Context
 
 itchgrep is a public search engine — every request potentially carries a visitor-typed search query, and every request carries a client IP address. Both are the kind of data that is easy to log "just in case it's useful for debugging" and easy to regret having logged later. This project draws an explicit, narrow line about what is retained, stated precisely so it can be checked against the code rather than taken on faith.
