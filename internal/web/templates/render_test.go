@@ -427,15 +427,16 @@ func TestCoverageNeverExceedsAHundredPercent(t *testing.T) {
 }
 
 func TestMoreResultsAreReachableWithoutScrolling(t *testing.T) {
-	// "revealed" only fires for someone scrolling a viewport. As a bare sentinel
-	// div this left keyboard and screen-reader users unable to reach anything
+	// A scroll trigger only fires for someone scrolling a viewport. As a bare
+	// sentinel div this left keyboard and screen-reader users unable to reach anything
 	// past the first page at all.
 	more := sampleResults()
 	more.HasMore = true
 	html := render(t, AssetPage(Filters{}.WithTag("2d"), more))
 
 	assert.Contains(t, html, "Load more results", "it must be operable, not just observable")
-	assert.Contains(t, html, `hx-trigger="revealed, click"`)
+	assert.Contains(t, html, `hx-trigger="intersect once, click"`, "htmx 1.9 never fires 'revealed, click' on scroll")
+	assert.Contains(t, html, `hx-sync="closest .search-page:drop"`, "scroll paging must not cancel a filter request")
 	assert.Contains(t, html, `href="/?page=2&amp;tags=2d"`, "and a real link with scripting off")
 }
 
