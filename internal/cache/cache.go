@@ -55,6 +55,15 @@ type Cache struct {
 	data    []models.Asset
 	index   bleve.Index
 
+	// eng answers requests with no text query from memory (see engine). Built
+	// from data on every refresh, so the two are always the same dataset.
+	eng *engine
+
+	// hits remembers the answers to recent text searches (see hitCache) so that
+	// paging through one costs a slice, not another pass through the index.
+	// Reset in the same write lock that swaps the dataset.
+	hits *hitCache
+
 	// indexInfo is the stat of the directory index was opened from, kept to
 	// recognize a refresh that points at the same directory (see doRefresh).
 	indexInfo os.FileInfo
@@ -141,6 +150,7 @@ func NewCache(pageSize int64) *Cache {
 		dataMap:         make(map[string]int),
 		cacheLock:       sync.RWMutex{},
 		pageSize:        pageSize,
+		hits:            newHitCache(hitCacheSize),
 		dataUpdatedTime: time.Time{},
 		// Seeded with the built-in table so that a cache which has not loaded
 		// yet, or one whose data directory holds no rates file, still has a
@@ -377,7 +387,11 @@ func (c *Cache) doRefresh() error {
 	// sort newData by popularity (smaller numbers first). cmp.Compare rather
 	// than a subtraction cast to int: the difference of two int64s does not fit
 	// an int on a 32-bit build, where it would wrap and scramble the order.
-	slices.SortFunc(newData, func(i, j models.Asset) int {
+	//
+	// Stable, so assets with the same InvPopularity (they share a page number)
+	// keep the order assets.json lists them in, which is the order they were
+	// indexed in and so the order bleve breaks the same tie in.
+	slices.SortStableFunc(newData, func(i, j models.Asset) int {
 		return cmp.Compare(i.InvPopularity, j.InvPopularity)
 	})
 
@@ -430,6 +444,10 @@ func (c *Cache) doRefresh() error {
 		newTagUniverse = nil
 	}
 
+	// Derived from the sorted list and the same rates the index was priced
+	// with, outside the write lock like the rest of the per-refresh work.
+	newEngine := buildEngine(newData, newRates)
+
 	// swap the new index/data in, holding the write lock only for the swap
 	// itself. The old index is intentionally not closed yet: if anything
 	// above failed we must keep serving it.
@@ -442,6 +460,8 @@ func (c *Cache) doRefresh() error {
 	c.indexInfo = info
 	c.data = newData
 	c.dataMap = newDataMap
+	c.eng = newEngine
+	c.hits.reset()
 	c.tagCatalog = newTagCatalog
 	c.tagCounts = topTags(newTagCatalog)
 	c.rates = newRates

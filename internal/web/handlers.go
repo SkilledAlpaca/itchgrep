@@ -25,15 +25,20 @@ import (
 	"unicode/utf8"
 )
 
-// fragmentMaxAge is how long a rendered result page may be reused.
+// fragmentMaxAge is how long a browser may reuse a rendered page without asking.
 //
 // Every visitor sees the same results for the same query, and the underlying
-// data only changes when a crawl publishes - at most once a day. Without this
-// header a proxy in front of the site can cache nothing at all, so every
-// search, including repeats of the same popular query, runs a full bleve pass
-// on the origin. Five minutes is short enough that a newly published index
-// reaches users promptly and long enough to absorb the bursts that matter.
+// data only changes when a crawl publishes. Five minutes is short enough that a
+// person who reloads after a publish gets the new index soon, and long enough to
+// absorb the bursts that matter. After it the browser revalidates with
+// If-Modified-Since and gets a 304 until the data changes (see notModified).
 const fragmentMaxAge = 300
+
+// edgeMaxAge is how long a shared cache (the CDN in front of the site) may
+// reuse a rendered page. The data changes on a weekly crawl publish, so an hour
+// of edge staleness after one is the price of the edge answering nearly every
+// request itself; the origin still revalidates with If-Modified-Since.
+const edgeMaxAge = 3600
 
 // statsMaxAge is shorter than fragmentMaxAge: a stats page five minutes stale
 // invites "is the site down?" bug reports in a way a five-minute-old result
@@ -98,6 +103,13 @@ type handler struct {
 	// all no-ops on a nil receiver - so handlers_test.go can build a handler
 	// without wiring up counters it has no reason to exercise.
 	metrics *metrics.Counters
+
+	// started is when this process began serving. A page is a function of the
+	// code as well as the data, and a deploy changes the code without touching
+	// the data, so no page can claim to be older than the process that renders
+	// it: Last-Modified is the later of this and the data time (see
+	// lastModified). Captured once, so the validator does not drift.
+	started time.Time
 }
 
 // NewHandler builds the handler every page route in cmd/webserver/main.go is
@@ -107,16 +119,91 @@ func NewHandler(cache *cache.Cache, crawlInterval time.Duration, m *metrics.Coun
 		cache:         cache,
 		crawlInterval: crawlInterval,
 		metrics:       m,
+		started:       time.Now(),
 	}
 }
 
 // cacheable marks a response as reusable by shared caches, and stamps it with
 // the dataset it was rendered from so revalidation works.
 func (h *handler) cacheable(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d, s-maxage=%d", fragmentMaxAge, edgeMaxAge))
+	h.stampDataTime(w)
+}
+
+// cacheableBriefly is cacheable without the long edge lifetime, for a page that
+// is correct now and likely to be wrong after a publish: the page past the last
+// one, which a shorter result list turns from a real page into an error.
+func (h *handler) cacheableBriefly(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", fragmentMaxAge))
-	if t := h.cache.DataUpdatedTime(); !t.IsZero() {
+	h.stampDataTime(w)
+}
+
+func (h *handler) stampDataTime(w http.ResponseWriter) {
+	if t := h.lastModified(); !t.IsZero() {
 		w.Header().Set("Last-Modified", t.UTC().Format(http.TimeFormat))
 	}
+}
+
+// lastModified is the validator for every cacheable page: the later of the data
+// time and the start of this process, to the second (the resolution of the
+// header). The data time alone would let a code-only deploy answer 304 to
+// clients holding pages rendered by the previous release, with the old markup
+// and old script names. Zero while nothing has loaded.
+func (h *handler) lastModified() time.Time {
+	data := h.cache.DataUpdatedTime()
+	if data.IsZero() {
+		return data
+	}
+	if h.started.After(data) {
+		data = h.started
+	}
+	return data.Truncate(time.Second)
+}
+
+// notModified answers a conditional request with 304 and reports whether it
+// did, before any search or render work. The response is a function of the URL
+// and the data time (apart from the coarse "updated 3 days ago" label, which a
+// revalidation may leave a little stale), and Last-Modified is the data time, so
+// a client whose copy is at least that new has the current page.
+//
+// The cache is brought up to date first. Otherwise a process that only ever
+// answered 304s would never notice a crawl had published, and clients would be
+// told their old copy was current indefinitely.
+//
+// An If-None-Match makes If-Modified-Since moot (RFC 9110), and this server
+// sends no ETag, so a request carrying one is never answered here.
+func (h *handler) notModified(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	since := r.Header.Get("If-Modified-Since")
+	if since == "" || r.Header.Get("If-None-Match") != "" {
+		return false
+	}
+	h.cache.EnsureFresh()
+	data := h.lastModified()
+	if data.IsZero() {
+		return false
+	}
+	asked, err := http.ParseTime(since)
+	if err != nil {
+		return false
+	}
+	// Last-Modified has one-second resolution; lastModified is already at it.
+	if data.After(asked) {
+		return false
+	}
+	// A 304 must not promise more than the 200 it stands for would. It cannot
+	// tell whether a later page is past the end of the results (that takes the
+	// search this path exists to skip), and a past-the-end page gets the short
+	// policy, so every later page revalidates under it.
+	if page, ok := pageParam(r); ok && page > 1 {
+		h.cacheableBriefly(w)
+	} else {
+		h.cacheable(w)
+	}
+	w.WriteHeader(http.StatusNotModified)
+	return true
 }
 
 // freshness measures the served dataset against the wall clock, for the age
@@ -207,6 +294,10 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.notModified(w, r) {
+		return
+	}
+
 	results, err := h.find(filters, page, true)
 	if err != nil {
 		// The page itself still renders - masthead, search box, filters - with
@@ -222,7 +313,7 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cacheable(w)
+	h.cacheableFor(w, page, results)
 	// LayoutHead, not Layout: this is the one page a feed for the current
 	// filters makes sense on, so it carries the auto-discovery link every
 	// other page has no reason to.
@@ -291,6 +382,10 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("HX-Push-Url", filters.ShareURL())
 	}
 
+	if h.notModified(w, r) {
+		return
+	}
+
 	results, err := h.find(filters, page, page == 1)
 	if err != nil {
 		logging.Error("Error fetching results: %s", err)
@@ -304,7 +399,7 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cacheable(w)
+	h.cacheableFor(w, page, results)
 	// Page 1 replaces the whole region, because changing a filter changes the
 	// sidebar counts and the controls as well as the cards. Later pages are
 	// appended to the existing list, so they are cards alone.
@@ -313,6 +408,65 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	templates.AssetPage(filters, results).Render(r.Context(), w)
+}
+
+// generation is the token the sidebar fragment URL carries (v=): the data time
+// and the first characters of app.js's content fingerprint. Either changing
+// gives the fragment a new URL, so an edge copy rendered for the old data or the
+// old script is never handed to a page that expects the new.
+func (h *handler) generation() string {
+	return fmt.Sprintf("%d-%s", h.cache.DataUpdatedTime().Unix(), assetHashPrefix("app.js"))
+}
+
+// assetHashPrefix is the first 8 characters of a static file's fingerprint, read
+// back out of its fingerprinted URL (/static/app.<hash>.js); empty if the file
+// is not fingerprinted.
+func assetHashPrefix(name string) string {
+	parts := strings.Split(templates.Asset(name), ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	hash := parts[len(parts)-2]
+	if len(hash) > 8 {
+		hash = hash[:8]
+	}
+	return hash
+}
+
+// cacheableFor is cacheable for a page of results, with the short lifetime for
+// a page past the last (see cacheableBriefly).
+func (h *handler) cacheableFor(w http.ResponseWriter, page int64, results templates.Results) {
+	if page > 1 && len(results.Assets) == 0 {
+		h.cacheableBriefly(w)
+		return
+	}
+	h.cacheable(w)
+}
+
+// HandleResultsTags serves /results/tags: the whole ranked sidebar list, for
+// the filters in the query string. The page leaves the rows past the head out
+// to stay small, and app.js fetches the list (replacing what it holds, so a
+// head from another data generation cannot leave duplicates) when the visitor
+// looks for a tag. A fragment of rows and nothing else, so an error is an empty
+// body with the honest status: the sidebar then simply has no more to offer.
+// The v parameter in the URL only keys the caches by data generation; the
+// answer is always the current one.
+func (h *handler) HandleResultsTags(w http.ResponseWriter, r *http.Request) {
+	filters := parseFilters(r, h.cache.Rates())
+
+	if h.notModified(w, r) {
+		return
+	}
+	results, err := h.find(filters, 1, true)
+	if err != nil {
+		logging.Error("Error fetching the tag tail: %s", err)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(statusFor(err))
+		return
+	}
+
+	h.cacheable(w)
+	templates.TagList(filters, results.Tags).Render(r.Context(), w)
 }
 
 // find runs the query and shapes the answer for the templates.
@@ -340,6 +494,7 @@ func (h *handler) find(filters templates.Filters, page int64, facets bool) (temp
 		Tags:          found.Tags,
 		Page:          page,
 		Rates:         h.cache.Rates(),
+		Generation:    h.generation(),
 		HasRecency:    h.cache.HasRecency(),
 		HasPriceBands: h.cache.HasPriceBands(),
 		// Computed from the totals rather than from whether this page came back
@@ -361,6 +516,9 @@ func (h *handler) find(filters templates.Filters, page int64, facets bool) (temp
 // configured page size entirely: this page has no further page to request, so
 // its cap is a property of the page, not of pagination.
 func (h *handler) HandleNew(w http.ResponseWriter, r *http.Request) {
+	if h.notModified(w, r) {
+		return
+	}
 	found, err := h.cache.Find(cache.SearchOptions{
 		MinFirstSeen: 1,
 		Sort:         models.SortNew,
@@ -517,6 +675,9 @@ not:
 
 	f.Currency = normalizeCurrency(q.Get("cur"), rates)
 
+	// The no-script "More tags" link. Display only; see Filters.AllTags.
+	f.AllTags = q.Get(templates.MoreTagsParam) == "1"
+
 	return f
 }
 
@@ -640,6 +801,9 @@ func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
 // visitor on the previous URL reading about-content; the links are plain
 // navigations now, so nothing sends an HX-Request here any more.
 func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
+	if h.notModified(w, r) {
+		return
+	}
 	h.cacheable(w)
 	templates.Layout("About — ITCHGREP", h.shell(), templates.About()).Render(r.Context(), w)
 }
@@ -650,6 +814,9 @@ func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 // other part of the server - so the response is the same document for every
 // request, cacheable exactly like the other static shells.
 func (h *handler) HandleSaved(w http.ResponseWriter, r *http.Request) {
+	if h.notModified(w, r) {
+		return
+	}
 	h.cacheable(w)
 	templates.Layout("Saved — ITCHGREP", h.shell(), templates.SavedPage()).Render(r.Context(), w)
 }

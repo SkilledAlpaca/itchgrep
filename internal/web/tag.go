@@ -40,10 +40,14 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filters := templates.Filters{Tags: []string{slug}}
+	filters := templates.Filters{Tags: []string{slug}, AllTags: r.URL.Query().Get(templates.MoreTagsParam) == "1"}
 	page, ok := pageParam(r)
 	if !ok {
 		h.badPage(w, r, "/tag/"+slug)
+		return
+	}
+
+	if h.notModified(w, r) {
 		return
 	}
 
@@ -58,7 +62,7 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cacheable(w)
+	h.cacheableFor(w, page, results)
 	// Past the last page, "back to the first page" is this tag page, not the
 	// equivalent /?tags= query-string form.
 	results.FirstPageURL = "/tag/" + slug

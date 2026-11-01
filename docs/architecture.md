@@ -15,7 +15,7 @@ For how to configure either program, see [configuration](configuration.md). For 
 |---|---|---|
 | webserver entrypoint | `cmd/webserver/` | Starts the HTTP server, wires up routes and middleware, loads the cache at startup. |
 | dataservice entrypoint | `cmd/dataservice/` | Runs the crawl scheduler, the crawl itself, self-heals a broken index at startup, exposes `/trigger-fetch`. |
-| cache | `internal/cache/` | The webserver's in-memory copy of the published dataset (assets plus the search index), kept fresh by watching `assets.json`. Answers every search and browse request. |
+| cache | `internal/cache/` | The webserver's in-memory copy of the published dataset (assets plus the search index), kept fresh by watching `assets.json`. Answers every search and browse request: from memory when there is no text query, from the index when there is one. |
 | storage | `internal/storage/` | The only code that reads or writes the shared data directory. Defines the bleve field mapping. Both programs depend on it; it depends on nothing else project-specific. |
 | fetcher | `internal/fetcher/` | Everything that talks to itch.io over HTTP: page fetching, rate limiting, the crawl planner, tag discovery. |
 | web | `internal/web/` | The webserver's HTTP surface: route handlers, rate limiting, scanner-probe filtering, security headers, access logging, client-IP resolution. |
@@ -71,10 +71,15 @@ Inside `webserver`, a request passes through a fixed chain of middleware (`cmd/w
 
 From there, a handler in `internal/web/handlers.go` (or `tag.go` for `/tag/{slug}`) parses the query string into a `templates.Filters` value, calls `cache.Find` (`internal/cache/search.go`), and renders the result through `internal/web/templates`.
 
-`cache.Find` decides between two paths (`internal/cache/search.go`):
+`cache.Find` decides between three paths (`internal/cache/search.go`):
 
-- An **unfiltered front page** (no query, no tags, popularity order) is served directly from an in-memory slice already sorted by popularity — no bleve query at all.
-- Anything else — a search, a tag filter, a price filter, a different sort — runs against the bleve index.
+- An **unfiltered front page** (no query, no tags, popularity order) is served directly from an in-memory slice already sorted by popularity.
+- A request **without a text query** (tags, exclusions, price bands, author, a "similar to" tag set, any sort, `/tag/{slug}`, `/new`) is answered by the in-memory engine (`internal/cache/engine.go`). At every refresh the cache derives, from the asset list it already holds, compact per-asset records (interned tag IDs, author ID, price in US dollars as the index stores it, first-seen time) and one precomputed ordering for each of the title, price, recency, and newest-arrival sorts, each ending in the same popularity tiebreak the index applies. A request is then one sequential pass that tests each asset against the filters and counts the total and, when a sidebar is wanted, every match's tags, followed by a walk down the requested ordering that stops when the page is full. That is 2 to 5 ms on 127,000 assets where the index took 130 to 740 ms, because the index spent most of its time visiting doc values for the tag facet and the sort keys. The sidebar ranking (raw counts on an unfiltered request, lift once anything narrows the results) is the same code on either path.
+- A request **with a text query** runs against the bleve index, through the hit cache (`internal/cache/hitcache.go`). The cache is a least-recently-used map of 256 entries keyed by the normalized filters minus the page. An entry holds the ordered hits for ten pages, the total, and the ranked sidebar, so the first page of a search pays for the index pass and pages 2 to 10 are slices of the same answer. Concurrent requests for the same key share one pass (single-flight), and every refresh clears the cache and starts a new generation so no answer outlives its dataset. A page past the tenth goes straight to the index. Capped requests (`/feed` with a query) bypass the cache.
+
+The engine and the index must agree on what matches. `internal/cache/parity_test.go` builds a generated catalog through the same indexing code the dataservice uses (`models.NewIndexedAsset`, `storage.IndexMapping`, and the shared `Asset.PriceUSD` conversion) and compares the engine with the index on more than 1,300 random filter combinations: ids in order, totals, and the sidebar. The generated catalog also covers an index without price bands, a dataset without recency ranks, a vocabulary larger than the sidebar's 200-tag facet, and a similar-to request with a limit. Where popularity ties, the engine orders the tie by `assets.json` order, which is stable across refreshes, while the text path follows the index's own document order, which bleve fixes per build from a map iteration and so can differ between builds. Those tests therefore compare sort keys instead of ids.
+
+The tag sidebar renders its first 40 tags in the page. The whole ranked list comes from `GET /results/tags?...&v=<data time>-<app.js hash prefix>` (`HandleResultsTags`), a cacheable fragment of `<li>` rows for the same filters that `app.js` fetches and swaps in over the page's list when a visitor focuses "Find a tag" or follows "More tags". Without JavaScript "More tags" is a link to the same page with `alltags=1`, which renders every tag server-side; the canonical redirect accepts the parameter (only `PageURL` writes it) and it changes no result.
 
 ```mermaid
 flowchart LR
@@ -88,9 +93,13 @@ flowchart LR
     RL --> H[Handler]
     H --> Cache[cache.Find]
     Cache -->|unfiltered| Slice[In-memory popularity slice]
-    Cache -->|filtered / searched| Bleve[bleve index]
+    Cache -->|no text query| Engine[In-memory engine]
+    Cache -->|text query| Hits[Hit cache]
+    Hits -->|miss| Bleve[bleve index]
     Slice --> T[templ render]
-    Bleve --> T
+    Engine --> T
+    Hits --> T
+    Bleve --> Hits
     T --> Browser
 ```
 
@@ -133,7 +142,7 @@ The distinction between **regenerable** and **unregenerable** below matters for 
 | First-seen map | `firstseen.json` | `dataservice`, after `assets.json` is stored (`storage.PutFirstSeen`) | `dataservice` (`stampFirstSeen`) | **No** if `assets.json` is lost too. An id absent from one crawl keeps its `FirstSeen`; it is forgotten only after 6 consecutive published crawls miss it, so one partial crawl cannot make an old asset look new on `/new` and in the feed. If the file is missing or fails to parse (it is moved aside as `firstseen.json.corrupt-<unix>` and an error is logged), the next crawl seeds it from `assets.json`'s `FirstSeen` values. If both are lost, every asset's arrival date resets to "first seen in the next crawl." |
 | Tag universe | `tags.json` | `dataservice`, after tag discovery (`storage.PutTags`) | `dataservice` (reuses the cache instead of rediscovering); `webserver` cache (`/tag/{slug}` validation, sitemap) | Yes. Rediscovered automatically when missing or older than `TAG_CACHE_MAX_AGE` — costs several hundred requests to itch.io (see [glossary: tag universe](glossary.md#tag-universe)). |
 | Crawl checkpoint | `checkpoint.json` | `dataservice`, periodically during a crawl (`crawler.checkpoint`); deleted on successful publish | `dataservice`, to resume an interrupted crawl (`crawler.resume`) | Yes, and short-lived by design. Losing it only means the next crawl starts from scratch instead of resuming. |
-| Exchange rates | `rates.json` | `dataservice`, once per crawl (`currentRates`, `cmd/dataservice/rates.go`) | `dataservice` (fallback source if a rebuild can't refetch); `webserver` cache (`Rates()`, and the dollar values baked into the index) | Yes. Refetched from the ECB every crawl; falls back to the built-in table (`money.Fallback()`) if both the live fetch and the stored file are unavailable. |
+| Exchange rates | `rates.json` | `dataservice`, once per crawl, after the index it priced is published and before `assets.json` (`chooseRates`, `cmd/dataservice/rates.go`; `publishCrawl`) | `dataservice` (fallback source if a rebuild can't refetch); `webserver` cache (`Rates()`, and the dollar values baked into the index) | Yes. Refetched from the ECB every crawl; falls back to the built-in table (`money.Fallback()`) if both the live fetch and the stored file are unavailable. |
 | Crawl coverage stats | `stats.json` | `dataservice`, at the end of a successful publish (`recordCrawlCompletion`) | `webserver` cache (the coverage line in the masthead) | Yes. Recomputed by the next successful crawl. |
 | Public traffic counters | `traffic.json` | `webserver`, on a timer (every 5 minutes) and once more on graceful shutdown (`internal/metrics`) | `webserver`, restored into `metrics.Counters` at startup | **No.** This is the webserver's own visitor-count history (aggregate counts only — no IP addresses, no query text). Nothing about it is derived from a crawl, and a crawl cannot reconstruct it. Losing it resets every counter to zero and resets "counting since" to the moment of loss. |
 | Crawl history | `history.json` | `dataservice`, one entry appended per successful publish (`storage.PutHistory`), capped at 104 entries (~2 years of weekly crawls) | `webserver` handler, read directly from storage for the `/stats` history table (`internal/web/handlers.go`) | **No.** Each entry is a record of one specific crawl run (when, how long it took, how many assets, how many 429s, and so on) that cannot be reconstructed after the fact. |

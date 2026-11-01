@@ -30,6 +30,10 @@ The container base image both `webserver` and `dataservice` run on (`gcr.io/dist
 
 A bleve concept: a column-oriented copy of a field's values, stored alongside the normal inverted index, needed only when something has to *sort by* or *facet on* that field rather than merely search it. This project's index mapping (`internal/storage/index.go`) turns doc values off by default and enables them field by field, each with a comment naming the exact query that needs them — see [ADR 0001](architecture/decisions/0001-explicit-bleve-scorch-mapping.md).
 
+### Engine (in-memory)
+
+The webserver's answer to a request with no text query (`engine`, `internal/cache/engine.go`): per-asset records and precomputed orderings derived from the asset list at every refresh. It filters, counts the sidebar's tags, and selects the page in memory instead of asking the bleve index. See [architecture](architecture.md#how-a-search-request-flows).
+
 ### Epoch (rate limiter)
 
 A generation counter inside the fetcher's shared rate limiter (`rateLimiter.epoch`, `internal/fetcher/fetcher.go`) that identifies the current "refusal episode." Every outbound request is tagged with the epoch it was issued under; only a 429 response reported under the *current* epoch is allowed to open a new fleet-wide pause. Without this, several requests already in flight when itch.io starts refusing would each report their own 429 moments apart, and each one would re-trigger a fresh pause — see [ADR 0004](architecture/decisions/0004-fleet-wide-429-pause-and-epoch.md).
@@ -37,6 +41,10 @@ A generation counter inside the fetcher's shared rate limiter (`rateLimiter.epoc
 ### Facet
 
 A bleve query feature that counts how many matching documents carry each distinct value of a field — used here for the sidebar's tag counts (`bleve.NewFacetRequest("TagSlugs", maxFacetTags)`, `internal/cache/search.go`). Distinct from `tagUniverse` (below): a facet only ever counts *the current search's matches*. The sidebar orders them by raw count on the unfiltered front page, and by *lift* once a query or filter narrows the results: how much more common a tag is among the matches than in the whole catalog (`Cache.liftTags`, `internal/cache/search.go`). Raw count would show the same catalog-wide favorites (`2d`, `pixel-art`) for every search. A tag needs at least `max(3, 1%)` of the matches, and a tag on every match is dropped.
+
+### Hit cache
+
+A bounded least-recently-used cache of text searches (`hitCache`, `internal/cache/hitcache.go`): 256 entries keyed by the filters minus the page, each holding ten pages of ordered hits, the total, and the ranked sidebar. It makes pages 2 to 10 of a search a slice of the first page's index pass, and a refresh clears it.
 
 ### FirstSeen
 

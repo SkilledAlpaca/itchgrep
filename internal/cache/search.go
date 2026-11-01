@@ -110,6 +110,20 @@ func (o SearchOptions) filtered() bool {
 		o.Price != "" || o.Author != "" || o.MinFirstSeen > 0 || o.Like != ""
 }
 
+// EnsureFresh reloads the dataset if storage holds a newer one. If the refresh
+// fails it logs and carries on: whatever was previously loaded (if anything) is
+// served rather than failing the request. Cheap when nothing changed - the
+// staleness check is throttled (see IsCacheExpired) - so the handlers that
+// answer a conditional request call it before comparing the data time, or a
+// process that only ever sent 304s would never notice a new publish.
+func (c *Cache) EnsureFresh() {
+	if c.IsCacheExpired() {
+		if err := c.RefreshDataCache(); err != nil {
+			logging.Error("Failed to refresh cache, serving previous data if available: %v", err)
+		}
+	}
+}
+
 // Find answers a search, a filtered browse, or the plain front page.
 //
 // One entry point rather than the separate browse and search calls it replaces:
@@ -121,14 +135,7 @@ func (c *Cache) Find(opts SearchOptions) (Results, error) {
 		return Results{}, fmt.Errorf("cache: page must be >= 1, got %d", opts.Page)
 	}
 
-	// check for stale cache, refresh if needed. If the refresh fails we still
-	// fall through and serve whatever was previously loaded (if anything)
-	// rather than failing the request.
-	if c.IsCacheExpired() {
-		if err := c.RefreshDataCache(); err != nil {
-			logging.Error("Failed to refresh cache, serving previous data if available: %v", err)
-		}
-	}
+	c.EnsureFresh()
 
 	// A recency ordering is only offered when the loaded dataset actually
 	// carries ranks; asking for one anyway - from a stale bookmark, or from an
@@ -149,6 +156,9 @@ func (c *Cache) Find(opts SearchOptions) (Results, error) {
 
 	if !opts.filtered() && opts.resolvedSort() == models.SortPopular {
 		return c.browse(opts.Page)
+	}
+	if res, handled, err := c.searchEngine(opts); handled {
+		return res, err
 	}
 	return c.search(opts)
 }
@@ -190,7 +200,15 @@ func (c *Cache) browse(page int64) (Results, error) {
 	}, nil
 }
 
+// search answers a request against the search index, through the hit cache when
+// it is a text query the cache can hold.
 func (c *Cache) search(opts SearchOptions) (Results, error) {
+	return c.searchIndex(opts, true)
+}
+
+// searchIndex is search with the hit cache optional. The parity tests call it
+// with the cache off, to compare the index's answer with the engine's.
+func (c *Cache) searchIndex(opts SearchOptions, useHitCache bool) (Results, error) {
 	c.cacheLock.RLock()
 	defer c.cacheLock.RUnlock()
 
@@ -228,11 +246,65 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 		// do with it.
 		return Results{LikeTitle: likeTitle}, nil
 	}
-	from := int(from64)
-	size := int(c.pageSize)
+	size64 := c.pageSize
 	if opts.Limit > 0 {
-		size = int(opts.Limit)
+		size64 = opts.Limit
 	}
+
+	// A text search is the expensive request, and the same one is asked for
+	// again for every further page: serve it from the hit cache when it fits.
+	if useHitCache && c.hits != nil && hitCacheable(opts) && from64+size64 <= hitCacheDepth*c.pageSize {
+		entry, err := c.hits.get(hitKey(opts), func() (*hitEntry, error) {
+			// The whole depth in one pass, facet included, whichever page asked
+			// first: the pages after it are then slices of the same answer.
+			ans, err := c.queryIndex(opts, likeTags, 0, int(hitCacheDepth*c.pageSize), true)
+			if err != nil {
+				return nil, err
+			}
+			return &hitEntry{pos: ans.pos, total: ans.total, tags: ans.tags}, nil
+		})
+		if err != nil {
+			return Results{}, err
+		}
+		results := Results{Total: entry.total, LikeTitle: likeTitle}
+		if !opts.NoFacets {
+			results.Tags = entry.tags
+		}
+		if from64 < int64(len(entry.pos)) {
+			end := from64 + size64
+			if end > int64(len(entry.pos)) {
+				end = int64(len(entry.pos))
+			}
+			for _, p := range entry.pos[from64:end] {
+				results.Assets = append(results.Assets, c.data[p])
+			}
+		}
+		return results, nil
+	}
+
+	ans, err := c.queryIndex(opts, likeTags, int(from64), int(size64), !opts.NoFacets)
+	if err != nil {
+		return Results{}, err
+	}
+	results := Results{Total: ans.total, Tags: ans.tags, LikeTitle: likeTitle}
+	for _, p := range ans.pos {
+		results.Assets = append(results.Assets, c.data[p])
+	}
+	return results, nil
+}
+
+// indexAnswer is what one pass through the search index yields, already mapped
+// onto the asset list: the positions of the hits in Cache.data, the match total
+// and the ranked sidebar.
+type indexAnswer struct {
+	pos   []int32
+	total int64
+	tags  []models.Tag
+}
+
+// queryIndex runs opts against the search index for hits [from, from+size) and,
+// when facets is set, the sidebar. Caller holds cacheLock.
+func (c *Cache) queryIndex(opts SearchOptions, likeTags []string, from, size int, facets bool) (indexAnswer, error) {
 	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts, likeTags), size, from, false)
 	searchRequest.SortBy(sortOrder(opts.resolvedSort()))
 	// A narrowed search ranks its tags by lift, which needs every tag the
@@ -244,23 +316,20 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	if byLift && len(c.tagCatalog) > facetSize {
 		facetSize = len(c.tagCatalog)
 	}
-	if !opts.NoFacets {
+	if facets {
 		searchRequest.AddFacet("tags", bleve.NewFacetRequest("TagSlugs", facetSize))
 	}
 
 	searchResult, err := c.index.Search(searchRequest)
 	if err != nil {
-		return Results{}, err
+		return indexAnswer{}, err
 	}
 
-	results := Results{
-		Total:     int64(searchResult.Total),
-		LikeTitle: likeTitle,
-	}
+	ans := indexAnswer{total: int64(searchResult.Total)}
 	if byLift {
-		results.Tags = c.liftTags(searchResult.Facets["tags"], opts.Tags, int64(searchResult.Total))
+		ans.tags = c.liftTags(searchResult.Facets["tags"], opts.Tags, ans.total)
 	} else {
-		results.Tags = facetTags(searchResult.Facets["tags"], opts.Tags)
+		ans.tags = facetTags(searchResult.Facets["tags"], opts.Tags)
 	}
 	// A hit with no asset behind it is dropped rather than rendered. The index
 	// and the asset list are published together and loaded together, but not
@@ -270,20 +339,21 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	// a zero Asset, which renders as a card with no title, no link and no
 	// image - worse than one fewer result on the page.
 	missing := 0
+	ans.pos = make([]int32, 0, len(searchResult.Hits))
 	for _, hit := range searchResult.Hits {
 		idx, ok := c.dataMap[hit.ID]
 		if !ok {
 			missing++
 			continue
 		}
-		results.Assets = append(results.Assets, c.data[idx])
+		ans.pos = append(ans.pos, int32(idx))
 	}
 	if missing > 0 {
 		logging.Warning("Dropped %d hit(s) with no asset behind them; the index and the asset list disagree", missing)
 	}
 
 	logging.Info("Got %d hits for %s", searchResult.Total, describe(opts))
-	return results, nil
+	return ans, nil
 }
 
 // buildQuery assembles the text query and the filters into one bleve query.
@@ -603,32 +673,43 @@ func (c *Cache) liftTags(facet *search.FacetResult, applied []string, total int6
 	if facet == nil {
 		return nil
 	}
+	terms := facet.Terms.Terms()
+	counts := make([]models.Tag, len(terms))
+	for i, term := range terms {
+		counts[i] = models.Tag{Slug: term.Term, Count: int64(term.Count)}
+	}
+	return c.rankLift(counts, applied, total)
+}
+
+// rankLift is liftTags over counts that have already been taken out of
+// wherever they were counted: bleve's facet, or the in-memory engine's pass.
+// Caller holds cacheLock.
+func (c *Cache) rankLift(terms []models.Tag, applied []string, total int64) []models.Tag {
 	floor := minFacetCount(total)
 
 	type ranked struct {
 		tag models.Tag
 		cat int64
 	}
-	terms := facet.Terms.Terms()
 	cands := make([]ranked, 0, len(terms))
 terms:
 	for _, term := range terms {
-		count := int64(term.Count)
+		count := term.Count
 		if count >= total || count < floor {
 			continue
 		}
 		for _, a := range applied {
-			if a == term.Term {
+			if a == term.Slug {
 				continue terms
 			}
 		}
-		cat := c.tagCatalog[term.Term]
+		cat := c.tagCatalog[term.Slug]
 		if cat < count {
 			// The index and the asset list can disagree for a moment around a
 			// publish; a catalog count below the match count cannot be right.
 			cat = count
 		}
-		cands = append(cands, ranked{models.Tag{Slug: term.Term, Count: count}, cat})
+		cands = append(cands, ranked{term, cat})
 	}
 	sort.Slice(cands, func(i, j int) bool {
 		a, b := cands[i], cands[j]

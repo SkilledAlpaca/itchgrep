@@ -76,6 +76,7 @@ func checkHealthz(port string, timeout time.Duration) error {
 type pageHandler interface {
 	HandleIndex(w http.ResponseWriter, r *http.Request)
 	HandleResults(w http.ResponseWriter, r *http.Request)
+	HandleResultsTags(w http.ResponseWriter, r *http.Request)
 	HandleAbout(w http.ResponseWriter, r *http.Request)
 	HandleStats(w http.ResponseWriter, r *http.Request)
 	HandleNew(w http.ResponseWriter, r *http.Request)
@@ -165,6 +166,12 @@ func newRouter(h pageHandler, m *metrics.Counters, limiter *web.Limiter) *chi.Mu
 		// limiter ahead of every unmatched path, not just the routes above.
 		r.NotFound(web.Handle404)
 
+		// The sidebar's rows, fetched by app.js. Outside the marker group below
+		// on purpose: it is part of a results page rather than a page view, so
+		// /stats counts it under "other" and not as another visit to /results.
+		r.Get("/results/tags", h.HandleResultsTags)
+		r.Head("/results/tags", h.HandleResultsTags)
+
 		// Page views proper: rate-limited like everything else in this
 		// group, and additionally tagged with RateLimitedGroupMarker, which
 		// changes nothing about how a request is handled (see its own doc
@@ -191,6 +198,7 @@ func newRouter(h pageHandler, m *metrics.Counters, limiter *web.Limiter) *chi.Mu
 			// net/http discards the body of a HEAD response itself, so the same
 			// handler serves both and the headers stay identical.
 			r.Head("/", h.HandleIndex)
+			r.Head("/results", h.HandleResults)
 			r.Head("/about", h.HandleAbout)
 			r.Head("/stats", h.HandleStats)
 			r.Head("/new", h.HandleNew)

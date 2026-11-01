@@ -169,3 +169,17 @@ func (f Freshness) DateTime() string {
 	}
 	return f.Updated.UTC().Format(time.RFC3339)
 }
+
+// StaleAt is the moment the index becomes stale: the first instant Stale
+// reports true. Written into the page (data-stale-at) so app.js can decide
+// against the visitor's clock, because the server-rendered answer is only right
+// at the moment it was rendered and a cached or revalidated copy is read later.
+func (f Freshness) StaleAt() string {
+	if !f.Known() {
+		return ""
+	}
+	if f.DueKnown() {
+		return f.Due.Add(staleGrace).UTC().Format(time.RFC3339)
+	}
+	return f.Updated.Add(staleAfter).UTC().Format(time.RFC3339)
+}

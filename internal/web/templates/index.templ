@@ -8,9 +8,16 @@ package templates
 // crawl has not run since".
 templ IndexAge(f Freshness, c Coverage) {
 	if f.Known() {
-		<p class={ "index-age", templ.KV("is-stale", f.Stale()) }>
+		// The words are rendered here for scripting off and for the first paint,
+		// but a cached or revalidated copy is read long after it was rendered, so
+		// app.js recomputes the age, the due date and the stale warning from the
+		// datetime attributes and data-stale-at on every load (see
+		// refreshRelativeTimes). Its wording rules mirror Label, DueLabel and
+		// Stale. testdata/freshness_wording.json pins the Go side in CI; the
+		// JavaScript side is checked against it by hand (it needs a browser).
+		<p class={ "index-age", templ.KV("is-stale", f.Stale()) } data-stale-at={ f.StaleAt() }>
 			index updated
-			<time datetime={ f.DateTime() } title={ f.Absolute() }>{ f.Label() }</time>
+			<time data-relative="age" datetime={ f.DateTime() } title={ f.Absolute() }>{ f.Label() }</time>
 			if f.Stale() {
 				<span class="index-age-warn">— the crawl may have stopped</span>
 			}
@@ -34,7 +41,7 @@ templ IndexAge(f Freshness, c Coverage) {
 			// routine next to the schedule that produced it.
 			<p class="index-age index-next">
 				next update
-				<time datetime={ f.DueDateTime() } title={ f.DueAbsolute() }>{ f.DueLabel() }</time>
+				<time data-relative="due" datetime={ f.DueDateTime() } title={ f.DueAbsolute() }>{ f.DueLabel() }</time>
 			</p>
 		}
 	}
@@ -153,7 +160,12 @@ templ Index(f Filters, r Results) {
 	// queue, and a new one replaces whatever is still in flight. Without it two
 	// quick taps race, and whichever response arrives last wins - not the tap
 	// that was made last.
-	<div class="search-page" hx-indicator=".searchbar .spinner" hx-sync="this:replace">
+	//
+	// hx-target and hx-swap are inherited too: every filter link swaps the
+	// results region, so the one place that says so is here instead of on each
+	// of the hundreds of links. Anything that targets something else (the search
+	// form, load-more, the tag list's own fetch) says so itself.
+	<div class="search-page" hx-indicator=".searchbar .spinner" hx-sync="this:replace" hx-target="#results-region" hx-swap="innerHTML">
 		@SearchBar(f)
 		// Outside #results-region, which every filter link swaps: a live region
 		// that is replaced is announced inconsistently, because assistive

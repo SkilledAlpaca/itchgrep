@@ -485,6 +485,13 @@ func firstSeenHistoryLost(known storage.FirstSeenMap, previous []models.Asset) b
 	return known == nil && len(previous) == 0 && publishedIndexExists()
 }
 
+// publishIndex is storage.PublishIndex, a variable so a test can make the
+// publish fail.
+var publishIndex = storage.PublishIndex
+
+// ratesSource is chooseRates, a variable so a test needs no network.
+var ratesSource = chooseRates
+
 // publishCrawl builds the search index from assets and publishes it, then
 // writes assets.json - in that order, and only that order. The webserver
 // decides a new dataset is ready by watching assets.json's timestamp, so
@@ -525,7 +532,7 @@ func publishCrawl(assets, previousAssets []models.Asset) error {
 	// queried with. Fetching them on a separate schedule would leave the stored
 	// dollar values and the published rates describing different days.
 	logging.Info("Creating index...")
-	rates := currentRates()
+	rates := ratesSource()
 	// buildIndex is shared with rebuildIndexFromPublishedData (selfheal.go),
 	// which needs the exact same document construction and batching for a
 	// rebuild that never recrawls to still produce an indistinguishable index.
@@ -535,11 +542,18 @@ func publishCrawl(assets, previousAssets []models.Asset) error {
 	}
 
 	logging.Info("Publishing index to %s", storage.IndexPath())
-	if err := storage.PublishIndex(); err != nil {
+	if err := publishIndex(); err != nil {
 		logging.Error("Failed to publish index: %v", err)
 		return fmt.Errorf("storage.PublishIndex: %w", err)
 	}
 	logging.Info("Successfully published index")
+
+	// Now that the index priced with these rates is live, and before assets.json
+	// moves (which is what tells the webserver to reload), publish the rates.
+	// The webserver then never pairs an index with another crawl's snapshot.
+	if err := storage.PutRates(rates); err != nil {
+		logging.Warning("Failed to store exchange rates: %v", err)
+	}
 
 	logging.Info("Storing assets")
 	if err := storage.PutAssets(assets); err != nil {

@@ -47,6 +47,13 @@ type Filters struct {
 	// prices are written - but it belongs in the URL all the same, so that a
 	// converted page is shareable and cacheable like any other.
 	Currency string
+
+	// AllTags asks the full page to list every sidebar tag instead of the head
+	// (the no-script "More tags" link). Display only: it changes no result, so it
+	// is not part of Values, ShareURL or FragmentURL - only PageURL, the form a
+	// full page is requested in, writes it, so that the canonical redirect
+	// accepts the address instead of stripping it.
+	AllTags bool
 }
 
 // MaxTags and MaxNotTags bound how many tags one request may require and how
@@ -153,6 +160,9 @@ func (f Filters) PageURL(page int64) string {
 	v := f.Values()
 	if page > 1 {
 		v.Set("page", fmt.Sprint(page))
+	}
+	if f.AllTags {
+		v.Set(MoreTagsParam, "1")
 	}
 	if len(v) == 0 {
 		return "/"

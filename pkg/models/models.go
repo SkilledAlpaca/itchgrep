@@ -8,6 +8,7 @@ package models
 
 import (
 	"fmt"
+	"itchgrep/pkg/money"
 	"strings"
 	"time"
 )
@@ -106,6 +107,30 @@ func (a Asset) FirstSeenUnix() int64 {
 // you-want with a zero minimum, which itch.io counts as free. So the presence
 // of a price element, not of a price tag, is what marks an asset as paid.
 func (a Asset) Free() bool { return a.Price == "" }
+
+// PriceUSD converts the displayed price into dollars with one exchange-rate
+// snapshot, and reports whether it could. Free assets are 0 and priced. An
+// unreadable price (a currency the snapshot does not know) is UnknownPrice and
+// not priced: not zero, so that it cannot look free to a ceiling filter or a
+// cheapest-first sort.
+//
+// The one place this conversion lives. The dataservice bakes the result into
+// the search index, and the webserver's in-memory engine recomputes it at load
+// time; two copies of the rule could drift apart and make the two paths
+// disagree about which assets are under $5.
+func (a Asset) PriceUSD(rates money.Rates) (usd float64, priced bool) {
+	if a.Free() {
+		return 0, true
+	}
+	m, ok := money.Parse(a.Price)
+	if ok {
+		usd, ok = rates.USD(m)
+	}
+	if !ok {
+		return UnknownPrice, false
+	}
+	return usd, true
+}
 
 // Pricing is the indexable form of Free: a keyword the search index can filter
 // on. A bool would do as well in bleve, but a keyword keeps the query, the URL

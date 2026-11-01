@@ -4,6 +4,16 @@
 // leaving the status code honest.
 document.addEventListener('htmx:beforeSwap', function (evt) {
 	var status = evt.detail.xhr.status;
+	var target = evt.detail.target;
+	if (target && target.id === 'facet-list' && status !== 200) {
+		// The sidebar list is replaced by the response, so an error page (or an
+		// empty 503 body) would wipe the tags the visitor already has. Treat it
+		// as a failure instead: no swap, and htmx:responseError runs
+		// facetTailFailed (More falls back to its link; Find a tag can retry).
+		evt.detail.shouldSwap = false;
+		evt.detail.isError = true;
+		return;
+	}
 	if (status === 503 || status === 400) {
 		evt.detail.shouldSwap = true;
 		evt.detail.isError = false;
@@ -11,12 +21,11 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 	rememberLoadMoreFocus(evt);
 });
 
-// The sidebar shows the top few dozen tags and carries the rest hidden
-// (data-facet-tail); this narrows the whole list to what was typed, so
-// a match past the head shows up too. An empty box puts the head back.
-// Purely presentational - it hides and reveals list items that are
-// already on the page rather than asking the server for more - so the
-// sidebar stays exactly as useful with scripting off.
+// The sidebar shows the top few dozen tags. The rest are not in the page: they
+// are fetched when the visitor focuses "Find a tag" or follows "More tags" (see
+// loadFacetTail), and arrive hidden (data-facet-tail). This narrows the whole
+// list to what was typed, so a match past the head shows up too. An empty box
+// puts the head back, plus the rest if the visitor asked for more tags.
 //
 // Delegated, because the sidebar is replaced on every filter change.
 document.addEventListener('input', function (e) {
@@ -27,14 +36,164 @@ document.addEventListener('input', function (e) {
 
 function filterFacets(box) {
 	var needle = box.value.trim().toLowerCase();
+	var details = box.closest('.facets-details');
+	var expanded = !!details && details.hasAttribute('data-expanded');
 	var list = box.parentNode.querySelectorAll('[data-facet]');
 	for (var i = 0; i < list.length; i++) {
 		var slug = list[i].getAttribute('data-facet');
 		list[i].hidden = needle === ''
-			? list[i].hasAttribute('data-facet-tail')
+			? list[i].hasAttribute('data-facet-tail') && !expanded
 			: slug.indexOf(needle) === -1;
 	}
 }
+
+// ------------------------------------------------------------- tag tail --
+//
+// The sidebar's list element carries data-tail-url when the page left tags
+// out. The URL returns the whole ranked list for the data generation it names
+// (v=), head and tail, and the list's contents are REPLACED with it. Appending
+// the tail to a head rendered from another generation (a publish between the
+// page and the fetch, or an edge copy of one) could repeat or skip a tag; a
+// replacement cannot. data-tail is "loading" while the request runs and
+// "loaded" after; a failure puts it back so the next try asks again. Without
+// scripting none of this runs and "More tags" is a plain link to a page that
+// lists everything.
+var expandAfterTail = false;
+// Set when a filter swap re-fetches the list for a visitor who had expanded it:
+// the More link goes only once the list has actually loaded (see afterSwap), so
+// a failed fetch leaves the link to try again.
+var expandSilently = false;
+var moreHref = '';
+var tailFocus = null;
+
+function facetList() {
+	return document.getElementById('facet-list');
+}
+
+function loadFacetTail(list) {
+	if (!list || !list.getAttribute('data-tail-url') || list.hasAttribute('data-tail')) return;
+	if (!window.htmx) return;
+	list.setAttribute('data-tail', 'loading');
+	htmx.ajax('GET', list.getAttribute('data-tail-url'), { source: list, target: list, swap: 'innerHTML' });
+}
+
+// Before the list is replaced, note where focus is inside it, so it can be put
+// back on the same tag's control afterwards, and the first row of the old tail
+// (if there was one), which is where a "More tags" press should land.
+document.addEventListener('htmx:beforeSwap', function (evt) {
+	var list = evt.detail.target;
+	if (!list || list.id !== 'facet-list') return;
+	tailFocus = { slug: null, cls: null, firstTail: null };
+	var active = document.activeElement;
+	var row = active && active !== document.body ? active.closest('li[data-facet]') : null;
+	if (row && list.contains(row)) {
+		tailFocus.slug = row.getAttribute('data-facet');
+		tailFocus.cls = active.classList.contains('facet-exclude') ? 'facet-exclude' : 'facet';
+	}
+	var oldTail = list.querySelector('[data-facet-tail]');
+	if (oldTail) tailFocus.firstTail = oldTail.getAttribute('data-facet');
+});
+
+function focusFacet(list, slug, cls) {
+	if (!slug) return false;
+	var rows = list.querySelectorAll('li[data-facet]');
+	for (var i = 0; i < rows.length; i++) {
+		if (rows[i].getAttribute('data-facet') !== slug || rows[i].hidden) continue;
+		var el = rows[i].querySelector('a.' + cls) || rows[i].querySelector('a');
+		if (el) { el.focus(); return true; }
+	}
+	return false;
+}
+
+// Revealing the rest keeps focus somewhere real: the "More tags" link they used
+// is removed, so focus goes to the row that opens the revealed part (the first
+// of the old tail if there was one, else the first new row). At the tag cap the
+// rows are text, so it falls back to the first focusable thing in the tail and,
+// failing that, the search box - never <body>.
+function expandFacets(details, moveFocus) {
+	if (!details) return;
+	details.setAttribute('data-expanded', '');
+	var box = details.querySelector('[data-facet-search]');
+	if (box) filterFacets(box);
+	var more = details.querySelector('[data-facets-more]');
+	if (more) {
+		var wrap = more.closest('.facets-more-wrap') || more;
+		wrap.remove();
+	}
+	if (!moveFocus) return;
+	var list = details.querySelector('#facet-list');
+	var wanted = tailFocus && tailFocus.firstTail;
+	if (list && wanted && focusFacet(list, wanted, 'facet')) return;
+	var first = details.querySelector('[data-facet-tail] a.facet') ||
+		details.querySelector('[data-facet-tail] a');
+	if (first) {
+		first.focus();
+	} else if (box) {
+		box.focus();
+	}
+}
+
+// Focusing the box says the visitor is about to look for a tag; fetch the rest
+// now so a match past the head is there by the time they type.
+document.addEventListener('focusin', function (e) {
+	if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-facet-search')) loadFacetTail(facetList());
+});
+
+document.addEventListener('click', function (e) {
+	var more = e.target.closest && e.target.closest('[data-facets-more]');
+	if (!more) return;
+	var list = facetList();
+	if (!list || !window.htmx) return; // the link works as a link
+	e.preventDefault();
+	var details = more.closest('.facets-details');
+	if (list.getAttribute('data-tail') === 'loaded') {
+		tailFocus = null;
+		expandFacets(details, true);
+		return;
+	}
+	expandAfterTail = true;
+	moreHref = more.href;
+	loadFacetTail(list);
+});
+
+document.addEventListener('htmx:afterSwap', function (evt) {
+	var list = evt.target;
+	if (!list || list.id !== 'facet-list' || !document.contains(list)) return;
+	list.setAttribute('data-tail', 'loaded');
+	var details = list.closest('.facets-details');
+	var box = details && details.querySelector('[data-facet-search]');
+	if (box) filterFacets(box);
+	var focus = tailFocus;
+	if (expandAfterTail) {
+		expandAfterTail = false;
+		expandSilently = false;
+		expandFacets(details, true);
+	} else if (expandSilently) {
+		expandSilently = false;
+		expandFacets(details, false);
+		if (focus && focus.slug) focusFacet(list, focus.slug, focus.cls);
+	} else if (focus && focus.slug) {
+		// The rows were replaced under the visitor's focus.
+		focusFacet(list, focus.slug, focus.cls);
+	}
+});
+
+// A failed fetch after "More tags" was pressed falls back to what the link does
+// without scripting: go to the page that lists every tag.
+function facetTailFailed(evt) {
+	var list = evt.target;
+	if (!list || list.id !== 'facet-list') return;
+	list.removeAttribute('data-tail');
+	expandSilently = false;
+	if (expandAfterTail && moreHref) {
+		expandAfterTail = false;
+		window.location.href = moreHref;
+		return;
+	}
+	expandAfterTail = false;
+}
+document.addEventListener('htmx:responseError', facetTailFailed);
+document.addEventListener('htmx:sendError', facetTailFailed);
 
 // Spelled out as getDate/getMonth/etc rather than toLocaleString: those
 // read in whatever zone the browser is already in, with no Intl call and
@@ -109,6 +268,69 @@ function localizeRelativeTimestamps(root) {
 		var originalTitle = nodes[i].getAttribute('title') || '';
 		var local = formatLocalDateTime(when);
 		nodes[i].title = originalTitle ? local + ' (' + originalTitle + ')' : local;
+	}
+}
+
+// ------------------------------------------------------- relative times --
+//
+// Pages are served from caches and revalidated with 304, so the words the
+// server wrote ("index updated 2 days ago", "next update in about 3 days") can
+// be read long after they were true. The server still writes them, for
+// scripting off and for the first paint; this recomputes them from the
+// <time datetime> values on load and after every swap, with the same bucket
+// rules as Freshness.Label and Freshness.DueLabel (internal/web/templates/
+// freshness.go; testdata/freshness_wording.json pins the Go side in CI,
+// and a manual Playwright check holds this side to the same table). Text only: no
+// live region, so nothing is announced.
+var HOUR_MS = 3600000;
+var DAY_MS = 24 * HOUR_MS;
+
+function relativeAgeLabel(ms) {
+	if (ms < 0) ms = 0; // a timestamp slightly ahead of this clock is skew
+	if (ms < HOUR_MS) return 'less than an hour ago';
+	if (ms < 2 * HOUR_MS) return '1 hour ago';
+	if (ms < DAY_MS) return Math.floor(ms / HOUR_MS) + ' hours ago';
+	if (ms < 2 * DAY_MS) return 'yesterday';
+	return Math.floor(ms / DAY_MS) + ' days ago';
+}
+
+function relativeDueLabel(ms) {
+	if (ms <= 0) return 'any time now';
+	if (ms < HOUR_MS) return 'within the hour';
+	if (ms < 2 * HOUR_MS) return 'in about an hour';
+	if (ms < DAY_MS) return 'in about ' + Math.floor(ms / HOUR_MS) + ' hours';
+	if (ms < 2 * DAY_MS) return 'tomorrow';
+	return 'in about ' + Math.floor(ms / DAY_MS) + ' days';
+}
+
+function refreshRelativeTimes(root) {
+	var now = Date.now();
+	var times = root.querySelectorAll('time[data-relative]');
+	for (var i = 0; i < times.length; i++) {
+		var when = Date.parse(times[i].getAttribute('datetime'));
+		if (isNaN(when)) continue;
+		var kind = times[i].getAttribute('data-relative');
+		var text = kind === 'due' ? relativeDueLabel(when - now) : relativeAgeLabel(now - when);
+		if (times[i].textContent !== text) times[i].textContent = text;
+	}
+	// The stale warning: shown from data-stale-at on, which the server computed
+	// from the same rule as Freshness.Stale.
+	var ages = root.querySelectorAll('[data-stale-at]');
+	for (var j = 0; j < ages.length; j++) {
+		var at = Date.parse(ages[j].getAttribute('data-stale-at'));
+		if (isNaN(at)) continue;
+		var stale = now >= at;
+		ages[j].classList.toggle('is-stale', stale);
+		var warn = ages[j].querySelector('.index-age-warn');
+		if (stale && !warn) {
+			warn = document.createElement('span');
+			warn.className = 'index-age-warn';
+			warn.textContent = '— the crawl may have stopped';
+			ages[j].appendChild(document.createTextNode(' '));
+			ages[j].appendChild(warn);
+		} else if (!stale && warn) {
+			warn.remove();
+		}
 	}
 }
 
@@ -374,6 +596,7 @@ document.addEventListener('click', function (e) {
 });
 
 document.addEventListener('DOMContentLoaded', function () {
+	refreshRelativeTimes(document);
 	localizeTimestamps(document);
 	applySavedState(document);
 	renderSavedGrid();
@@ -386,6 +609,7 @@ document.addEventListener('DOMContentLoaded', function () {
 // listener.
 document.addEventListener('htmx:afterSwap', function (evt) {
 	var root = evt.target || document;
+	refreshRelativeTimes(document);
 	localizeTimestamps(root);
 	applySavedState(root);
 	restoreFacetState(root);
@@ -505,7 +729,8 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 	var box = document.querySelector('[data-facet-search]');
 	facetState = {
 		open: details ? details.open : null,
-		needle: box ? box.value : ''
+		needle: box ? box.value : '',
+		expanded: !!details && details.hasAttribute('data-expanded')
 	};
 });
 
@@ -520,6 +745,16 @@ function restoreFacetState(root) {
 	if (box && state.needle) {
 		box.value = state.needle;
 		filterFacets(box);
+	}
+	// The new sidebar has only its head. A visitor who was searching the whole
+	// list, or had asked for more tags, gets the rest fetched again for the new
+	// filters; the search text is applied when it arrives.
+	if (state.needle || state.expanded) {
+		// Everything is to be shown once it arrives; the link that would show
+		// it goes then (no focus move: the visitor is not on it), not before.
+		var newList = root.querySelector('#facet-list');
+		expandSilently = !!state.expanded && !!newList && !!newList.getAttribute('data-tail-url');
+		loadFacetTail(newList);
 	}
 }
 

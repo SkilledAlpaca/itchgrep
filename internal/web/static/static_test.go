@@ -1,6 +1,9 @@
 package static
 
 import (
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -68,4 +71,55 @@ func TestEmbeddedFilesAreOnlyTheServedAssets(t *testing.T) {
 		assert.Len(t, Hash(name), hashLen, name)
 	}
 	assert.Len(t, hashes, 3, "no Go source or VENDOR.md may be embedded")
+}
+
+// TestAppJSDefinesEveryFunctionItsListenersCall guards against an edit that
+// deletes a helper another listener still calls. The failure is silent in Go and
+// shows up only as a ReferenceError in the browser, inside an htmx event handler
+// that then skips everything after it.
+//
+// It reads app.js, drops strings and comments, collects every bare call
+// (identifier followed by "(", not preceded by "."), and requires each to be a
+// function the file defines, a keyword, or a browser global from the allowlist.
+func TestAppJSDefinesEveryFunctionItsListenersCall(t *testing.T) {
+	src, err := os.ReadFile("app.js")
+	require.NoError(t, err)
+
+	code := regexp.MustCompile(`'(?:[^'\\\n]|\\.)*'`).ReplaceAllString(string(src), "''")
+	code = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(code, "")
+	code = regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(code, "")
+
+	defined := map[string]bool{}
+	for _, m := range regexp.MustCompile(`function\s+([A-Za-z_$][\w$]*)\s*\(`).FindAllStringSubmatch(code, -1) {
+		defined[m[1]] = true
+	}
+	// Parameters and local variables holding callbacks are not definitions the
+	// file can lose.
+	for _, m := range regexp.MustCompile(`function\s*[\w$]*\s*\(([^)]*)\)`).FindAllStringSubmatch(code, -1) {
+		for _, p := range strings.Split(m[1], ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				defined[p] = true
+			}
+		}
+	}
+	allowed := map[string]bool{}
+	for _, name := range strings.Fields(`if for while switch catch function return typeof new
+		Date RegExp URLSearchParams Object Array String Number Boolean JSON Math
+		parseInt parseFloat isNaN encodeURIComponent decodeURIComponent
+		htmx setTimeout clearTimeout setInterval requestAnimationFrame matchMedia`) {
+		allowed[name] = true
+	}
+
+	var missing []string
+	for _, m := range regexp.MustCompile(`(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(`).FindAllStringSubmatch(code, -1) {
+		if name := m[1]; !defined[name] && !allowed[name] {
+			missing = append(missing, name)
+		}
+	}
+	assert.Empty(t, missing, "app.js calls functions it does not define")
+
+	// The regex must be finding calls at all, or an empty result proves nothing.
+	for _, name := range []string{"localizeTimestamps", "refreshRelativeTimes", "filterFacets", "expandFacets", "restoreFacetState"} {
+		assert.True(t, defined[name], name+" should be defined")
+	}
 }

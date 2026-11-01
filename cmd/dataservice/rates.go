@@ -17,18 +17,20 @@ import (
 // connection hold up publishing an otherwise finished index.
 const ratesTimeout = 15 * time.Second
 
-// currentRates obtains the exchange-rate snapshot to build the index with, in
+// chooseRates obtains the exchange-rate snapshot to build the index with, in
 // descending order of preference: today's from the ECB, the last one this
 // installation successfully fetched, and finally the table baked into the
 // binary.
 //
 // Never fatal. Prices convert approximately or not at all; neither is worth
-// discarding a completed crawl over. Whatever is chosen is republished so the
-// webserver reads exactly the numbers the index was built with - the stored
-// PriceUSD values and the rates shown beside converted prices have to describe
-// the same day, or the site would sort by one set of rates and explain itself
-// with another.
-func currentRates() money.Rates {
+// discarding a completed crawl over.
+//
+// It does not store what it chose. The webserver reads rates.json to convert
+// prices and to rebuild its in-memory price ordering, and the index it opens
+// was priced with whatever the crawl chose here, so the file may only change
+// once that index is published (see publishCrawl); writing it earlier would
+// leave a failed publish with the old index and the new rates.
+func chooseRates() money.Rates {
 	rates, err := fetchECBRates()
 	if err == nil {
 		logging.Info("Fetched exchange rates for %s from %s", rates.Date, rates.Source)
@@ -41,10 +43,6 @@ func currentRates() money.Rates {
 			rates = money.Fallback()
 			logging.Warning("Using the built-in exchange rates from %s; converted prices will be further off than usual", rates.Date)
 		}
-	}
-
-	if err := storage.PutRates(rates); err != nil {
-		logging.Warning("Failed to store exchange rates: %v", err)
 	}
 	return rates
 }
