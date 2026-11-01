@@ -251,6 +251,37 @@ func (c *Cache) searchIndex(opts SearchOptions, useHitCache bool) (Results, erro
 		size64 = opts.Limit
 	}
 
+	// A text search is the expensive request, and the same one is asked for
+	// again for every further page: serve it from the hit cache when it fits.
+	if useHitCache && c.hits != nil && hitCacheable(opts) && from64+size64 <= hitCacheDepth*c.pageSize {
+		entry, err := c.hits.get(hitKey(opts), func() (*hitEntry, error) {
+			// The whole depth in one pass, facet included, whichever page asked
+			// first: the pages after it are then slices of the same answer.
+			ans, err := c.queryIndex(opts, likeTags, 0, int(hitCacheDepth*c.pageSize), true)
+			if err != nil {
+				return nil, err
+			}
+			return &hitEntry{pos: ans.pos, total: ans.total, tags: ans.tags}, nil
+		})
+		if err != nil {
+			return Results{}, err
+		}
+		results := Results{Total: entry.total, LikeTitle: likeTitle}
+		if !opts.NoFacets {
+			results.Tags = entry.tags
+		}
+		if from64 < int64(len(entry.pos)) {
+			end := from64 + size64
+			if end > int64(len(entry.pos)) {
+				end = int64(len(entry.pos))
+			}
+			for _, p := range entry.pos[from64:end] {
+				results.Assets = append(results.Assets, c.data[p])
+			}
+		}
+		return results, nil
+	}
+
 	ans, err := c.queryIndex(opts, likeTags, int(from64), int(size64), !opts.NoFacets)
 	if err != nil {
 		return Results{}, err

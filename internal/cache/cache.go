@@ -59,6 +59,11 @@ type Cache struct {
 	// from data on every refresh, so the two are always the same dataset.
 	eng *engine
 
+	// hits remembers the answers to recent text searches (see hitCache) so that
+	// paging through one costs a slice, not another pass through the index.
+	// Reset in the same write lock that swaps the dataset.
+	hits *hitCache
+
 	// indexInfo is the stat of the directory index was opened from, kept to
 	// recognize a refresh that points at the same directory (see doRefresh).
 	indexInfo os.FileInfo
@@ -145,6 +150,7 @@ func NewCache(pageSize int64) *Cache {
 		dataMap:         make(map[string]int),
 		cacheLock:       sync.RWMutex{},
 		pageSize:        pageSize,
+		hits:            newHitCache(hitCacheSize),
 		dataUpdatedTime: time.Time{},
 		// Seeded with the built-in table so that a cache which has not loaded
 		// yet, or one whose data directory holds no rates file, still has a
@@ -455,6 +461,7 @@ func (c *Cache) doRefresh() error {
 	c.data = newData
 	c.dataMap = newDataMap
 	c.eng = newEngine
+	c.hits.reset()
 	c.tagCatalog = newTagCatalog
 	c.tagCounts = topTags(newTagCatalog)
 	c.rates = newRates
