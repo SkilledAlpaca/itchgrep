@@ -487,9 +487,12 @@ func TestArrivalsPageRendersCardsNewestFirst(t *testing.T) {
 	age := NewFreshness(time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), 0)
 	html := render(t, ArrivalsPage(assets, money.Fallback(), age))
 
-	assert.Contains(t, html, "New this week")
+	assert.Contains(t, html, "Newest arrivals")
+	assert.NotContains(t, html, "this week", "the list spans crawls, so it does not claim a week")
+	assert.Contains(t, html, "across all crawls")
 	assert.Contains(t, html, "Freshly Arrived")
-	assert.Contains(t, html, "2 days ago", "the window is stated from the actual crawl time, not asserted blindly")
+	assert.Contains(t, html, "latest crawl completed")
+	assert.Contains(t, html, "2 days ago", "the date of the latest crawl comes from the actual crawl time")
 }
 
 func TestArrivalsPageExplainsAnEmptyIndex(t *testing.T) {

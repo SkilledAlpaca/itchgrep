@@ -7,13 +7,14 @@ import "itchgrep/pkg/money"
 // newest first, with no pagination and no sidebar - a page, not another way
 // to slice the catalog.
 //
-// "This week" in the heading is a label, not a promise the data always keeps:
-// the crawl runs roughly weekly but not on a guaranteed clock, so the
-// paragraph beneath it names the actual crawl the arrivals were stamped by
-// rather than leaving the heading as the only claim about the window.
+// The list is the newest arrivals across all crawls, not only the latest one:
+// it is ordered by FirstSeen and capped, so it reaches back as far as the cap
+// does. The heading says "newest", not "this week", because the window is
+// whatever the cap reaches; the paragraph beneath gives the date of the latest
+// crawl, which is the freshest an arrival here can be.
 templ ArrivalsPage(assets []models.Asset, rates money.Rates, age Freshness) {
 	<div class="prose">
-		<h2>New this week</h2>
+		<h2>Newest arrivals</h2>
 		if len(assets) == 0 {
 			<p>
 				ITCHGREP started recording when an asset first appears with
@@ -22,7 +23,9 @@ templ ArrivalsPage(assets []models.Asset, rates money.Rates, age Freshness) {
 			</p>
 		} else if age.Known() {
 			<p>
-				Assets first seen by the crawl completed
+				The newest assets across all crawls, most recent first, dated by
+				when this site first saw them rather than when they were published
+				on itch.io. The latest crawl completed
 				<time datetime={ age.DateTime() } title={ age.Absolute() }>{ age.Label() }</time>{ "." }
 			</p>
 		}
