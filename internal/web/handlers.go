@@ -25,15 +25,19 @@ import (
 	"unicode/utf8"
 )
 
-// fragmentMaxAge is how long a rendered result page may be reused.
+// fragmentMaxAge is how long a browser may reuse a rendered page without asking.
 //
 // Every visitor sees the same results for the same query, and the underlying
-// data only changes when a crawl publishes - at most once a day. Without this
-// header a proxy in front of the site can cache nothing at all, so every
-// search, including repeats of the same popular query, runs a full bleve pass
-// on the origin. Five minutes is short enough that a newly published index
-// reaches users promptly and long enough to absorb the bursts that matter.
+// data only changes when a crawl publishes. Five minutes is short enough that a
+// person who reloads after a publish gets the new index soon, and long enough to
+// absorb the bursts that matter.
 const fragmentMaxAge = 300
+
+// edgeMaxAge is how long a shared cache (the CDN in front of the site) may
+// reuse a rendered page. The data changes on a weekly crawl publish, so an hour
+// of edge staleness after one is the price of the edge answering nearly every
+// request itself; the origin still revalidates with If-Modified-Since.
+const edgeMaxAge = 3600
 
 // statsMaxAge is shorter than fragmentMaxAge: a stats page five minutes stale
 // invites "is the site down?" bug reports in a way a five-minute-old result
@@ -113,7 +117,19 @@ func NewHandler(cache *cache.Cache, crawlInterval time.Duration, m *metrics.Coun
 // cacheable marks a response as reusable by shared caches, and stamps it with
 // the dataset it was rendered from so revalidation works.
 func (h *handler) cacheable(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d, s-maxage=%d", fragmentMaxAge, edgeMaxAge))
+	h.stampDataTime(w)
+}
+
+// cacheableBriefly is cacheable without the long edge lifetime, for a page that
+// is correct now and likely to be wrong after a publish: the page past the last
+// one, which a shorter result list turns from a real page into an error.
+func (h *handler) cacheableBriefly(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", fragmentMaxAge))
+	h.stampDataTime(w)
+}
+
+func (h *handler) stampDataTime(w http.ResponseWriter) {
 	if t := h.cache.DataUpdatedTime(); !t.IsZero() {
 		w.Header().Set("Last-Modified", t.UTC().Format(http.TimeFormat))
 	}
@@ -222,7 +238,7 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cacheable(w)
+	h.cacheableFor(w, page, results)
 	// LayoutHead, not Layout: this is the one page a feed for the current
 	// filters makes sense on, so it carries the auto-discovery link every
 	// other page has no reason to.
@@ -304,7 +320,7 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cacheable(w)
+	h.cacheableFor(w, page, results)
 	// Page 1 replaces the whole region, because changing a filter changes the
 	// sidebar counts and the controls as well as the cards. Later pages are
 	// appended to the existing list, so they are cards alone.
@@ -313,6 +329,16 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	templates.AssetPage(filters, results).Render(r.Context(), w)
+}
+
+// cacheableFor is cacheable for a page of results, with the short lifetime for
+// a page past the last (see cacheableBriefly).
+func (h *handler) cacheableFor(w http.ResponseWriter, page int64, results templates.Results) {
+	if page > 1 && len(results.Assets) == 0 {
+		h.cacheableBriefly(w)
+		return
+	}
+	h.cacheable(w)
 }
 
 // find runs the query and shapes the answer for the templates.

@@ -58,7 +58,7 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cacheable(w)
+	h.cacheableFor(w, page, results)
 	// Past the last page, "back to the first page" is this tag page, not the
 	// equivalent /?tags= query-string form.
 	results.FirstPageURL = "/tag/" + slug

@@ -216,7 +216,8 @@ func TestSuccessfulResponsesAreCacheable(t *testing.T) {
 	_, h := newTestRouter()
 	w := httptest.NewRecorder()
 	h.cacheable(w)
-	assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "public, max-age=300, s-maxage=3600", w.Header().Get("Cache-Control"),
+		"browsers revalidate after five minutes; the edge may hold a page for an hour")
 }
 
 func TestNotReadyIsNeverCached(t *testing.T) {

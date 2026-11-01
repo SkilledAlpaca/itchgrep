@@ -104,7 +104,7 @@ func TestInvalidSlugCharactersAre404NotARedirectToNowhere(t *testing.T) {
 func TestTagPageIsCacheable(t *testing.T) {
 	r := tagRouter(t)
 	w := get(t, r, "/tag/pixel-art")
-	assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "public, max-age=300, s-maxage=3600", w.Header().Get("Cache-Control"))
 }
 
 func TestTagPageIsUnavailableBeforeTheCacheLoads(t *testing.T) {
