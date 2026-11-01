@@ -45,15 +45,13 @@ const secondsPerDay = 24 * 60 * 60
 const (
 	routeIndex   = "/"
 	routeResults = "/results"
-	// The sidebar's on-demand rows are part of the results page, not a page.
-	routeResultsTags = "/results/tags"
-	routeAbout       = "/about"
-	routeStats       = "/stats"
-	routeStatic      = "/static/*"
-	routeNew         = "/new"
-	routeFeed        = "/feed"
-	routeTag         = "/tag/{slug}"
-	routeSaved       = "/saved"
+	routeAbout   = "/about"
+	routeStats   = "/stats"
+	routeStatic  = "/static/*"
+	routeNew     = "/new"
+	routeFeed    = "/feed"
+	routeTag     = "/tag/{slug}"
+	routeSaved   = "/saved"
 )
 
 // Counters is the live, concurrently-updated state. sync/atomic for the
@@ -155,7 +153,7 @@ func (c *Counters) RecordRequest(routePattern string, search bool, status int) {
 	switch routePattern {
 	case routeIndex:
 		c.index.Add(1)
-	case routeResults, routeResultsTags:
+	case routeResults:
 		c.results.Add(1)
 	case routeAbout:
 		c.about.Add(1)

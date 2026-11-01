@@ -20,6 +20,7 @@ func sidebarRouter(t *testing.T) (*chi.Mux, *cache.Cache) {
 	r, c := perfRouter(t)
 	h := NewHandler(c, 0, nil)
 	r.Get("/results/tags", h.HandleResultsTags)
+	r.Head("/results/tags", h.HandleResultsTags)
 	return r, c
 }
 
@@ -150,4 +151,9 @@ func TestTagTailIsConditionalAndCacheable(t *testing.T) {
 	assert.Equal(t, "public, max-age=300, s-maxage=3600", full.Header().Get("Cache-Control"))
 	w := getWith(t, r, "/results/tags", map[string]string{"If-Modified-Since": full.Header().Get("Last-Modified")})
 	assert.Equal(t, http.StatusNotModified, w.Code)
+}
+
+func TestHeadOfTheTagTailIsAnsweredWithoutABody(t *testing.T) {
+	r, _ := sidebarRouter(t)
+	assertHeadIsConditional(t, r, "/results/tags")
 }
