@@ -145,7 +145,9 @@ func TestLikeIsBoundedInLength(t *testing.T) {
 // since ?like= is parsed off the URL and normalizeGameId only accepts
 // digits - unlike most fixtures elsewhere in this file, which use readable
 // ids that would never survive that parse.
-func loadedLikeCache(t *testing.T) *cache.Cache {
+func loadedLikeCache(t *testing.T) *cache.Cache { return loadedLikeCacheSized(t, 36) }
+
+func loadedLikeCacheSized(t *testing.T, pageSize int64) *cache.Cache {
 	t.Helper()
 	t.Setenv("DATA_DIR", t.TempDir())
 
@@ -166,7 +168,7 @@ func loadedLikeCache(t *testing.T) *cache.Cache {
 	}
 	require.NoError(t, index.Close())
 
-	c := cache.NewCache(36)
+	c := cache.NewCache(pageSize)
 	require.NoError(t, c.RefreshDataCache())
 	return c
 }
@@ -755,4 +757,95 @@ func TestFingerprintedAssetsCountAsStaticTraffic(t *testing.T) {
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/static/app.js", nil))
 
 	assert.Equal(t, uint64(2), m.Snapshot().Static)
+}
+
+func TestRelevanceWithoutAQueryIsDroppedAndRedirected(t *testing.T) {
+	r, _ := newTestRouter()
+
+	w := get(t, r, "/?sort=relevance")
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "/", w.Header().Get("Location"))
+
+	// With a query relevance is the default, so it is dropped from the address
+	// as before; only the query remains.
+	w = get(t, r, "/?q=x&sort=relevance")
+	assert.Equal(t, "/?q=x", w.Header().Get("Location"))
+}
+
+func TestAPageBeyondTheLastRendersANoticeNotAnEmptyGrid(t *testing.T) {
+	c := loadedLikeCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/", h.HandleIndex)
+	r.Get("/results", h.HandleResults)
+
+	for _, target := range []string{"/?page=5", "/?page=5&tags=2d", "/results?page=5"} {
+		w := get(t, r, target)
+		assert.Equal(t, http.StatusOK, w.Code, target)
+		body := w.Body.String()
+		assert.Contains(t, body, "No more results", target)
+		assert.Contains(t, body, "Back to the first page", target)
+		assert.NotContains(t, body, `class="asset"`, target)
+		assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"), target)
+	}
+}
+
+func TestResultsFragmentRefreshesSearchFiltersOnPageOneOnly(t *testing.T) {
+	c := loadedLikeCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/results", h.HandleResults)
+
+	first := get(t, r, "/results?tags=2d&not=music&price=paid&sort=title&cur=EUR&q=pixel").Body.String()
+	assert.Contains(t, first, `id="search-filters"`)
+	assert.Contains(t, first, `hx-swap-oob="true"`)
+	assert.Contains(t, first, `name="tags" value="2d"`)
+	assert.Contains(t, first, `name="not" value="music"`)
+
+	// A second page needs more results than the fixture has; the empty
+	// out-of-range page is still a later page and must not carry the fields.
+	later := get(t, r, "/results?tags=2d&page=2").Body.String()
+	assert.NotContains(t, later, "search-filters")
+}
+
+func TestLoadMorePagesSkipTheFacetButFullPagesKeepTheSidebar(t *testing.T) {
+	// One asset per page, three matching "2d"-or-music assets overall.
+	h := NewHandler(loadedLikeCacheSized(t, 1), 0, nil)
+	f := templates.Filters{Query: "pixel"}
+
+	first, err := h.find(f, 1, true)
+	require.NoError(t, err)
+	assert.NotEmpty(t, first.Tags, "a first page replaces the sidebar")
+
+	more, err := h.find(f, 2, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, more.Assets)
+	assert.Empty(t, more.Tags, "a load-more page appends cards only, so no facet work")
+
+	deep, err := h.find(f, 2, true)
+	require.NoError(t, err)
+	assert.NotEmpty(t, deep.Tags, "a full page render of page 2 still has its sidebar")
+
+	r := chi.NewRouter()
+	r.Get("/", h.HandleIndex)
+	assert.Contains(t, get(t, r, "/?page=2&q=pixel").Body.String(), `class="facets"`)
+}
+
+func TestAFailedFirstPageStillRefreshesTheSearchBoxFilters(t *testing.T) {
+	// The unloaded test cache answers 503. The address was pushed, so the form
+	// has to follow it.
+	r, _ := newTestRouter()
+
+	w := get(t, r, "/results?tags=2d&not=3d&sort=title&cur=EUR&q=knight")
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, `id="search-filters"`)
+	assert.Contains(t, body, `hx-swap-oob="true"`)
+	assert.Contains(t, body, `name="tags" value="2d"`)
+	assert.Contains(t, body, `name="not" value="3d"`)
+	assert.Contains(t, body, `name="sort" value="title"`)
+
+	later := get(t, r, "/results?tags=2d&page=2")
+	require.Equal(t, http.StatusServiceUnavailable, later.Code)
+	assert.NotContains(t, later.Body.String(), "search-filters", "a later page changed no filter")
 }

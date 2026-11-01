@@ -224,15 +224,23 @@ services:
       # local-only `docker compose up`. The default here names cloudflared's
       # own pinned address on the compose network (see its `networks:` entry
       # below) as a single /32, not the whole subnet: the webserver's port is
-      # published on 0.0.0.0 (see `ports:` below), and Docker's userland proxy
-      # can deliver that traffic with the bridge gateway as RemoteAddr - which
-      # sits inside the /24 - so trusting the whole subnet would let anything
-      # that can reach the published port at all impersonate a Cloudflare hop.
+      # published on the host's loopback only (see `ports:` below), and
+      # Docker's userland proxy can deliver that traffic with the bridge gateway
+      # as RemoteAddr - which sits inside the /24 - so trusting the whole subnet
+      # would let anything that can reach the published port at all impersonate
+      # a Cloudflare hop. Binding to loopback narrows who can reach it to
+      # processes on the host, but this stays a /32: defense in depth, and the
+      # same setting is used wherever the binding is changed.
       # A single address only ever matches the one peer that is actually
       # cloudflared.
       TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-172.30.99.10/32}"
+    # Loopback only. Nothing public depends on this port: cloudflared reaches
+    # the webserver over the compose network at http://webserver:8080. Bound to
+    # 0.0.0.0 it exposed the origin to the whole LAN, past the Cloudflare WAF
+    # and with proxy headers untrusted. Reach it from the host itself, e.g.
+    # curl http://127.0.0.1:62686/healthz.
     ports:
-      - "62686:8080"
+      - "127.0.0.1:62686:8080"
     volumes:
       # Read-write, not read-only: bleve takes a lock file inside the index
       # directory when opening it, even for search-only use. And it must be
@@ -332,7 +340,7 @@ services:
     # TRUSTED_PROXY_CIDRS above can name this one address instead of the
     # whole /24: with a whole-subnet default, the bridge gateway (which
     # traffic through Docker's userland proxy can arrive from - see the
-    # webserver's ports: comment) and every other container on this network
+    # TRUSTED_PROXY_CIDRS comment on the webserver) and every other container on this network
     # would also be trusted to impersonate a Cloudflare hop. A /32 pointed at
     # this address is the actual "one peer cloudflared connects from" the ADR
     # describes.

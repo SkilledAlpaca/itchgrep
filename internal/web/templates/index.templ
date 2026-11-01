@@ -132,7 +132,7 @@ templ SearchBar(f Filters) {
 			autocapitalize="off"
 			spellcheck="false"
 		/>
-		@hiddenFilters(f, true)
+		@SearchFilters(f, false)
 		<button type="submit">Search</button>
 		<div class="spinner" aria-hidden="true"></div>
 	</form>
@@ -148,7 +148,12 @@ templ Index(f Filters, r Results) {
 	// hx-indicator is inherited by every htmx request made below, so a facet,
 	// chip, sort or card link shows the search bar's spinner just as a submitted
 	// search does. Without it only the form itself ever looked busy.
-	<div class="search-page" hx-indicator=".searchbar .spinner">
+	//
+	// hx-sync is inherited likewise: every request made below shares one
+	// queue, and a new one replaces whatever is still in flight. Without it two
+	// quick taps race, and whichever response arrives last wins - not the tap
+	// that was made last.
+	<div class="search-page" hx-indicator=".searchbar .spinner" hx-sync="this:replace">
 		@SearchBar(f)
 		// Outside #results-region, which every filter link swaps: a live region
 		// that is replaced is announced inconsistently, because assistive

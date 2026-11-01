@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
 	"time"
 
 	"itchgrep/internal/metrics"
+	"itchgrep/pkg/money"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -91,7 +95,7 @@ func RequestLogger(trustProxy bool, trustedCIDRs []*net.IPNet, m *metrics.Counte
 			routePattern := chi.RouteContext(r.Context()).RoutePattern()
 
 			status := statusOr200(ww.Status())
-			m.RecordRequest(routePattern, r.URL.RawQuery != "", status)
+			m.RecordRequest(routePattern, isSearchRequest(r, routePattern), status)
 
 			// Path only, never r.URL - the raw query may carry a search term
 			// the visitor typed, and that must never reach the log. The
@@ -132,4 +136,55 @@ func statusOr200(status int) int {
 		return http.StatusOK
 	}
 	return status
+}
+
+// isSearchRequest reports whether r asks for the first page of results narrowed
+// by something the visitor chose: a query or at least one filter (tags,
+// exclusions, similar-to, author, price). Later pages are the same search
+// continued, and a request carrying only a currency or a sort is the same
+// results re-displayed, so neither counts. Only the presence of a value is
+// read; it is not stored.
+//
+// Two refinements. A /tag/{slug} page is a filter in its path, so it counts
+// whatever its query string says (HandleTag ignores q). And an htmx request
+// whose narrowing parameters equal those of the page it was made from
+// (HX-Current-URL) is that page re-displayed with another currency or sort,
+// not a new search; the comparison goes through the handlers' own parsing and
+// ignores order, so it agrees with what they would show. A full-page load
+// carries no such header and keeps the plain rule.
+func isSearchRequest(r *http.Request, routePattern string) bool {
+	q := r.URL.Query()
+	if p := q.Get("page"); p != "" && p != "1" {
+		return false
+	}
+	if routePattern == "/tag/{slug}" {
+		return true
+	}
+	key := narrowingKey(q)
+	if key == "" {
+		return false
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		if cur, err := url.Parse(r.Header.Get("HX-Current-URL")); err == nil && cur.RawQuery != "" && narrowingKey(cur.Query()) == key {
+			return false
+		}
+	}
+	return true
+}
+
+// narrowingKey reduces a query string to what narrows the catalog - the query,
+// tags, exclusions, similar-to, author and price - parsed exactly as the
+// handlers parse them and with the lists sorted, so two spellings of the same
+// narrowing compare equal. Empty means nothing narrows.
+func narrowingKey(v url.Values) string {
+	f := parseFilterValues(v, money.Fallback())
+	tags := append([]string(nil), f.Tags...)
+	not := append([]string(nil), f.NotTags...)
+	sort.Strings(tags)
+	sort.Strings(not)
+	key := strings.Join([]string{f.Query, strings.Join(tags, ","), strings.Join(not, ","), f.Like, f.Author, f.Price}, "\x00")
+	if key == strings.Repeat("\x00", 5) {
+		return ""
+	}
+	return key
 }

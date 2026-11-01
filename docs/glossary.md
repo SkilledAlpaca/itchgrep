@@ -36,7 +36,7 @@ A generation counter inside the fetcher's shared rate limiter (`rateLimiter.epoc
 
 ### Facet
 
-A bleve query feature that counts how many matching documents carry each distinct value of a field — used here for the sidebar's tag counts (`bleve.NewFacetRequest("TagSlugs", maxFacetTags)`, `internal/cache/search.go`). Distinct from `tagUniverse` (below): a facet only ever counts *the current search's matches*.
+A bleve query feature that counts how many matching documents carry each distinct value of a field — used here for the sidebar's tag counts (`bleve.NewFacetRequest("TagSlugs", maxFacetTags)`, `internal/cache/search.go`). Distinct from `tagUniverse` (below): a facet only ever counts *the current search's matches*. The sidebar orders them by raw count on the unfiltered front page, and by *lift* once a query or filter narrows the results: how much more common a tag is among the matches than in the whole catalog (`Cache.liftTags`, `internal/cache/search.go`). Raw count would show the same catalog-wide favorites (`2d`, `pixel-art`) for every search. A tag needs at least `max(3, 1%)` of the matches, and a tag on every match is dropped.
 
 ### FirstSeen
 

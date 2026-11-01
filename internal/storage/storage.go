@@ -53,6 +53,9 @@ const (
 	// the crawl-coverage file, and the two mean entirely different things.
 	TrafficFileName = "traffic.json"
 	HistoryFileName = "history.json"
+	// FirstSeenFileName is the persistent id -> first-seen map; see
+	// FirstSeenMap.
+	FirstSeenFileName = "firstseen.json"
 
 	// IndexDirName is the published bleve index. stagingIndexDirName is where a
 	// new one is built; it lives alongside so that publishing is a rename
@@ -400,6 +403,42 @@ func GetTraffic() (models.Traffic, error) {
 		return models.Traffic{}, err
 	}
 	return t, nil
+}
+
+// FirstSeenRecord is what is remembered about one asset id between crawls.
+type FirstSeenRecord struct {
+	// FirstSeen is when the id first appeared. The zero time means it predates
+	// the feature, and must stay zero: old stock is never relabeled as new.
+	FirstSeen time.Time `json:"firstSeen"`
+	// Missed counts the consecutive published crawls that did not contain the
+	// id. A crawl that misses an asset (a rate-limited page, a transient
+	// error) must not make it look new when a later crawl sees it again, so an
+	// id is forgotten only after it has been absent for several in a row.
+	Missed int `json:"missed,omitempty"`
+}
+
+// FirstSeenMap is the id -> FirstSeenRecord map kept in firstseen.json. It
+// outlives any one assets.json: the previous publish alone cannot tell an
+// asset that was missed once from one that is genuinely new.
+type FirstSeenMap map[string]FirstSeenRecord
+
+// PutFirstSeen persists the map atomically, like every other data file.
+func PutFirstSeen(m FirstSeenMap) error { return writeJSON(FirstSeenFileName, m) }
+
+// GetFirstSeen returns the stored map. A missing file is normal (first run, or
+// a volume from before the file existed) and is reported as an error wrapping
+// os.ErrNotExist. A file that exists but does not parse is moved aside, as
+// GetTraffic does, and reported as an ordinary error; the caller falls back to
+// assets.json, whose FirstSeen values it also carries.
+func GetFirstSeen() (FirstSeenMap, error) {
+	var m FirstSeenMap
+	if _, err := readJSON(FirstSeenFileName, &m); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			renameCorruptAside(FirstSeenFileName)
+		}
+		return nil, err
+	}
+	return m, nil
 }
 
 // maxHistoryEntries caps history.json at roughly two years of weekly crawls.

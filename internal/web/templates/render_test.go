@@ -427,15 +427,16 @@ func TestCoverageNeverExceedsAHundredPercent(t *testing.T) {
 }
 
 func TestMoreResultsAreReachableWithoutScrolling(t *testing.T) {
-	// "revealed" only fires for someone scrolling a viewport. As a bare sentinel
-	// div this left keyboard and screen-reader users unable to reach anything
+	// A scroll trigger only fires for someone scrolling a viewport. As a bare
+	// sentinel div this left keyboard and screen-reader users unable to reach anything
 	// past the first page at all.
 	more := sampleResults()
 	more.HasMore = true
 	html := render(t, AssetPage(Filters{}.WithTag("2d"), more))
 
 	assert.Contains(t, html, "Load more results", "it must be operable, not just observable")
-	assert.Contains(t, html, `hx-trigger="revealed, click"`)
+	assert.Contains(t, html, `hx-trigger="intersect, click"`, "htmx 1.9 never fires 'revealed, click' on scroll")
+	assert.Contains(t, html, `hx-sync="closest .search-page:drop"`, "scroll paging must not cancel a filter request")
 	assert.Contains(t, html, `href="/?page=2&amp;tags=2d"`, "and a real link with scripting off")
 }
 
@@ -486,9 +487,12 @@ func TestArrivalsPageRendersCardsNewestFirst(t *testing.T) {
 	age := NewFreshness(time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), 0)
 	html := render(t, ArrivalsPage(assets, money.Fallback(), age))
 
-	assert.Contains(t, html, "New this week")
+	assert.Contains(t, html, "Newest arrivals")
+	assert.NotContains(t, html, "this week", "the list spans crawls, so it does not claim a week")
+	assert.Contains(t, html, "across all crawls")
 	assert.Contains(t, html, "Freshly Arrived")
-	assert.Contains(t, html, "2 days ago", "the window is stated from the actual crawl time, not asserted blindly")
+	assert.Contains(t, html, "latest crawl completed")
+	assert.Contains(t, html, "2 days ago", "the date of the latest crawl comes from the actual crawl time")
 }
 
 func TestArrivalsPageExplainsAnEmptyIndex(t *testing.T) {
@@ -805,7 +809,7 @@ func TestSearchBoxAndCurrencyFormCarryDifferentFields(t *testing.T) {
 	assert.Contains(t, bar, `name="author" value="ana"`)
 	assert.Contains(t, bar, `name="cur" value="EUR"`)
 	assert.NotContains(t, bar, `name="like"`, "a typed search is a new intent, not a refinement of similar-to")
-	assert.NotContains(t, bar, `name="sort"`)
+	assert.Contains(t, bar, `name="sort" value="title"`, "a chosen ordering outlives a new search")
 	assert.Equal(t, 1, strings.Count(bar, `name="q"`), "the box owns q")
 
 	cur := render(t, CurrencyControl(f, money.Fallback()))
@@ -813,6 +817,14 @@ func TestSearchBoxAndCurrencyFormCarryDifferentFields(t *testing.T) {
 	assert.Contains(t, cur, `name="like" value="7"`)
 	assert.Contains(t, cur, `name="sort" value="title"`)
 	assert.NotContains(t, cur, `<input type="hidden" name="cur"`, "the select owns cur")
+}
+
+func TestAPageBeyondTheEndOffersAWayBackToPageOne(t *testing.T) {
+	html := render(t, AssetPage(Filters{Query: "x"}, Results{Page: 4}))
+
+	assert.Contains(t, html, "No more results")
+	assert.Contains(t, html, `href="/?q=x"`, "page one is the implicit page")
+	assert.NotContains(t, html, "No assets match", "the search itself did match")
 }
 
 func TestEmptySearchSuggestsABroaderTermNotTheSidebar(t *testing.T) {

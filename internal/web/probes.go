@@ -29,7 +29,7 @@ type probeRecord struct {
 // shell scanner asks for - captured from real sweeps against this origin.
 // Mirrors the Cloudflare WAF custom rule that blocks the same traffic at the
 // edge; this is the backstop for whatever reaches the origin directly, such
-// as the LAN-published port. Two plain slices and HasPrefix/HasSuffix,
+// as the loopback-published port. Two plain slices and HasPrefix/HasSuffix,
 // deliberately no regexp, so the list stays short enough to audit against the
 // routing table by eye.
 var (

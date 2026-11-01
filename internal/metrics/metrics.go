@@ -18,6 +18,7 @@
 package metrics
 
 import (
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -137,13 +138,14 @@ func (c *Counters) restoreDays(days [daysKept]models.DayBucket, now time.Time) {
 // RecordRequest tallies one completed request. routePattern comes from chi's
 // route table (chi.RouteContext(r.Context()).RoutePattern(), read after
 // dispatch), so an attacker cannot mint a label by requesting an arbitrary
-// path - anything that did not match a route arrives here as "". filtered is
-// r.URL.RawQuery != "", a boolean derived and discarded; the query text
-// itself is never stored anywhere in this package.
+// path - anything that did not match a route arrives here as "". search says
+// whether the request asked for a first page of results narrowed by a query or
+// a filter (the caller decides; see web.isSearchRequest), a boolean derived and
+// discarded; the query text itself is never stored anywhere in this package.
 //
 // A nil receiver is a no-op, so the request path can call this unconditionally
 // even where a *Counters is optional.
-func (c *Counters) RecordRequest(routePattern string, filtered bool, status int) {
+func (c *Counters) RecordRequest(routePattern string, search bool, status int) {
 	if c == nil {
 		return
 	}
@@ -176,12 +178,15 @@ func (c *Counters) RecordRequest(routePattern string, filtered bool, status int)
 		c.other.Add(1)
 	}
 
-	// A search is a query actually answered against the catalog, not merely
-	// a hit on a route that can carry one - "/", "/results" and "/tag/{slug}"
-	// (a filtered browse via its own query string, such as ?page=2 or a
-	// currency choice) all render results, and a failed lookup (503 while the
-	// index loads, 400 on a bad page) served nothing to count.
-	if filtered && status < 400 &&
+	// A search is a query actually answered against the catalog: a 200 (not a
+	// 3xx canonical redirect, which is followed by the request that does the
+	// work, nor a 503 while the index loads or a 400) for the first page of
+	// results narrowed by a query or a filter. Load-more pages and a bare
+	// currency or sort change are the same search continued or re-displayed,
+	// and the caller has already left them out of search. "/", "/results" and
+	// "/tag/{slug}" are the routes that render results. The daily grid below
+	// is bumped in the same branch, so it and the total share one definition.
+	if search && status == http.StatusOK &&
 		(routePattern == routeIndex || routePattern == routeResults || routePattern == routeTag) {
 		c.searches.Add(1)
 		c.bumpDay(time.Now())

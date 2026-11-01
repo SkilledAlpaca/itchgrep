@@ -351,6 +351,11 @@ a:hover {
 
 /* ---------------------------------------------------------------- search  */
 
+/* Only hidden inputs live in it; it must not become a flex item with a gap. */
+.search-filters {
+  display: contents;
+}
+
 .searchbar {
   position: sticky;
   top: 0;
@@ -419,10 +424,26 @@ a:hover {
   display: block;
 }
 
-/* app.js marks the region busy while a swap is pending. */
+/* app.js marks the region busy while a swap is pending. Dimmed as well as
+ * given a progress cursor: on a touch screen there is no cursor, and a tap
+ * that shows nothing happening gets tapped again. */
+.results-region {
+  transition: opacity 0.15s ease-out;
+}
+
+.results-region[aria-busy="true"] {
+  opacity: 0.55;
+}
+
 .results-region[aria-busy="true"],
 .results-region[aria-busy="true"] a {
   cursor: progress;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .results-region {
+    transition: none;
+  }
 }
 
 @keyframes spin {
@@ -621,6 +642,41 @@ a:hover {
   background: var(--accent);
 }
 
+/* The press itself, so a tap shows it landed before the response does. Not
+ * for the capped facet, which is not a link. */
+a.facet:active {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+a.facet:active .facet-count {
+  color: inherit;
+}
+
+.facet-exclude:active {
+  color: var(--accent-contrast);
+  background: var(--warn);
+}
+
+/* Phone-sized targets (WCAG 2.5.8 asks 24px; 44px is what a thumb needs).
+ * Each row grows, and the gap between the tag and its exclude control widens,
+ * so a near miss lands on the row's own padding rather than the other action. */
+@media (max-width: 900px) {
+  .facet-list li {
+    gap: 0.8rem;
+  }
+
+  .facet {
+    align-items: center;
+    min-height: 4.4rem;
+  }
+
+  .facet-exclude {
+    min-width: 4.4rem;
+    min-height: 4.4rem;
+  }
+}
+
 /* At the tag cap the facet is plain text, since a link would lead to the page
  * it is on. Muted and with no hover state, so it does not look clickable. */
 .facet.is-capped {
@@ -720,6 +776,11 @@ a:hover {
 }
 
 .segment.is-active {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+a.segment:active {
   color: var(--accent-contrast);
   background: var(--accent);
 }
@@ -1433,6 +1494,10 @@ a:hover {
 
   .segment {
     flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 4.4rem;
     text-align: center;
     background: var(--bg);
     border-right: 0;

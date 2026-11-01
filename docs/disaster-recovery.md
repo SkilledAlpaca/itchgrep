@@ -12,7 +12,7 @@ This document assumes no prior familiarity with Docker or backup tooling. Every 
 | Site loads, but search shows "no data yet" / every search returns `503` | No crawl has ever published (expected on a brand-new deployment) or every crawl since has failed | `crawler.log` under `LOG_EXPORT_DIR` for dataservice errors; `/stats` page's coverage figure |
 | Search works, but `/new` is empty or results look stale | The scheduled crawl hasn't successfully published in a while (`CRAWL_INTERVAL` elapsed with no success), or the coverage gate is rejecting every run | `history.json`'s latest entries (via `/stats`); `crawler.log` for `"Coverage ... below COVERAGE_FLOOR"` |
 | Site stays on `503` although crawls have published | `index.bleve/` is corrupted and the automatic self-heal is failing, or `/data` isn't writable by uid 65532 | `curl http://127.0.0.1:62686/readyz` (`503 no data` confirms); `crawler.log` for `"Self-heal rebuild"` lines or permission errors; see "Index corruption" below |
-| The public site is unreachable but the LAN address (`http://<host>:62686`) works fine | Cloudflare-side problem specifically — tunnel disconnected, DNS issue, account issue | `docker logs` on the `cloudflared` container; Cloudflare dashboard |
+| The public site is unreachable but the local address (`http://127.0.0.1:62686`, from the host) works fine | Cloudflare-side problem specifically — tunnel disconnected, DNS issue, account issue | `docker logs` on the `cloudflared` container; Cloudflare dashboard |
 | Host disk filling up unexpectedly | `index.bleve/` growth (the largest thing under `/data`) or logs not actually rotating | `df -h` on the Unraid host; confirm `scripts/export-logs.sh`'s logrotate reinstall is actually running — see [docs/observability.md](observability.md) |
 
 For the full request-log-based signal set (what a normal `503` looks like vs. a real outage), see [docs/observability.md](observability.md).
@@ -25,7 +25,8 @@ Everything itchgrep persists lives under one directory (`/data` inside the conta
 |---|---|---|
 | `index.bleve/` (the search index) | **Yes, fully** | The dataservice self-heals it automatically at startup if it's missing or corrupt, rebuilding from `assets.json` in minutes with no crawl needed — see "Index corruption" below. |
 | `assets.json` — the asset list itself | **Mostly** | A fresh crawl of itch.io rebuilds it from scratch. |
-| `assets.json` — the `FirstSeen` timestamp on each asset | **No** | `FirstSeen` is carried forward, id by id, from the previous publish (`stampFirstSeen` in `cmd/dataservice/main.go`). A crawl run with no prior `assets.json` to carry it forward from stamps *everything* it finds as newly arrived at that moment — permanently losing every asset's true arrival date. This is what powers `/new` and the Atom feed. |
+| `assets.json` — the `FirstSeen` timestamp on each asset | **No** | `FirstSeen` is carried forward, id by id, from `firstseen.json` and the previous publish (`stampFirstSeen` in `cmd/dataservice/main.go`). A crawl run with neither to carry it forward from stamps *everything* it finds as newly arrived at that moment — permanently losing every asset's true arrival date. This is what powers `/new` and the Atom feed. |
+| `firstseen.json` (id → first-seen map) | **No** | The memory of each asset's arrival date across crawls; an id missed by a crawl keeps its date until 6 consecutive crawls miss it. If it is lost or corrupt, the next crawl rebuilds it from `assets.json`'s `FirstSeen` values (a corrupt file is kept as `firstseen.json.corrupt-<unix>`). Losing it together with `assets.json` resets every arrival date. |
 | `tags.json` (cached tag vocabulary) | **Yes** | Rediscovered automatically once `TAG_CACHE_MAX_AGE` (default 168h) elapses, or immediately if the file is simply missing. Costs several hundred extra itch.io requests to rebuild — a performance cost, not a data-loss risk. |
 | `rates.json` (exchange-rate snapshot) | **Yes** | Refetched from the European Central Bank on every crawl; falls back to a baked-in table if unavailable. See [docs/dependencies.md](dependencies.md). |
 | `stats.json` (crawl coverage) | **Yes** | Rewritten every crawl; describes only the current publish, carries no history of its own. |
@@ -33,7 +34,7 @@ Everything itchgrep persists lives under one directory (`/data` inside the conta
 | `history.json` (per-crawl record, up to ~2 years) | **No** | Append-only; nothing else recreates lost entries. |
 | `traffic.json` (visitor traffic counters and the 90-day daily search ring) | **No** | Accumulated since counting began; nothing else recreates lost counts. |
 
-**In short: back up `assets.json`, `tags.json`, `rates.json`, `stats.json`, `history.json`, and `traffic.json`. Skip `checkpoint.json` and `index.bleve/`.**
+**In short: back up `assets.json`, `firstseen.json`, `tags.json`, `rates.json`, `stats.json`, `history.json`, and `traffic.json`. Skip `checkpoint.json` and `index.bleve/`.**
 
 ## Backup
 
@@ -58,10 +59,10 @@ Run this **on the Unraid host**, from any directory:
 ```
 tar -czf /mnt/user/appdata/itchgrep/data-backup-$(date +%Y%m%d-%H%M).tar.gz \
   -C /mnt/user/appdata/itchgrep/data \
-  assets.json tags.json rates.json stats.json history.json traffic.json
+  assets.json firstseen.json tags.json rates.json stats.json history.json traffic.json
 ```
 
-This creates a single compressed archive containing exactly the six files worth keeping, named with the current date and time so successive backups don't overwrite each other. Adjust the first path (where the archive is written) if you have a dedicated backup location — see the note below.
+This creates a single compressed archive containing exactly the seven files worth keeping, named with the current date and time so successive backups don't overwrite each other. Adjust the first path (where the archive is written) if you have a dedicated backup location — see the note below.
 
 **NOT TESTED** — this repository has never actually been backed up or restored end to end; the command above is derived directly from `internal/storage`'s file names and the atomicity analysis above, not verified against a live restore.
 

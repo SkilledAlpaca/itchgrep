@@ -1,6 +1,7 @@
 package web
 
 import (
+	"container/list"
 	"net"
 	"net/http"
 	"sync"
@@ -30,6 +31,9 @@ var TrustProxyHeaders = sync.OnceValue(func() bool {
 type bucket struct {
 	tokens float64
 	last   time.Time
+	// elem is this bucket's place in Limiter.order, for O(1) recency updates
+	// and eviction.
+	elem *list.Element
 }
 
 // maxBuckets caps how many distinct identities Limiter tracks at once.
@@ -43,19 +47,19 @@ type bucket struct {
 // to bound an attacker, not to constrain legitimate use.
 const maxBuckets = 50_000
 
-// overflowBucketKey is the single shared bucket every identity past
-// maxBuckets draws from once the map is full. Sharing one bucket rather than
-// rejecting outright means the map still cannot grow further, and every
-// identity past the cap is limited together - more aggressively than any one
-// of them would be alone, which is the correct direction to fail in when the
-// map is this close to capacity.
-const overflowBucketKey = "\x00overflow"
+// overflowLogEvery bounds how often a full bucket table is reported. A flood
+// that fills the table keeps it full, so every new identity would otherwise
+// write a line.
+const overflowLogEvery = time.Minute
 
 // Limiter allows burst requests immediately and rate per second thereafter,
 // counted per client.
 type Limiter struct {
 	mu      sync.Mutex
 	buckets map[string]*bucket
+	// order holds the keys of buckets, most recently used first. When the
+	// table is full the back one is evicted: O(1), no scan of the map.
+	order *list.List
 
 	rate  float64
 	burst float64
@@ -72,6 +76,11 @@ type Limiter struct {
 	// internet shares one bucket.
 	trustProxy   bool
 	trustedCIDRs []*net.IPNet
+
+	// evicted counts buckets dropped to make room since the table filled up,
+	// and lastFullLog is when that was last reported. Both are guarded by mu.
+	evicted     uint64
+	lastFullLog time.Time
 }
 
 // NewLimiter reads its configuration from the environment: RATE_LIMIT_RPS
@@ -82,6 +91,7 @@ type Limiter struct {
 func NewLimiter() *Limiter {
 	l := &Limiter{
 		buckets:      make(map[string]*bucket),
+		order:        list.New(),
 		rate:         config.EnvFloat("RATE_LIMIT_RPS", 5),
 		burst:        config.EnvFloat("RATE_LIMIT_BURST", 20),
 		trustProxy:   TrustProxyHeaders(),
@@ -105,7 +115,7 @@ func (l *Limiter) evictLoop() {
 		l.mu.Lock()
 		for k, b := range l.buckets {
 			if b.last.Before(cutoff) {
-				delete(l.buckets, k)
+				l.drop(k, b)
 			}
 		}
 		l.mu.Unlock()
@@ -116,7 +126,21 @@ func (l *Limiter) evictLoop() {
 // derivation itself lives in ClientIP - so ratelimit_test.go keeps working
 // unchanged.
 func (l *Limiter) client(r *http.Request) string {
-	return ClientIP(r, l.trustProxy, l.trustedCIDRs)
+	return limiterKey(ClientIP(r, l.trustProxy, l.trustedCIDRs))
+}
+
+// limiterKey is the bucket an address draws from. An IPv4 address is its own
+// bucket. An IPv6 address is reduced to its /64: a single subscriber is
+// normally handed at least that much and can vary the low 64 bits at will, so
+// keying on the full address would let one machine mint a fresh bucket per
+// request - which is how the table gets flooded in the first place. The access
+// log anonymizes separately (AnonymizeIP) and is unaffected.
+func limiterKey(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() != nil {
+		return ip
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // allow reports whether this client may make a request now.
@@ -129,24 +153,35 @@ func (l *Limiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if l.order == nil {
+		l.order = list.New()
+	}
 	b := l.buckets[key]
 	if b == nil {
 		if len(l.buckets) >= maxBuckets {
-			// The map is already at its ceiling: rather than let one more
-			// identity grow it further (or reject the request outright, which
-			// would turn hitting the cap into its own denial of service), this
-			// identity shares the single overflow bucket every other identity
-			// past the cap also shares - see overflowBucketKey.
-			key = overflowBucketKey
-			if ob := l.buckets[key]; ob != nil {
-				b = ob
+			// The table is full: make room by evicting the bucket used least
+			// recently, and give this identity a fresh one. Not a shared
+			// overflow bucket, which a flood of minted identities could drain
+			// to lock real newcomers out; and not failing open, which would
+			// let those identities through unlimited.
+			//
+			// An evicted identity that comes back gets a fresh full bucket,
+			// which is the price of a bounded table. It cannot be exploited
+			// to exceed the rate: to be evicted an identity must go
+			// unused while maxBuckets others are touched, and each of those
+			// is itself limited at the same rate.
+			if oldest := l.order.Back(); oldest != nil {
+				k := oldest.Value.(string)
+				l.drop(k, l.buckets[k])
 			}
+			l.noteFull(now)
 		}
-		if b == nil {
-			l.buckets[key] = &bucket{tokens: l.burst - 1, last: now}
-			return true
-		}
+		b = &bucket{tokens: l.burst - 1, last: now}
+		b.elem = l.order.PushFront(key)
+		l.buckets[key] = b
+		return true
 	}
+	l.order.MoveToFront(b.elem)
 
 	b.tokens += now.Sub(b.last).Seconds() * l.rate
 	if b.tokens > l.burst {
@@ -159,6 +194,25 @@ func (l *Limiter) allow(key string) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// drop removes one bucket from the table. Caller holds l.mu.
+func (l *Limiter) drop(key string, b *bucket) {
+	delete(l.buckets, key)
+	if b != nil && b.elem != nil {
+		l.order.Remove(b.elem)
+	}
+}
+
+// noteFull records an eviction forced by a full table and, at most once per
+// overflowLogEvery, says so. Caller holds l.mu.
+func (l *Limiter) noteFull(now time.Time) {
+	l.evicted++
+	if now.Sub(l.lastFullLog) < overflowLogEvery {
+		return
+	}
+	l.lastFullLog = now
+	logging.Warning("Rate limiter table is full (%d identities): evicting the least recently used bucket for each new identity (%d evictions so far)", maxBuckets, l.evicted)
 }
 
 // RateLimitedGroupMarker is a no-op middleware - it changes nothing about

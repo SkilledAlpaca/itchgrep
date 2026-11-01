@@ -38,7 +38,7 @@ func HandleHealthz(w http.ResponseWriter, r *http.Request) {
 func (h *handler) HandleReadyz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if h.cache.DataUpdatedTime().IsZero() {
+	if h.cache.DataUpdatedTime().IsZero() || !h.cache.Ready() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("no data"))
 		return

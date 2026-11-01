@@ -22,6 +22,10 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 document.addEventListener('input', function (e) {
 	var box = e.target.closest('[data-facet-search]');
 	if (!box) return;
+	filterFacets(box);
+});
+
+function filterFacets(box) {
 	var needle = box.value.trim().toLowerCase();
 	var list = box.parentNode.querySelectorAll('[data-facet]');
 	for (var i = 0; i < list.length; i++) {
@@ -30,7 +34,7 @@ document.addEventListener('input', function (e) {
 			? list[i].hasAttribute('data-facet-tail')
 			: slug.indexOf(needle) === -1;
 	}
-});
+}
 
 // Spelled out as getDate/getMonth/etc rather than toLocaleString: those
 // read in whatever zone the browser is already in, with no Intl call and
@@ -384,7 +388,7 @@ document.addEventListener('htmx:afterSwap', function (evt) {
 	var root = evt.target || document;
 	localizeTimestamps(root);
 	applySavedState(root);
-	syncFacets(root);
+	restoreFacetState(root);
 	moveFocusAfterSwap(root);
 });
 
@@ -487,9 +491,81 @@ if (NARROW) {
 // state from painting first.
 syncFacets(document);
 
+// A swap replaces the whole sidebar with one the server rendered open and with
+// an empty "find a tag" box. Folding it again after every swap cost a second
+// tap on every other tag pick, and clearing the box threw away what was being
+// looked for - so the state the visitor left it in is carried across. The
+// server's open state is only right for the initial render and for width
+// changes, which is where syncFacets runs.
+var facetState = null;
+
+document.addEventListener('htmx:beforeSwap', function (evt) {
+	if (!evt.detail.target || evt.detail.target.id !== 'results-region') return;
+	var details = document.querySelector('.facets-details');
+	var box = document.querySelector('[data-facet-search]');
+	facetState = {
+		open: details ? details.open : null,
+		needle: box ? box.value : ''
+	};
+});
+
+function restoreFacetState(root) {
+	if (root.id !== 'results-region') return;
+	var state = facetState;
+	facetState = null;
+	if (!state) return;
+	var details = root.querySelector('.facets-details');
+	if (details && state.open !== null) details.open = state.open;
+	var box = root.querySelector('[data-facet-search]');
+	if (box && state.needle) {
+		box.value = state.needle;
+		filterFacets(box);
+	}
+}
+
 // Going back restores a saved copy of the page. htmx took that snapshot during a
 // swap, so the region was still marked busy and the sidebar was open; reset both.
 document.addEventListener('htmx:historyRestore', function () {
 	setResultsBusy(false);
 	syncFacets(document);
+});
+
+// ----------------------------------------------------------- search box --
+//
+// The search box sits outside the swapped region so typing and focus survive
+// a swap, which means a swap cannot update it. The fragment carries the query
+// in #search-filters (data-query); copy it in unless the visitor is in the
+// box, or has typed something not yet submitted: tapping a filter moves focus
+// off the box, and throwing away what they were typing would be worse than
+// leaving the box a little behind the results.
+var queryDirty = false;
+
+document.addEventListener('input', function (e) {
+	if (e.target && e.target.id === 'query-input') queryDirty = true;
+});
+
+document.addEventListener('submit', function (e) {
+	if (e.target && e.target.classList && e.target.classList.contains('searchbar')) queryDirty = false;
+});
+
+function syncQueryInput() {
+	var input = document.getElementById('query-input');
+	var filters = document.getElementById('search-filters');
+	if (!input || !filters || queryDirty || document.activeElement === input) return;
+	var q = filters.getAttribute('data-query');
+	if (q !== null && input.value !== q) input.value = q;
+}
+
+document.addEventListener('htmx:afterSwap', function (evt) {
+	if (evt.target && evt.target.id === 'results-region') syncQueryInput();
+});
+
+// A history snapshot is the page's HTML, and HTML does not keep what was typed
+// into a text box, so the box would come back empty beside results for the
+// old query. The restored address is the truth.
+document.addEventListener('htmx:historyRestore', function () {
+	var input = document.getElementById('query-input');
+	if (!input) return;
+	queryDirty = false;
+	input.value = new URLSearchParams(window.location.search).get('q') || '';
 });

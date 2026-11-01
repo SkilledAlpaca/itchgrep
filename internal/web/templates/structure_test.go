@@ -96,6 +96,33 @@ func TestFragmentUpdatesTheStatusOutOfBandAndCarriesTheTitle(t *testing.T) {
 	assert.Contains(t, html, `class="results-main"`)
 }
 
+func TestFirstPageFragmentRefreshesTheSearchBoxFilters(t *testing.T) {
+	// The search box lives outside the swapped region, so without this the next
+	// submitted search would carry the filters the page first loaded with.
+	f := Filters{Query: "knight", Sort: models.SortTitle, Currency: "EUR", Price: models.PricingFree, Like: "9"}.
+		WithTag("pixel-art").WithNotTag("3d")
+	html := render(t, ResultsFragment(f, sampleResults()))
+
+	start := strings.Index(html, `<div id="search-filters"`)
+	require.GreaterOrEqual(t, start, 0)
+	block := html[start : start+strings.Index(html[start:], "</div>")]
+	assert.Contains(t, block, `hx-swap-oob="true"`)
+	assert.Contains(t, block, `data-query="knight"`)
+	for _, want := range []string{
+		`name="tags" value="pixel-art"`, `name="not" value="3d"`, `name="price" value="free"`,
+		`name="sort" value="title"`, `name="cur" value="EUR"`,
+	} {
+		assert.Contains(t, block, want)
+	}
+	assert.NotContains(t, block, `name="like"`)
+	assert.NotContains(t, block, `name="q"`)
+
+	// Later pages are cards alone: they change no filter.
+	later := sampleResults()
+	later.Page = 2
+	assert.NotContains(t, render(t, AssetPage(f, later)), "search-filters")
+}
+
 func TestRegionAloneHasNoTitleOrOutOfBandNode(t *testing.T) {
 	// ResultsRegion is also rendered inside the full page, where either would
 	// be a duplicate.
@@ -164,4 +191,14 @@ func TestNotReadyNoticeGivesNoOperatorAdvice(t *testing.T) {
 	html := render(t, NotReady())
 	assert.NotContains(t, html, "docker")
 	assert.Contains(t, html, "being built")
+}
+
+func TestFilterRequestsReplaceEachOtherAndScrollPagingNeverCancelsThem(t *testing.T) {
+	// Without hx-sync two quick taps race and the slower response wins. The
+	// page's own requests replace each other; the load-more trigger yields.
+	assert.Contains(t, pageHTML(t, Shell{Search: true}), `hx-sync="this:replace"`)
+
+	more := sampleResults()
+	more.HasMore = true
+	assert.Contains(t, render(t, AssetPage(Filters{}, more)), `hx-sync="closest .search-page:drop"`)
 }

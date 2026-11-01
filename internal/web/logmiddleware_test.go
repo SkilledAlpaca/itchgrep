@@ -160,3 +160,61 @@ func TestRequestLoggerEmitsAccessRecordWithoutTheQueryValue(t *testing.T) {
 		assert.False(t, strings.Contains(out, "1.2.3.4"), "the full client IP must never reach the log")
 	}
 }
+
+func TestOnlyAFirstPageNarrowedByAQueryOrFilterIsASearch(t *testing.T) {
+	for target, want := range map[string]bool{
+		"/?q=sword":                  true,
+		"/results?tags=2d&page=1":    true,
+		"/?price=free":               true,
+		"/?author=ana":               true,
+		"/?like=12":                  true,
+		"/?not=3d":                   true,
+		"/":                          false,
+		"/?cur=EUR":                  false,
+		"/?sort=title":               false,
+		"/?cur=EUR&sort=title":       false,
+		"/results?q=sword&page=2":    false,
+		"/results?tags=2d&page=3":    false,
+		"/?q=%20":                    false,
+		"/results?q=&cur=EUR&page=1": false,
+	} {
+		assert.Equal(t, want, isSearchRequest(httptest.NewRequest(http.MethodGet, target, nil), "/results"), target)
+	}
+}
+
+func htmxRequest(target, current string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("HX-Current-URL", "http://example.test"+current)
+	return r
+}
+
+func TestARedisplayOfTheSamePageIsNotANewSearch(t *testing.T) {
+	// The currency and sort controls re-request /results with the page's own
+	// narrowing plus one extra parameter.
+	cur := "/?q=knight&tags=2d,pixel-art"
+	assert.False(t, isSearchRequest(htmxRequest("/results?q=knight&tags=2d%2Cpixel-art&cur=EUR&page=1", cur), "/results"), "currency change")
+	assert.False(t, isSearchRequest(htmxRequest("/results?q=knight&sort=title&tags=pixel-art&tags=2d&page=1", cur), "/results"), "sort change, tags in another order")
+	assert.True(t, isSearchRequest(htmxRequest("/results?q=sword&tags=2d%2Cpixel-art&page=1", cur), "/results"), "a new query")
+	assert.True(t, isSearchRequest(htmxRequest("/results?q=knight&tags=2d%2Cpixel-art%2Cicons&page=1", cur), "/results"), "a tag tap")
+	assert.True(t, isSearchRequest(htmxRequest("/results?q=knight&page=1", cur), "/results"), "a chip removed still narrows")
+	assert.True(t, isSearchRequest(htmxRequest("/results?tags=2d&page=1", "/"), "/results"), "the first tap from the front page")
+}
+
+func TestAFullPageLoadIgnoresTheHXHeaders(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/?q=knight&cur=EUR", nil)
+	r.Header.Set("HX-Current-URL", "http://example.test/?q=knight")
+	assert.True(t, isSearchRequest(r, "/"), "no HX-Request: a reload or shared link")
+}
+
+func TestTagPagesCountWhateverTheirQueryString(t *testing.T) {
+	for target, want := range map[string]bool{
+		"/tag/pixel-art":           true,
+		"/tag/pixel-art?cur=EUR":   true,
+		"/tag/pixel-art?q=ignored": true,
+		"/tag/pixel-art?page=1":    true,
+		"/tag/pixel-art?page=2":    false,
+	} {
+		assert.Equal(t, want, isSearchRequest(httptest.NewRequest(http.MethodGet, target, nil), "/tag/{slug}"), target)
+	}
+}

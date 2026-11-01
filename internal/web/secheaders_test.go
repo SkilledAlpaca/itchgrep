@@ -10,7 +10,10 @@ import (
 
 func assertSecurityHeadersSet(t *testing.T, h http.Header) {
 	t.Helper()
-	assert.Equal(t, contentSecurityPolicy, h.Get("Content-Security-Policy"))
+	csp := h.Get("Content-Security-Policy")
+	assert.Equal(t, contentSecurityPolicy, csp)
+	assert.Contains(t, csp, "script-src 'self' https://static.cloudflareinsights.com;")
+	assert.Contains(t, csp, "connect-src 'self' https://cloudflareinsights.com;")
 	assert.Equal(t, "strict-origin-when-cross-origin", h.Get("Referrer-Policy"))
 	assert.Equal(t, "nosniff", h.Get("X-Content-Type-Options"))
 	assert.Equal(t, "same-origin", h.Get("Cross-Origin-Opener-Policy"))
@@ -50,4 +53,12 @@ func TestSecurityHeadersSetOnStaticAsset(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/static/app.css", nil))
 
 	assertSecurityHeadersSet(t, w.Header())
+}
+
+func TestScriptSrcHasNoNonceAndNoInlineAllowance(t *testing.T) {
+	// The HTML is edge-cached with its headers, so a nonce would be shared
+	// between visitors.
+	assert.NotContains(t, contentSecurityPolicy, "nonce-")
+	assert.NotContains(t, contentSecurityPolicy, "unsafe-inline")
+	assert.NotContains(t, contentSecurityPolicy, "unsafe-eval")
 }

@@ -32,7 +32,7 @@ this can't rot silently.
 ## Trust boundaries
 
 ```
-Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver:8080 (public port 62686)
+Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver:8080 (host port 127.0.0.1:62686, loopback-only)
                                                                  → dataservice:8080 (loopback-only port 62685)
 ```
 
@@ -47,17 +47,20 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
   firewall rule — there is no port to scan or forget to close. See
   [docs/infrastructure.md](docs/infrastructure.md#what-a-cloudflare-tunnel-is).
 - **The webserver.** Listens on `8080` inside its container, published on
-  host port `62686`. This is the only port meant to ever be reachable from
-  outside the host. It applies:
+  `127.0.0.1:62686` — loopback only, never `0.0.0.0`, so it is not reachable
+  from the LAN. Public traffic does not use it: `cloudflared` connects over
+  the compose network to `http://webserver:8080`. It applies:
   - **Per-client rate limiting** (`internal/web/ratelimit.go`) — a search is
     expensive (three disjunctions, two fuzzy, over the whole catalog), and
     nothing else in the request path pushes back. Probe traffic (below)
     draws from the same per-client budget as real requests, so an unlimited
     scanner sweep can't write to disk faster than a real client could be
-    served. The limiter's own identity map is capped at 50,000 entries with
-    a shared overflow bucket beyond that, so no identity source — a proxy
-    header, an IPv6 /64 worth of distinct socket addresses — can grow it
-    without bound.
+    served. IPv6 clients share one bucket per /64 (IPv4 clients get one per
+    address). The limiter's own identity map is capped at 50,000 entries;
+    beyond that, the least recently used bucket is evicted to make room for
+    each new identity (counted, with a log line at most once a minute), so no
+    identity source can grow the map without bound, and a flood of minted
+    identities cannot drain a shared budget or let anyone through unlimited.
   - **Proxy-header trust gated on `TRUSTED_PROXY_CIDRS`**
     (`internal/web/clientip.go`), defaulting under Compose to a single
     `/32` naming `cloudflared`'s own fixed address on the compose network,
@@ -78,14 +81,20 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
     lasts; probes past the budget still get the 404 and the aggregate count,
     but no per-request line. See
     [docs/observability.md](docs/observability.md).
-  - **A restrictive Content-Security-Policy** plus `Referrer-Policy`,
+  - **A restrictive Content-Security-Policy**, same-origin apart from two
+    Cloudflare Web Analytics allowances: `static.cloudflareinsights.com`
+    (script) and `cloudflareinsights.com` (connect). There is no script
+    nonce: Cloudflare edge-caches the HTML with its headers, so a nonce would
+    be shared by every visitor for the cache lifetime and be publicly
+    readable. Cloudflare's inline JavaScript Detections script therefore
+    stays blocked. The policy comes with `Referrer-Policy`,
     `X-Content-Type-Options`, and `Cross-Origin-Opener-Policy`
     (`internal/web/secheaders.go`). No `X-Frame-Options` (the CSP's
     `frame-ancestors 'none'` already covers it) and no HSTS at the origin
     (HSTS belongs at the Cloudflare edge — whether it is enabled there is not
     verifiable from this repository, see
     [docs/open-questions.md](docs/open-questions.md#4-full-cloudflare-account-inventory); the same binary also answers on a
-    plain-HTTP LAN port that must not be locked to HTTPS).
+    plain-HTTP port that must not be locked to HTTPS).
 - **The dataservice.** Listens on `8080` inside its container, published on
   **`127.0.0.1:62685`** — loopback only, never `0.0.0.0`
   (`docker-compose.yml`). Its `/trigger-fetch` endpoint takes **no

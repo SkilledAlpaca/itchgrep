@@ -117,3 +117,13 @@ func TestTagPageIsUnavailableBeforeTheCacheLoads(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code,
 		"an unloaded cache knows no tags, so every slug 404s rather than 503s - documented, not a bug to fix here")
 }
+
+func TestTagPagePastTheEndLinksBackToTheTagPage(t *testing.T) {
+	r := tagRouter(t)
+	w := get(t, r, "/tag/pixel-art?page=9")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, "No more results")
+	assert.Contains(t, body, `<a href="/tag/pixel-art">Back to the first page</a>`)
+}

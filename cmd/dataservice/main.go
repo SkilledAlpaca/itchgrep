@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"itchgrep/internal/config"
 	"itchgrep/internal/fetcher"
@@ -470,6 +471,20 @@ func checkCoverageFloor(coverage, floor float64) error {
 	return nil
 }
 
+// publishedIndexExists reports whether an index is already published, which
+// tells a first-ever publish from one that lost its history.
+func publishedIndexExists() bool {
+	fi, err := os.Stat(storage.IndexPath())
+	return err == nil && fi.IsDir()
+}
+
+// firstSeenHistoryLost reports whether this publish has no arrival history to
+// carry forward even though a previous publish evidently happened: neither the
+// map nor the previous assets.json yielded anything, but an index is published.
+func firstSeenHistoryLost(known storage.FirstSeenMap, previous []models.Asset) bool {
+	return known == nil && len(previous) == 0 && publishedIndexExists()
+}
+
 // publishCrawl builds the search index from assets and publishes it, then
 // writes assets.json - in that order, and only that order. The webserver
 // decides a new dataset is ready by watching assets.json's timestamp, so
@@ -483,7 +498,26 @@ func checkCoverageFloor(coverage, floor float64) error {
 // FirstSeen values before NewIndexedAsset - inside buildIndex - converts
 // this run's assets into index documents.
 func publishCrawl(assets, previousAssets []models.Asset) error {
-	stampFirstSeen(previousAssets, assets, time.Now().UTC())
+	known, err := storage.GetFirstSeen()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			logging.Info("No firstseen.json yet; seeding it from the last published assets.json")
+		} else {
+			// Loud on purpose: the map is the only memory of arrival dates
+			// that spans more than one crawl. The assets.json fallback below
+			// keeps /new from restamping the catalog, but a miss in the last
+			// crawl is no longer forgiven until the map is rebuilt.
+			logging.Error("firstseen.json is unreadable (%v); falling back to the FirstSeen values in assets.json", err)
+		}
+		known = nil
+	}
+	if firstSeenHistoryLost(known, previousAssets) {
+		// A published index means a previous publish happened, so an empty
+		// history here is lost history, not a first run. Every asset about to
+		// be stamped will look new on /new and in the feed.
+		logging.Error("FirstSeen history is lost: a published index exists, but neither firstseen.json nor the previous assets.json could be read. Every asset will be stamped as new in this publish.")
+	}
+	firstSeen := stampFirstSeen(known, previousAssets, assets, time.Now().UTC())
 
 	// Rates are refreshed here, at the end of a crawl, because that is the only
 	// moment the index is rebuilt - and PriceUSD is baked into the documents,
@@ -513,6 +547,13 @@ func publishCrawl(assets, previousAssets []models.Asset) error {
 		return fmt.Errorf("storage.PutAssets: %w", err)
 	}
 	logging.Info("Successfully stored assets")
+
+	// After the assets, so a map entry never claims a publish that did not
+	// happen. If this write fails the next crawl reads the stamps back out of
+	// assets.json, so it is logged but does not fail a publish that succeeded.
+	if err := storage.PutFirstSeen(firstSeen); err != nil {
+		logging.Error("Failed to store firstseen.json (arrival dates will be read from assets.json next time): %v", err)
+	}
 
 	return nil
 }
@@ -568,26 +609,62 @@ func recordCrawlCompletion(result crawlResult, previousAssets []models.Asset, c 
 	}
 }
 
-// stampFirstSeen carries FirstSeen forward from the previous publish, id by
-// id, and marks genuine newcomers with publishedAt.
+// firstSeenForgetAfter is how many consecutive published crawls may miss an
+// asset before its FirstSeen is forgotten. Crawls are partial by nature (rate
+// limits, pages that fail once), so an asset absent from one crawl is usually
+// still there; forgetting it at once made it "new" again, and /new and the
+// feed listed old assets as fresh arrivals.
+const firstSeenForgetAfter = 6
+
+// stampFirstSeen carries FirstSeen forward id by id and marks genuine
+// newcomers with publishedAt. It returns the map to persist.
 //
-// An id present in both publishes keeps whatever FirstSeen it already had,
-// including zero: old stock that predates this feature, or that arrived
-// before the previous publish ever recorded one, must never be relabeled as
-// new just because this happens to be the run that looked. Only an id absent
-// from the previous publish is a newcomer, so only those get stamped.
-func stampFirstSeen(previous, current []models.Asset, publishedAt time.Time) {
-	prevFirstSeen := make(map[string]time.Time, len(previous))
+// known is firstseen.json, which may be nil (first run, or a file that
+// failed to parse). previous is the last publish's assets.json: its FirstSeen
+// values fill in for any id the map lacks, which seeds the map on first run,
+// covers a crash between the two writes, and is the fallback for a corrupt
+// map. Only an id in neither is a newcomer, so a damaged map degrades to the
+// old behavior rather than restamping the catalog.
+//
+// An id present in both keeps whatever FirstSeen it already had, including
+// zero: old stock that predates this feature must never be relabeled as new
+// just because this happens to be the run that looked. An id absent from the
+// current crawl keeps its record with Missed incremented, and is pruned only
+// once it has been absent for firstSeenForgetAfter crawls in a row.
+func stampFirstSeen(known storage.FirstSeenMap, previous, current []models.Asset, publishedAt time.Time) storage.FirstSeenMap {
+	merged := make(storage.FirstSeenMap, len(known)+len(previous))
 	for _, a := range previous {
-		prevFirstSeen[a.GameId] = a.FirstSeen
+		merged[a.GameId] = storage.FirstSeenRecord{FirstSeen: a.FirstSeen}
 	}
+	for id, rec := range known {
+		merged[id] = rec
+	}
+
+	seen := make(map[string]struct{}, len(current))
 	for i := range current {
-		if fs, ok := prevFirstSeen[current[i].GameId]; ok {
-			current[i].FirstSeen = fs
+		id := current[i].GameId
+		seen[id] = struct{}{}
+		if rec, ok := merged[id]; ok {
+			current[i].FirstSeen = rec.FirstSeen
+			merged[id] = storage.FirstSeenRecord{FirstSeen: rec.FirstSeen}
 			continue
 		}
 		current[i].FirstSeen = publishedAt
+		merged[id] = storage.FirstSeenRecord{FirstSeen: publishedAt}
 	}
+
+	for id, rec := range merged {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		rec.Missed++
+		if rec.Missed >= firstSeenForgetAfter {
+			delete(merged, id)
+			continue
+		}
+		merged[id] = rec
+	}
+	return merged
 }
 
 // diffAssetIDs compares two publishes by game id, since that is the only

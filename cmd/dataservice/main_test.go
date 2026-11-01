@@ -3,6 +3,8 @@ package main
 import (
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -256,7 +258,7 @@ func TestStampFirstSeenMarksOnlyGenuineNewcomers(t *testing.T) {
 		{GameId: "brand-new"},
 	}
 
-	stampFirstSeen(previous, current, publishedAt)
+	stampFirstSeen(nil, previous, current, publishedAt)
 
 	byID := map[string]models.Asset{}
 	for _, a := range current {
@@ -271,16 +273,79 @@ func TestStampFirstSeenMarksOnlyGenuineNewcomers(t *testing.T) {
 }
 
 func TestStampFirstSeenWithNoPreviousPublishMarksEverythingNew(t *testing.T) {
-	// The very first publish after this feature ships, or after any publish
-	// that lost assets.json, has nothing to diff against.
+	// The very first publish has nothing to diff against.
 	publishedAt := time.Unix(9000, 0)
 	current := []models.Asset{{GameId: "a"}, {GameId: "b"}}
 
-	stampFirstSeen(nil, current, publishedAt)
+	stampFirstSeen(nil, nil, current, publishedAt)
 
 	for _, a := range current {
 		assert.Equal(t, publishedAt, a.FirstSeen)
 	}
+}
+
+func TestAnAssetMissedByOneCrawlKeepsItsFirstSeen(t *testing.T) {
+	original := time.Unix(1000, 0)
+	crawl1 := []models.Asset{{GameId: "a"}, {GameId: "b"}}
+	known := stampFirstSeen(nil, nil, crawl1, original)
+
+	// Crawl 2 misses "a". The previous publish (crawl 1's assets) had it,
+	// but crawl 3's previous publish (crawl 2's assets) will not.
+	crawl2 := []models.Asset{{GameId: "b"}}
+	known = stampFirstSeen(known, crawl1, crawl2, time.Unix(2000, 0))
+	assert.Equal(t, 1, known["a"].Missed)
+
+	crawl3 := []models.Asset{{GameId: "a"}, {GameId: "b"}}
+	known = stampFirstSeen(known, crawl2, crawl3, time.Unix(3000, 0))
+
+	assert.Equal(t, original, crawl3[0].FirstSeen, "seen again after one miss: not new")
+	assert.Equal(t, 0, known["a"].Missed, "a sighting resets the count")
+}
+
+func TestAnAssetIsForgottenOnlyAfterSixConsecutiveMisses(t *testing.T) {
+	known := stampFirstSeen(nil, nil, []models.Asset{{GameId: "a"}, {GameId: "b"}}, time.Unix(1000, 0))
+	for i := 1; i <= firstSeenForgetAfter; i++ {
+		known = stampFirstSeen(known, nil, []models.Asset{{GameId: "b"}}, time.Unix(1000+int64(i), 0))
+		if i < firstSeenForgetAfter {
+			assert.Contains(t, known, "a", "still remembered after %d misses", i)
+		}
+	}
+	assert.NotContains(t, known, "a")
+	assert.Contains(t, known, "b")
+}
+
+func TestACorruptMapDoesNotRestampTheCatalog(t *testing.T) {
+	// A map that failed to parse reaches stampFirstSeen as nil; assets.json
+	// still carries every FirstSeen, so nothing existing becomes new.
+	t.Setenv("DATA_DIR", t.TempDir())
+	require.NoError(t, os.WriteFile(filepath.Join(storage.Dir(), storage.FirstSeenFileName), []byte("{not json"), 0o644))
+
+	known, err := storage.GetFirstSeen()
+	require.Error(t, err)
+	assert.Nil(t, known)
+	matches, _ := filepath.Glob(filepath.Join(storage.Dir(), storage.FirstSeenFileName+".corrupt-*"))
+	assert.Len(t, matches, 1, "the damaged file is kept for inspection")
+
+	previous := []models.Asset{{GameId: "a", FirstSeen: time.Unix(1000, 0)}, {GameId: "b", FirstSeen: time.Unix(1500, 0)}}
+	current := []models.Asset{{GameId: "a"}, {GameId: "b"}, {GameId: "c"}}
+	stampFirstSeen(known, previous, current, time.Unix(9000, 0))
+
+	assert.Equal(t, time.Unix(1000, 0), current[0].FirstSeen)
+	assert.Equal(t, time.Unix(1500, 0), current[1].FirstSeen)
+	assert.Equal(t, time.Unix(9000, 0), current[2].FirstSeen, "only the real newcomer is stamped")
+}
+
+func TestFirstSeenMapRoundTripsAndKeepsZeroStamps(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	_, err := storage.GetFirstSeen()
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	m := storage.FirstSeenMap{"a": {FirstSeen: time.Unix(1000, 0)}, "old": {}}
+	require.NoError(t, storage.PutFirstSeen(m))
+	got, err := storage.GetFirstSeen()
+	require.NoError(t, err)
+	assert.True(t, got["old"].FirstSeen.IsZero(), "old stock stays unknown")
+	assert.True(t, got["a"].FirstSeen.Equal(time.Unix(1000, 0)))
 }
 
 func TestRecencyIsStampedOntoAssetsAtTheEnd(t *testing.T) {
@@ -348,4 +413,14 @@ func TestBackoffDelayNeverExceedsAShortInterval(t *testing.T) {
 	assert.Equal(t, interval, backoffDelay(1, interval))
 	assert.Equal(t, interval, backoffDelay(3, interval))
 	assert.Equal(t, interval, backoffDelay(4, interval))
+}
+
+func TestFirstSeenHistoryLostIsFlaggedOnlyWhenAnIndexWasAlreadyPublished(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	assert.False(t, firstSeenHistoryLost(nil, nil), "no index yet: a genuine first run")
+
+	require.NoError(t, os.MkdirAll(storage.IndexPath(), 0o755))
+	assert.True(t, firstSeenHistoryLost(nil, nil), "an index but no history anywhere")
+	assert.False(t, firstSeenHistoryLost(storage.FirstSeenMap{"a": {}}, nil), "the map survived")
+	assert.False(t, firstSeenHistoryLost(nil, []models.Asset{{GameId: "a"}}), "assets.json survived")
 }
