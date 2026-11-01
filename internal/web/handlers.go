@@ -492,6 +492,13 @@ not:
 		f.Sort = models.SortRecent
 	}
 
+	// Relevance means nothing without a query - every document scores the
+	// same - so the control shows "Popular" as active there. Dropping it lets
+	// the canonical redirect remove it from the address.
+	if f.Sort == models.SortRelevance && f.Query == "" {
+		f.Sort = ""
+	}
+
 	f.Currency = normalizeCurrency(q.Get("cur"), rates)
 
 	return f

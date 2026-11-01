@@ -756,3 +756,52 @@ func TestFingerprintedAssetsCountAsStaticTraffic(t *testing.T) {
 
 	assert.Equal(t, uint64(2), m.Snapshot().Static)
 }
+
+func TestRelevanceWithoutAQueryIsDroppedAndRedirected(t *testing.T) {
+	r, _ := newTestRouter()
+
+	w := get(t, r, "/?sort=relevance")
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "/", w.Header().Get("Location"))
+
+	// With a query relevance is the default, so it is dropped from the address
+	// as before; only the query remains.
+	w = get(t, r, "/?q=x&sort=relevance")
+	assert.Equal(t, "/?q=x", w.Header().Get("Location"))
+}
+
+func TestAPageBeyondTheLastRendersANoticeNotAnEmptyGrid(t *testing.T) {
+	c := loadedLikeCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/", h.HandleIndex)
+	r.Get("/results", h.HandleResults)
+
+	for _, target := range []string{"/?page=5", "/?page=5&tags=2d", "/results?page=5"} {
+		w := get(t, r, target)
+		assert.Equal(t, http.StatusOK, w.Code, target)
+		body := w.Body.String()
+		assert.Contains(t, body, "No more results", target)
+		assert.Contains(t, body, "Back to the first page", target)
+		assert.NotContains(t, body, `class="asset"`, target)
+		assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"), target)
+	}
+}
+
+func TestResultsFragmentRefreshesSearchFiltersOnPageOneOnly(t *testing.T) {
+	c := loadedLikeCache(t)
+	h := NewHandler(c, 0, nil)
+	r := chi.NewRouter()
+	r.Get("/results", h.HandleResults)
+
+	first := get(t, r, "/results?tags=2d&not=music&price=paid&sort=title&cur=EUR&q=pixel").Body.String()
+	assert.Contains(t, first, `id="search-filters"`)
+	assert.Contains(t, first, `hx-swap-oob="true"`)
+	assert.Contains(t, first, `name="tags" value="2d"`)
+	assert.Contains(t, first, `name="not" value="music"`)
+
+	// A second page needs more results than the fixture has; the empty
+	// out-of-range page is still a later page and must not carry the fields.
+	later := get(t, r, "/results?tags=2d&page=2").Body.String()
+	assert.NotContains(t, later, "search-filters")
+}

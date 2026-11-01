@@ -819,6 +819,14 @@ func TestSearchBoxAndCurrencyFormCarryDifferentFields(t *testing.T) {
 	assert.NotContains(t, cur, `<input type="hidden" name="cur"`, "the select owns cur")
 }
 
+func TestAPageBeyondTheEndOffersAWayBackToPageOne(t *testing.T) {
+	html := render(t, AssetPage(Filters{Query: "x"}, Results{Page: 4}))
+
+	assert.Contains(t, html, "No more results")
+	assert.Contains(t, html, `href="/?q=x"`, "page one is the implicit page")
+	assert.NotContains(t, html, "No assets match", "the search itself did match")
+}
+
 func TestEmptySearchSuggestsABroaderTermNotTheSidebar(t *testing.T) {
 	html := render(t, AssetPage(Filters{Query: "zzqq"}, Results{Page: 1}))
 

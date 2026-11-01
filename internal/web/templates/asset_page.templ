@@ -275,6 +275,18 @@ templ NoResults(f Filters) {
 	</div>
 }
 
+// PastTheEnd is what a page number beyond the last renders: a notice with a
+// way back, not an empty grid that reads as a broken page. It stays a 200 with
+// the fragment's short cache lifetime rather than redirecting, because a
+// redirect would cache poorly and confuse the load-more request that asked.
+templ PastTheEnd(f Filters) {
+	<div class="notice">
+		<h2>No more results</h2>
+		<p>That page is past the end of these results.</p>
+		<p><a href={ templ.SafeURL(f.PageURL(1)) }>Back to the first page</a></p>
+	</div>
+}
+
 // AssetPage renders one page of cards, plus the trigger that pulls the next.
 //
 // The trigger is only emitted when more results actually exist. Letting an
@@ -284,6 +296,8 @@ templ NoResults(f Filters) {
 templ AssetPage(f Filters, r Results) {
 	if len(r.Assets) == 0 && r.Page == 1 {
 		@NoResults(f)
+	} else if len(r.Assets) == 0 && r.Page > 1 {
+		@PastTheEnd(f)
 	}
 	for _, asset := range r.Assets {
 		@AssetCard(f, asset, r.Rates)
