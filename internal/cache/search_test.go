@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -75,7 +76,8 @@ func newLoadedCacheFromAssets(t *testing.T, pageSize int64, assets []models.Asse
 	for i, a := range assets {
 		c.dataMap[a.GameId] = i
 	}
-	c.tagCounts = countTags(assets)
+	c.tagCatalog = tagHistogram(assets)
+	c.tagCounts = topTags(c.tagCatalog)
 	c.rates = storedRates
 	c.hasRecency = true
 	c.hasPriceBands = indexHasPriceUSD(index)
@@ -223,7 +225,6 @@ func TestFacetsCountTheWholeMatchSetNotThePage(t *testing.T) {
 		counts[tag.Slug] = tag.Count
 	}
 	assert.Equal(t, int64(2), counts["pixel-art"])
-	assert.Equal(t, int64(1), counts["sprites"])
 	assert.NotContains(t, counts, "2d", "an applied tag is shown as a chip, not offered again")
 }
 
@@ -602,4 +603,77 @@ func TestDescribeReportsTagsPriceAndPage(t *testing.T) {
 	assert.Contains(t, got, "tags 2d+pixel-art")
 	assert.Contains(t, got, models.PricingFree)
 	assert.Contains(t, got, "page 3")
+}
+
+// facetFixtures is a catalog where 2d and pixel-art are everywhere and rpg is
+// rare, plus twelve "valkyrie" assets that over-represent rpg.
+func facetFixtures() []models.Asset {
+	var assets []models.Asset
+	n := 0
+	add := func(title string, tags ...string) {
+		n++
+		assets = append(assets, models.Asset{
+			GameId: fmt.Sprint(n), Title: title, Author: "a", Tags: tags, InvPopularity: int64(n),
+		})
+	}
+	for i := 0; i < 100; i++ {
+		add(fmt.Sprintf("Generic %d", i), "2d", "pixel-art")
+	}
+	for i := 0; i < 12; i++ {
+		tags := []string{"everything"}
+		if i < 8 {
+			tags = append(tags, "2d")
+		}
+		if i < 6 {
+			tags = append(tags, "pixel-art", "rpg")
+		}
+		if i < 2 {
+			tags = append(tags, "rare")
+		}
+		add(fmt.Sprintf("Valkyrie %d", i), tags...)
+	}
+	return assets
+}
+
+func TestNarrowedSearchRanksTagsByLiftNotRawCount(t *testing.T) {
+	c := newLoadedCacheFromAssets(t, 36, facetFixtures())
+
+	got, err := c.Find(SearchOptions{Query: "valkyrie", Page: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(12), got.Total)
+
+	var slugs []string
+	for _, tag := range got.Tags {
+		slugs = append(slugs, tag.Slug)
+	}
+	assert.Equal(t, []string{"rpg", "2d", "pixel-art"}, slugs,
+		"the niche tag leads; the catalog-wide ones follow; 'rare' is below the floor and 'everything' narrows nothing")
+}
+
+func TestATagOnEveryResultIsDropped(t *testing.T) {
+	c := newLoadedCacheFromAssets(t, 36, facetFixtures())
+
+	got, err := c.Find(SearchOptions{Query: "valkyrie", Page: 1})
+	require.NoError(t, err)
+	for _, tag := range got.Tags {
+		assert.NotEqual(t, "everything", tag.Slug)
+	}
+}
+
+func TestFrontPageTagOrderIsRawCount(t *testing.T) {
+	c := newLoadedCacheFromAssets(t, 36, facetFixtures())
+
+	got, err := c.Find(SearchOptions{Page: 1})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(got.Tags), 3)
+	assert.Equal(t, "2d", got.Tags[0].Slug)
+	assert.Equal(t, "pixel-art", got.Tags[1].Slug)
+	assert.Equal(t, int64(108), got.Tags[0].Count)
+}
+
+func TestMinFacetCount(t *testing.T) {
+	assert.Equal(t, int64(3), minFacetCount(50))
+	assert.Equal(t, int64(10), minFacetCount(1000))
+	assert.Equal(t, int64(2), minFacetCount(3), "never so high a small result set gets no tags")
+	assert.Equal(t, int64(1), minFacetCount(1))
 }

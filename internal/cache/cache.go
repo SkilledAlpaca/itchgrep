@@ -61,6 +61,13 @@ type Cache struct {
 	// load would be paying repeatedly for a constant.
 	tagCounts []models.Tag
 
+	// tagCatalog is the same histogram without the cap: every tag's count over
+	// the whole dataset. A narrowed search ranks its sidebar by how
+	// over-represented each tag is against it (see liftTags), which needs the
+	// niche tags that tagCounts leaves out. Built once per refresh, read-only
+	// afterwards, and its size is the length of data.
+	tagCatalog map[string]int64
+
 	// rates is the exchange-rate snapshot the published index was built with.
 	// Loaded from storage rather than fetched, so the dollar values baked into
 	// the documents and the rates used to display converted prices are the same
@@ -344,6 +351,9 @@ func (c *Cache) doRefresh() error {
 		}
 	}
 
+	// Counted here with the other per-refresh work, outside the write lock.
+	newTagCatalog := tagHistogram(newData)
+
 	// Probed before the swap, and outside the write lock, because it is a search
 	// against the index rather than a field read.
 	hasPriceBands := indexHasPriceUSD(newIndex)
@@ -387,7 +397,8 @@ func (c *Cache) doRefresh() error {
 	c.index = newIndex
 	c.data = newData
 	c.dataMap = newDataMap
-	c.tagCounts = countTags(newData)
+	c.tagCatalog = newTagCatalog
+	c.tagCounts = topTags(newTagCatalog)
 	c.rates = newRates
 	c.hasRecency = hasRecency
 	c.hasPriceBands = hasPriceBands

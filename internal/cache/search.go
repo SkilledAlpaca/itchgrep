@@ -235,8 +235,17 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 	}
 	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts, likeTags), size, from, false)
 	searchRequest.SortBy(sortOrder(opts.resolvedSort()))
+	// A narrowed search ranks its tags by lift, which needs every tag the
+	// matches carry: the niche ones that make the ranking useful sit far below
+	// the 200 most common. bleve counts every term whatever the size, so asking
+	// for them all costs only the longer sort, not another pass.
+	byLift := opts.filtered()
+	facetSize := maxFacetTags
+	if byLift && len(c.tagCatalog) > facetSize {
+		facetSize = len(c.tagCatalog)
+	}
 	if !opts.NoFacets {
-		searchRequest.AddFacet("tags", bleve.NewFacetRequest("TagSlugs", maxFacetTags))
+		searchRequest.AddFacet("tags", bleve.NewFacetRequest("TagSlugs", facetSize))
 	}
 
 	searchResult, err := c.index.Search(searchRequest)
@@ -246,8 +255,12 @@ func (c *Cache) search(opts SearchOptions) (Results, error) {
 
 	results := Results{
 		Total:     int64(searchResult.Total),
-		Tags:      facetTags(searchResult.Facets["tags"], opts.Tags),
 		LikeTitle: likeTitle,
+	}
+	if byLift {
+		results.Tags = c.liftTags(searchResult.Facets["tags"], opts.Tags, int64(searchResult.Total))
+	} else {
+		results.Tags = facetTags(searchResult.Facets["tags"], opts.Tags)
 	}
 	// A hit with no asset behind it is dropped rather than rendered. The index
 	// and the asset list are published together and loaded together, but not
@@ -548,16 +561,114 @@ func facetTags(facet *search.FacetResult, applied []string) []models.Tag {
 	return out
 }
 
-// countTags builds the whole-dataset tag histogram used for the unfiltered
-// browse, in the same descending-count order bleve returns a facet in.
-func countTags(assets []models.Asset) []models.Tag {
+// minFacetCount is the fewest results a tag must be on to be offered for a
+// narrowed search: a tag on one or two results is noise however high its lift.
+// The floor is three, or one percent of the matches for a large result set. It
+// never exceeds total-1, because a tag on every result narrows nothing and is
+// dropped separately, and a floor above that would leave a small result set
+// with no sidebar at all.
+func minFacetCount(total int64) int64 {
+	min := (total + 99) / 100
+	if min < 3 {
+		min = 3
+	}
+	if min > total-1 {
+		min = total - 1
+	}
+	if min < 1 {
+		min = 1
+	}
+	return min
+}
+
+// liftTags ranks the tags of a narrowed result set by how over-represented
+// they are against the whole catalog: (count/total) / (catalogCount/catalogSize).
+// Ranked by raw count, the sidebar is the same forty catalog-wide favorites
+// (2d, pixel-art, ...) for every search, which is a description of the
+// catalog rather than of the search.
+//
+// A tag on every result is dropped, as are the applied ones (shown as chips),
+// and anything under minFacetCount. Ties break by count, then slug, so the
+// order is stable. Lift is compared by cross-multiplying the integers, which
+// is exact and allocates no floats: total and the catalog size are common to
+// every tag, so a beats b exactly when count_a*cat_b > count_b*cat_a.
+//
+// Caller holds cacheLock.
+func (c *Cache) liftTags(facet *search.FacetResult, applied []string, total int64) []models.Tag {
+	if len(c.tagCatalog) == 0 {
+		// No catalog histogram (a cache built without one): the raw order is
+		// the only one available.
+		return facetTags(facet, applied)
+	}
+	if facet == nil {
+		return nil
+	}
+	floor := minFacetCount(total)
+
+	type ranked struct {
+		tag models.Tag
+		cat int64
+	}
+	terms := facet.Terms.Terms()
+	cands := make([]ranked, 0, len(terms))
+terms:
+	for _, term := range terms {
+		count := int64(term.Count)
+		if count >= total || count < floor {
+			continue
+		}
+		for _, a := range applied {
+			if a == term.Term {
+				continue terms
+			}
+		}
+		cat := c.tagCatalog[term.Term]
+		if cat < count {
+			// The index and the asset list can disagree for a moment around a
+			// publish; a catalog count below the match count cannot be right.
+			cat = count
+		}
+		cands = append(cands, ranked{models.Tag{Slug: term.Term, Count: count}, cat})
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if l, r := a.tag.Count*b.cat, b.tag.Count*a.cat; l != r {
+			return l > r
+		}
+		if a.tag.Count != b.tag.Count {
+			return a.tag.Count > b.tag.Count
+		}
+		return a.tag.Slug < b.tag.Slug
+	})
+	if len(cands) > maxFacetTags {
+		cands = cands[:maxFacetTags]
+	}
+	out := make([]models.Tag, len(cands))
+	for i, cand := range cands {
+		out[i] = cand.tag
+	}
+	return out
+}
+
+// tagHistogram counts how many assets carry each tag across the whole dataset.
+func tagHistogram(assets []models.Asset) map[string]int64 {
 	counts := make(map[string]int64, 1024)
 	for _, a := range assets {
 		for _, t := range a.Tags {
 			counts[t]++
 		}
 	}
+	return counts
+}
 
+// countTags builds the whole-dataset tag histogram used for the unfiltered
+// browse, in the same descending-count order bleve returns a facet in.
+func countTags(assets []models.Asset) []models.Tag {
+	return topTags(tagHistogram(assets))
+}
+
+// topTags orders a histogram by count and keeps the sidebar's head.
+func topTags(counts map[string]int64) []models.Tag {
 	out := make([]models.Tag, 0, len(counts))
 	for slug, n := range counts {
 		out = append(out, models.Tag{Slug: slug, Count: n})
