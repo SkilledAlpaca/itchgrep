@@ -1,7 +1,9 @@
 package cache
 
 import (
+	"os"
 	"testing"
+	"time"
 
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
@@ -73,4 +75,46 @@ func TestTagUniverseIsEmptyRatherThanErrorWhenNeverDiscovered(t *testing.T) {
 
 	assert.Empty(t, c.TagSlugs())
 	assert.False(t, c.HasTag("pixel-art"))
+}
+
+func TestAFailedRefreshDoesNotBlockTheNextRefreshOrSearches(t *testing.T) {
+	c := loadedCacheWithTags(t, nil)
+	good := os.Getenv("DATA_DIR")
+
+	t.Setenv("DATA_DIR", t.TempDir()) // nothing published here
+	require.Error(t, c.RefreshDataCache())
+	assert.True(t, c.Ready(), "the previously loaded data keeps serving")
+
+	got, err := c.Find(SearchOptions{Query: "zebra", Page: 1})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2"}, ids(got))
+
+	// The single-flight flag must have cleared, so this runs rather than waits.
+	t.Setenv("DATA_DIR", good)
+	done := make(chan error, 1)
+	go func() { done <- c.RefreshDataCache() }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("refresh after a failed one did not return")
+	}
+}
+
+func TestRefreshingTheDirectoryAlreadyOpenKeepsItInsteadOfFightingForTheLock(t *testing.T) {
+	c := loadedCacheWithTags(t, nil)
+	first := c.index
+
+	start := time.Now()
+	require.NoError(t, c.RefreshDataCache())
+	assert.Same(t, first, c.index, "same directory, same index")
+	assert.Less(t, time.Since(start), 4*time.Second, "no wait on the bolt lock timeout")
+
+	got, err := c.Find(SearchOptions{Query: "zebra", Page: 1})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2"}, ids(got))
+}
+
+func TestACacheThatNeverLoadedIsNotReady(t *testing.T) {
+	assert.False(t, NewCache(36).Ready())
 }

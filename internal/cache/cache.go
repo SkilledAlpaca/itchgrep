@@ -14,6 +14,7 @@ import (
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
+	"os"
 	"slices"
 	"sort"
 	"sync"
@@ -53,6 +54,10 @@ type Cache struct {
 	dataMap map[string]int
 	data    []models.Asset
 	index   bleve.Index
+
+	// indexInfo is the stat of the directory index was opened from, kept to
+	// recognize a refresh that points at the same directory (see doRefresh).
+	indexInfo os.FileInfo
 
 	// tagCounts is how many assets carry each tag, across the whole dataset.
 	// Computed once per refresh rather than faceted per request: the unfiltered
@@ -286,15 +291,33 @@ func (c *Cache) RefreshDataCache() error {
 	c.refreshDone = done
 	c.refreshMu.Unlock()
 
-	err := c.doRefresh()
-
-	c.refreshMu.Lock()
-	c.refreshErr = err
-	c.refreshing = false
-	c.refreshMu.Unlock()
-	close(done)
-
+	// Cleared in a defer so that no way out of doRefresh - an error, or a
+	// panic recovered further up - leaves the flag set. A stuck flag makes
+	// every later caller wait on a channel nobody will close.
+	var err error
+	defer func() {
+		c.refreshMu.Lock()
+		c.refreshErr = err
+		c.refreshing = false
+		c.refreshMu.Unlock()
+		close(done)
+	}()
+	err = c.doRefresh()
 	return err
+}
+
+// indexOpenTimeout bounds how long opening an index waits for its bolt file
+// lock. bleve's default waits forever, so a lock that is never released would
+// hang the refresh - and with it every search that triggered one. Same bound
+// the dataservice's self-heal uses.
+const indexOpenTimeout = "5s"
+
+// Ready reports whether the cache can serve searches right now: an index and
+// the asset list it answers about are both loaded. It is what /readyz reports.
+func (c *Cache) Ready() bool {
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	return c.index != nil && c.data != nil
 }
 
 // doRefresh performs the actual reload. The multi-MB download and
@@ -325,13 +348,31 @@ func (c *Cache) doRefresh() error {
 	// resolves to the new inode while the currently-live index below keeps
 	// serving from the old one, which stays valid until we close it.
 	preFetchTime = time.Now()
+	//
+	// Unless it is the directory already open. An assets.json rewritten
+	// without a new index directory would make a second open fight the first
+	// for the bolt lock until the timeout, and fail the refresh for nothing:
+	// the live index is already the right one, so keep it.
 	indexPath := storage.IndexPath()
-	newIndex, err := bleve.Open(indexPath)
+	info, err := os.Stat(indexPath)
 	if err != nil {
-		return fmt.Errorf("bleve.Open %s: %w", indexPath, err)
+		return fmt.Errorf("stat index %s: %w", indexPath, err)
 	}
-	fetchTime = time.Since(preFetchTime)
-	logging.Info("Opened index %s in %v", indexPath, fetchTime)
+	c.cacheLock.RLock()
+	liveIndex, liveInfo := c.index, c.indexInfo
+	c.cacheLock.RUnlock()
+	reuse := liveIndex != nil && liveInfo != nil && os.SameFile(liveInfo, info) && liveInfo.ModTime().Equal(info.ModTime())
+	newIndex := liveIndex
+	if reuse {
+		logging.Info("Index %s is the one already open; keeping it", indexPath)
+	} else {
+		newIndex, err = bleve.OpenUsing(indexPath, map[string]interface{}{"bolt_timeout": indexOpenTimeout})
+		if err != nil {
+			return fmt.Errorf("bleve.OpenUsing %s: %w", indexPath, err)
+		}
+		fetchTime = time.Since(preFetchTime)
+		logging.Info("Opened index %s in %v", indexPath, fetchTime)
+	}
 
 	// sort newData by popularity (smaller numbers first). cmp.Compare rather
 	// than a subtraction cast to int: the difference of two int64s does not fit
@@ -394,7 +435,11 @@ func (c *Cache) doRefresh() error {
 	// above failed we must keep serving it.
 	c.cacheLock.Lock()
 	oldIndex := c.index
+	if reuse {
+		oldIndex = nil
+	}
 	c.index = newIndex
+	c.indexInfo = info
 	c.data = newData
 	c.dataMap = newDataMap
 	c.tagCatalog = newTagCatalog
