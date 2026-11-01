@@ -47,6 +47,10 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.notModified(w, r) {
+		return
+	}
+
 	canonical := templates.BaseURL + "/tag/" + slug
 	results, err := h.find(filters, page, true)
 	if err != nil {

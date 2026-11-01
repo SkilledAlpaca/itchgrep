@@ -30,7 +30,8 @@ import (
 // Every visitor sees the same results for the same query, and the underlying
 // data only changes when a crawl publishes. Five minutes is short enough that a
 // person who reloads after a publish gets the new index soon, and long enough to
-// absorb the bursts that matter.
+// absorb the bursts that matter. After it the browser revalidates with
+// If-Modified-Since and gets a 304 until the data changes (see notModified).
 const fragmentMaxAge = 300
 
 // edgeMaxAge is how long a shared cache (the CDN in front of the site) may
@@ -135,6 +136,44 @@ func (h *handler) stampDataTime(w http.ResponseWriter) {
 	}
 }
 
+// notModified answers a conditional request with 304 and reports whether it
+// did, before any search or render work. The response is a function of the URL
+// and the data time (apart from the coarse "updated 3 days ago" label, which a
+// revalidation may leave a little stale), and Last-Modified is the data time, so
+// a client whose copy is at least that new has the current page.
+//
+// The cache is brought up to date first. Otherwise a process that only ever
+// answered 304s would never notice a crawl had published, and clients would be
+// told their old copy was current indefinitely.
+//
+// An If-None-Match makes If-Modified-Since moot (RFC 9110), and this server
+// sends no ETag, so a request carrying one is never answered here.
+func (h *handler) notModified(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	since := r.Header.Get("If-Modified-Since")
+	if since == "" || r.Header.Get("If-None-Match") != "" {
+		return false
+	}
+	h.cache.EnsureFresh()
+	data := h.cache.DataUpdatedTime()
+	if data.IsZero() {
+		return false
+	}
+	asked, err := http.ParseTime(since)
+	if err != nil {
+		return false
+	}
+	// Last-Modified has one-second resolution; compare at it.
+	if data.Truncate(time.Second).After(asked) {
+		return false
+	}
+	h.cacheable(w)
+	w.WriteHeader(http.StatusNotModified)
+	return true
+}
+
 // freshness measures the served dataset against the wall clock, for the age
 // line in the masthead. Read per request rather than at startup, so the line
 // updates itself when a crawl publishes underneath a long-running process.
@@ -223,6 +262,10 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.notModified(w, r) {
+		return
+	}
+
 	results, err := h.find(filters, page, true)
 	if err != nil {
 		// The page itself still renders - masthead, search box, filters - with
@@ -307,6 +350,10 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("HX-Push-Url", filters.ShareURL())
 	}
 
+	if h.notModified(w, r) {
+		return
+	}
+
 	results, err := h.find(filters, page, page == 1)
 	if err != nil {
 		logging.Error("Error fetching results: %s", err)
@@ -387,6 +434,9 @@ func (h *handler) find(filters templates.Filters, page int64, facets bool) (temp
 // configured page size entirely: this page has no further page to request, so
 // its cap is a property of the page, not of pagination.
 func (h *handler) HandleNew(w http.ResponseWriter, r *http.Request) {
+	if h.notModified(w, r) {
+		return
+	}
 	found, err := h.cache.Find(cache.SearchOptions{
 		MinFirstSeen: 1,
 		Sort:         models.SortNew,
@@ -666,6 +716,9 @@ func renderProblem(w http.ResponseWriter, r *http.Request, err error) {
 // visitor on the previous URL reading about-content; the links are plain
 // navigations now, so nothing sends an HX-Request here any more.
 func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
+	if h.notModified(w, r) {
+		return
+	}
 	h.cacheable(w)
 	templates.Layout("About — ITCHGREP", h.shell(), templates.About()).Render(r.Context(), w)
 }
@@ -676,6 +729,9 @@ func (h *handler) HandleAbout(w http.ResponseWriter, r *http.Request) {
 // other part of the server - so the response is the same document for every
 // request, cacheable exactly like the other static shells.
 func (h *handler) HandleSaved(w http.ResponseWriter, r *http.Request) {
+	if h.notModified(w, r) {
+		return
+	}
 	h.cacheable(w)
 	templates.Layout("Saved — ITCHGREP", h.shell(), templates.SavedPage()).Render(r.Context(), w)
 }
