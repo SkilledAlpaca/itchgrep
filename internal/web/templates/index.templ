@@ -13,7 +13,8 @@ templ IndexAge(f Freshness, c Coverage) {
 		// app.js recomputes the age, the due date and the stale warning from the
 		// datetime attributes and data-stale-at on every load (see
 		// refreshRelativeTimes). Its wording rules mirror Label, DueLabel and
-		// Stale, and testdata/freshness_wording.json pins them.
+		// Stale. testdata/freshness_wording.json pins the Go side in CI; the
+		// JavaScript side is checked against it by hand (it needs a browser).
 		<p class={ "index-age", templ.KV("is-stale", f.Stale()) } data-stale-at={ f.StaleAt() }>
 			index updated
 			<time data-relative="age" datetime={ f.DateTime() } title={ f.Absolute() }>{ f.Label() }</time>

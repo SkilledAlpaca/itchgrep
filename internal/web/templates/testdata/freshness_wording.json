@@ -1,5 +1,5 @@
 {
-  "comment": "The wording table for the masthead age, the next-update line, and the stale threshold. internal/web/templates/freshness_test.go checks the Go code against it; app.js (relativeAgeLabel, relativeDueLabel, refreshRelativeTimes) implements the same rules and the browser check reads this same file. Change a rule in one place and this file makes the other fail.",
+  "comment": "The wording table for the masthead age, the next-update line, and the stale threshold. internal/web/templates/freshness_test.go pins the Go code against it in CI. app.js (relativeAgeLabel, relativeDueLabel, refreshRelativeTimes) implements the same rules, but CI has no JavaScript runtime: the browser check that reads this file (Playwright with a mocked clock) is a manual, local verification. Change a rule in Go and update this file, then rerun that check.",
   "age": [
     [0, "less than an hour ago"],
     [3599, "less than an hour ago"],
@@ -34,7 +34,6 @@
     [700000, true]
   ],
   "staleWeeklySchedule": [
-    [604800, false],
     [604800, false],
     [691199, false],
     [691200, true],
