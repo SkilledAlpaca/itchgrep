@@ -1,10 +1,12 @@
 package web
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +36,11 @@ func TestConditionalRequestsAreAnsweredBeforeAnySearch(t *testing.T) {
 		w := getWith(t, r, target, map[string]string{"If-Modified-Since": lm})
 		assert.Equal(t, http.StatusNotModified, w.Code, target)
 		assert.Empty(t, w.Body.String(), target)
-		assert.Equal(t, "public, max-age=300, s-maxage=3600", w.Header().Get("Cache-Control"), target)
+		if strings.Contains(target, "page=") {
+			assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"), target)
+		} else {
+			assert.Equal(t, "public, max-age=300, s-maxage=3600", w.Header().Get("Cache-Control"), target)
+		}
 		assert.Equal(t, lm, w.Header().Get("Last-Modified"), target)
 
 		// A copy newer than the data is current as well.
@@ -104,4 +110,77 @@ func TestHeadRequestsAreConditionalToo(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.HandleAbout(w, req)
 	assert.Equal(t, http.StatusNotModified, w.Code)
+}
+
+func TestACodeOnlyDeployInvalidatesEveryClientCopy(t *testing.T) {
+	// The data did not change, but the process now serving is newer than the
+	// copy the client holds: that copy was rendered by the previous release,
+	// and a 304 would keep its old markup and script names alive.
+	r, _, h := perfRouterHandler(t)
+	full := get(t, r, "/?q=pixel")
+	lm := full.Header().Get("Last-Modified")
+	require.Equal(t, http.StatusNotModified, getWith(t, r, "/?q=pixel", map[string]string{"If-Modified-Since": lm}).Code)
+
+	h.started = h.started.Add(3 * time.Hour)
+	w := getWith(t, r, "/?q=pixel", map[string]string{"If-Modified-Since": lm})
+	assert.Equal(t, http.StatusOK, w.Code, "a client older than the process gets a fresh page")
+	newLM := w.Header().Get("Last-Modified")
+	assert.NotEqual(t, lm, newLM)
+	parsed, err := http.ParseTime(newLM)
+	require.NoError(t, err)
+	assert.Equal(t, h.started.UTC().Truncate(time.Second), parsed.UTC(), "Last-Modified is the later of data time and process start")
+
+	// A client that fetched after the deploy is current again.
+	assert.Equal(t, http.StatusNotModified, getWith(t, r, "/?q=pixel", map[string]string{"If-Modified-Since": newLM}).Code)
+}
+
+func TestLaterPagesRevalidateUnderTheShortPolicy(t *testing.T) {
+	// A 304 cannot know whether a later page is past the end of the results, and
+	// a page past the end is cached briefly, so every later page's 304 is too.
+	r, _ := perfRouter(t)
+	for _, target := range []string{"/?page=2", "/results?page=2", "/tag/tag-00?page=2", "/results?q=pixel&page=3"} {
+		lm := get(t, r, target).Header().Get("Last-Modified")
+		require.NotEmpty(t, lm, target)
+		w := getWith(t, r, target, map[string]string{"If-Modified-Since": lm})
+		require.Equal(t, http.StatusNotModified, w.Code, target)
+		assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"), target)
+	}
+	lm := get(t, r, "/").Header().Get("Last-Modified")
+	w := getWith(t, r, "/", map[string]string{"If-Modified-Since": lm})
+	assert.Equal(t, "public, max-age=300, s-maxage=3600", w.Header().Get("Cache-Control"), "page one keeps the long edge policy")
+}
+
+func TestHeadOfResultsIsConditionalWithoutABody(t *testing.T) {
+	r, _ := perfRouter(t)
+	assertHeadIsConditional(t, r, "/results?q=pixel")
+}
+
+// assertHeadIsConditional drives a real server, because a recorder keeps a body
+// that net/http would drop from a HEAD response.
+func assertHeadIsConditional(t *testing.T, h http.Handler, target string) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	head := func(since string) (*http.Response, []byte) {
+		req, err := http.NewRequest(http.MethodHead, srv.URL+target, nil)
+		require.NoError(t, err)
+		if since != "" {
+			req.Header.Set("If-Modified-Since", since)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp, body
+	}
+	resp, body := head("")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, body)
+	lm := resp.Header.Get("Last-Modified")
+	require.NotEmpty(t, lm)
+
+	resp, body = head(lm)
+	assert.Equal(t, http.StatusNotModified, resp.StatusCode)
+	assert.Empty(t, body)
 }

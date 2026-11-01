@@ -60,18 +60,26 @@ func manyTagsCache(t *testing.T) *cache.Cache {
 }
 
 func perfRouter(t *testing.T) (*chi.Mux, *cache.Cache) {
+	r, c, _ := perfRouterHandler(t)
+	return r, c
+}
+
+// perfRouterHandler is perfRouter that also hands back the handler, for tests
+// that need to set its fields.
+func perfRouterHandler(t *testing.T) (*chi.Mux, *cache.Cache, *handler) {
 	t.Helper()
 	c := manyTagsCache(t)
 	h := NewHandler(c, 0, nil)
 	r := chi.NewRouter()
 	r.Get("/", h.HandleIndex)
 	r.Get("/results", h.HandleResults)
+	r.Head("/results", h.HandleResults)
 	r.Get("/new", h.HandleNew)
 	r.Get("/about", h.HandleAbout)
 	r.Get("/saved", h.HandleSaved)
 	r.Get("/stats", h.HandleStats)
 	r.Get("/tag/{slug}", h.HandleTag)
-	return r, c
+	return r, c, h
 }
 
 func TestPagesSendALongEdgeLifetimeExceptStats(t *testing.T) {

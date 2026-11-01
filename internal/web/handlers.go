@@ -103,6 +103,13 @@ type handler struct {
 	// all no-ops on a nil receiver - so handlers_test.go can build a handler
 	// without wiring up counters it has no reason to exercise.
 	metrics *metrics.Counters
+
+	// started is when this process began serving. A page is a function of the
+	// code as well as the data, and a deploy changes the code without touching
+	// the data, so no page can claim to be older than the process that renders
+	// it: Last-Modified is the later of this and the data time (see
+	// lastModified). Captured once, so the validator does not drift.
+	started time.Time
 }
 
 // NewHandler builds the handler every page route in cmd/webserver/main.go is
@@ -112,6 +119,7 @@ func NewHandler(cache *cache.Cache, crawlInterval time.Duration, m *metrics.Coun
 		cache:         cache,
 		crawlInterval: crawlInterval,
 		metrics:       m,
+		started:       time.Now(),
 	}
 }
 
@@ -131,9 +139,25 @@ func (h *handler) cacheableBriefly(w http.ResponseWriter) {
 }
 
 func (h *handler) stampDataTime(w http.ResponseWriter) {
-	if t := h.cache.DataUpdatedTime(); !t.IsZero() {
+	if t := h.lastModified(); !t.IsZero() {
 		w.Header().Set("Last-Modified", t.UTC().Format(http.TimeFormat))
 	}
+}
+
+// lastModified is the validator for every cacheable page: the later of the data
+// time and the start of this process, to the second (the resolution of the
+// header). The data time alone would let a code-only deploy answer 304 to
+// clients holding pages rendered by the previous release, with the old markup
+// and old script names. Zero while nothing has loaded.
+func (h *handler) lastModified() time.Time {
+	data := h.cache.DataUpdatedTime()
+	if data.IsZero() {
+		return data
+	}
+	if h.started.After(data) {
+		data = h.started
+	}
+	return data.Truncate(time.Second)
 }
 
 // notModified answers a conditional request with 304 and reports whether it
@@ -157,7 +181,7 @@ func (h *handler) notModified(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	h.cache.EnsureFresh()
-	data := h.cache.DataUpdatedTime()
+	data := h.lastModified()
 	if data.IsZero() {
 		return false
 	}
@@ -165,11 +189,19 @@ func (h *handler) notModified(w http.ResponseWriter, r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	// Last-Modified has one-second resolution; compare at it.
-	if data.Truncate(time.Second).After(asked) {
+	// Last-Modified has one-second resolution; lastModified is already at it.
+	if data.After(asked) {
 		return false
 	}
-	h.cacheable(w)
+	// A 304 must not promise more than the 200 it stands for would. It cannot
+	// tell whether a later page is past the end of the results (that takes the
+	// search this path exists to skip), and a past-the-end page gets the short
+	// policy, so every later page revalidates under it.
+	if page, ok := pageParam(r); ok && page > 1 {
+		h.cacheableBriefly(w)
+	} else {
+		h.cacheable(w)
+	}
 	w.WriteHeader(http.StatusNotModified)
 	return true
 }
