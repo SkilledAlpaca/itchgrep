@@ -29,6 +29,9 @@ type hitEntry struct {
 	pos   []int32
 	total int64
 	tags  []models.Tag
+	// anyWord marks a result set from the any-word fallback, so every page
+	// of it reports the same thing.
+	anyWord bool
 }
 
 // hitCacheable reports whether a request belongs in the hit cache: a text

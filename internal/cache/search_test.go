@@ -695,12 +695,18 @@ func TestTextQueryRequiresEveryWord(t *testing.T) {
 	assert.ElementsMatch(t, []string{"1", "4", "5"}, find("art"))
 	assert.ElementsMatch(t, []string{"1", "4"}, find("pixel art"))
 	assert.ElementsMatch(t, []string{"1"}, find("pixel art tileset"))
-	assert.Empty(t, find("pixel music"))
+	// No asset has both, so the strict rule matches nothing and the any-word
+	// fallback (flagged) answers instead.
+	r, err := c.Find(SearchOptions{Query: "pixel music", Page: 1})
+	require.NoError(t, err)
+	assert.True(t, r.AnyWordFallback)
 
 	// A typo in one of two words still matches; the other word is still required.
 	assert.ElementsMatch(t, []string{"1"}, find("pixel tilset"))
 	assert.ElementsMatch(t, []string{"1", "4"}, find("pixle art"))
-	assert.Empty(t, find("pixle music"))
+	r, err = c.Find(SearchOptions{Query: "pixle music", Page: 1})
+	require.NoError(t, err)
+	assert.True(t, r.AnyWordFallback)
 }
 
 func TestTextQueryStopAndShortWords(t *testing.T) {
@@ -752,5 +758,56 @@ func TestTextQueryMonotonic(t *testing.T) {
 		for _, extra := range vocab {
 			assert.LessOrEqual(t, total(q+" "+extra), base, "%q + %q", q, extra)
 		}
+	}
+}
+
+func TestAnyWordFallback(t *testing.T) {
+	assets := []models.Asset{
+		{GameId: "1", Title: "Sword Pack", Author: "ana", Tags: []string{"2d"}, InvPopularity: 1},
+		{GameId: "2", Title: "Sword Icons", Author: "bo", Tags: []string{"2d"}, InvPopularity: 2},
+		{GameId: "3", Title: "Fire Loops", Author: "cy", Tags: []string{"music"}, InvPopularity: 3},
+		{GameId: "4", Title: "Fire Sword", Author: "dee", Tags: []string{"2d"}, InvPopularity: 4},
+	}
+	c := newLoadedCacheFromAssets(t, 1, assets)
+	find := func(o SearchOptions) Results {
+		t.Helper()
+		o.Page = max(o.Page, 1)
+		r, err := c.Find(o)
+		require.NoError(t, err)
+		return r
+	}
+
+	// Words that co-occur: strict result, no flag.
+	r := find(SearchOptions{Query: "fire sword"})
+	assert.Equal(t, int64(1), r.Total)
+	assert.False(t, r.AnyWordFallback)
+
+	// Each word exists but never together: any-word set, flagged.
+	r = find(SearchOptions{Query: "pack loops"})
+	assert.Equal(t, int64(2), r.Total)
+	assert.True(t, r.AnyWordFallback)
+	assert.NotEmpty(t, r.Tags, "sidebar comes from the fallback set")
+
+	// Page 2 of the same search keeps the flag (served from the hit cache).
+	r2 := find(SearchOptions{Query: "pack loops", Page: 2, NoFacets: true})
+	assert.True(t, r2.AnyWordFallback)
+	assert.Len(t, r2.Assets, 1)
+	assert.NotEqual(t, ids(r)[0], ids(r2)[0])
+
+	// Filters apply in the fallback pass.
+	r = find(SearchOptions{Query: "pack loops", Tags: []string{"music"}})
+	assert.Equal(t, []string{"3"}, ids(r))
+	assert.True(t, r.AnyWordFallback)
+
+	// No word matches: empty, no flag.
+	r = find(SearchOptions{Query: "zzqxv qqwwzz"})
+	assert.Zero(t, r.Total)
+	assert.False(t, r.AnyWordFallback)
+
+	// Single words, stop-word-reduced queries, and phrases never fall back.
+	for _, q := range []string{"zzqxv", "zzqxv of", `"pack loops"`} {
+		r = find(SearchOptions{Query: q})
+		assert.Zero(t, r.Total, q)
+		assert.False(t, r.AnyWordFallback, q)
 	}
 }

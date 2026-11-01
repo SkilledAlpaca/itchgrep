@@ -80,6 +80,11 @@ type Results struct {
 	// the caller can render "similar to X" without a second lookup. Empty
 	// when Like was not set, or was set to an id nothing was found for.
 	LikeTitle string
+
+	// AnyWordFallback is set when no asset contains every word of the text
+	// query, and these results are the ones that match any word instead.
+	// The caller says so; otherwise the page would read as a normal match.
+	AnyWordFallback bool
 }
 
 // resolvedSort is the ordering to apply, filling in the default. Relevance is
@@ -261,12 +266,12 @@ func (c *Cache) searchIndex(opts SearchOptions, useHitCache bool) (Results, erro
 			if err != nil {
 				return nil, err
 			}
-			return &hitEntry{pos: ans.pos, total: ans.total, tags: ans.tags}, nil
+			return &hitEntry{pos: ans.pos, total: ans.total, tags: ans.tags, anyWord: ans.anyWord}, nil
 		})
 		if err != nil {
 			return Results{}, err
 		}
-		results := Results{Total: entry.total, LikeTitle: likeTitle}
+		results := Results{Total: entry.total, LikeTitle: likeTitle, AnyWordFallback: entry.anyWord}
 		if !opts.NoFacets {
 			results.Tags = entry.tags
 		}
@@ -286,7 +291,7 @@ func (c *Cache) searchIndex(opts SearchOptions, useHitCache bool) (Results, erro
 	if err != nil {
 		return Results{}, err
 	}
-	results := Results{Total: ans.total, Tags: ans.tags, LikeTitle: likeTitle}
+	results := Results{Total: ans.total, Tags: ans.tags, LikeTitle: likeTitle, AnyWordFallback: ans.anyWord}
 	for _, p := range ans.pos {
 		results.Assets = append(results.Assets, c.data[p])
 	}
@@ -300,12 +305,28 @@ type indexAnswer struct {
 	pos   []int32
 	total int64
 	tags  []models.Tag
+	// anyWord marks an answer produced by the any-word fallback.
+	anyWord bool
 }
 
 // queryIndex runs opts against the search index for hits [from, from+size) and,
 // when facets is set, the sidebar. Caller holds cacheLock.
+//
+// A text query of two or more words that matches nothing under the all-words
+// rule is run again with any-word matching, filters unchanged, and the answer
+// is flagged. The second pass costs only when the first found nothing.
 func (c *Cache) queryIndex(opts SearchOptions, likeTags []string, from, size int, facets bool) (indexAnswer, error) {
-	searchRequest := bleve.NewSearchRequestOptions(buildQuery(opts, likeTags), size, from, false)
+	ans, err := c.runQuery(opts, likeTags, from, size, facets, false)
+	if err != nil || ans.total > 0 || !canFallBack(opts) {
+		return ans, err
+	}
+	ans, err = c.runQuery(opts, likeTags, from, size, facets, true)
+	ans.anyWord = err == nil && ans.total > 0
+	return ans, err
+}
+
+func (c *Cache) runQuery(opts SearchOptions, likeTags []string, from, size int, facets bool, anyWord bool) (indexAnswer, error) {
+	searchRequest := bleve.NewSearchRequestOptions(buildQueryMode(opts, likeTags, anyWord), size, from, false)
 	searchRequest.SortBy(sortOrder(opts.resolvedSort()))
 	// A narrowed search ranks its tags by lift, which needs every tag the
 	// matches carry: the niche ones that make the ranking useful sit far below
@@ -356,6 +377,14 @@ func (c *Cache) queryIndex(opts SearchOptions, likeTags []string, from, size int
 	return ans, nil
 }
 
+// canFallBack reports whether a zero-hit answer should be retried with
+// any-word matching: the loose text must hold at least two words the index
+// keeps. Single words and phrase-only queries have nothing to relax.
+func canFallBack(opts SearchOptions) bool {
+	_, rest := splitPhrases(opts.Query)
+	return len(indexedWords(rest)) >= 2
+}
+
 // buildQuery assembles the text query and the filters into one bleve query.
 // likeTags is the ?like= source asset's own tags, already resolved by the
 // caller - buildQuery has no dataMap access of its own, and takes them as
@@ -367,6 +396,12 @@ func (c *Cache) queryIndex(opts SearchOptions, likeTags []string, from, size int
 // it the document ranks. Folding "free" into the disjunction would merely make
 // free assets score higher, which is not what a toggle labeled Free means.
 func buildQuery(opts SearchOptions, likeTags []string) query.Query {
+	return buildQueryMode(opts, likeTags, false)
+}
+
+// buildQueryMode is buildQuery with the text words either all required
+// (anyWord false) or any one sufficient, the fallback queryIndex uses.
+func buildQueryMode(opts SearchOptions, likeTags []string, anyWord bool) query.Query {
 	var conjuncts []query.Query
 
 	// Quoted runs are pulled out first and matched as phrases, which is the one
@@ -385,7 +420,7 @@ func buildQuery(opts SearchOptions, likeTags []string) query.Query {
 		// literally they read it, boosted so a literal hit outranks a typo
 		// when both match: exact, and a single-character edit (fuzzyness 1)
 		// with the first 2 characters held exact.
-		conjuncts = append(conjuncts, textQuery(rest))
+		conjuncts = append(conjuncts, textQuery(rest, anyWord))
 	}
 
 	// TermQuery, not MatchQuery: TagSlugs is indexed with the keyword analyzer,

@@ -42,6 +42,10 @@ type Results struct {
 	// the list is swapped into), gets its own cache key at the edge.
 	Generation string
 
+	// AnyWordFallback is set when no asset contains every query word and
+	// these are the ones matching any word. See cache.Results.AnyWordFallback.
+	AnyWordFallback bool
+
 	// FirstPageURL, when set, is where "back to the first page" goes, for a
 	// page whose first page is not at f.PageURL(1) - a /tag/{slug} page.
 	FirstPageURL string
@@ -164,6 +168,9 @@ func resultStatus(f Filters, r Results) string {
 	status := resultSummary(r)
 	if summary := filterSummary(f, r.LikeTitle); summary != "" {
 		status += " for " + summary
+	}
+	if r.AnyWordFallback {
+		status += ". No results contain every word; showing results that match any word."
 	}
 	if f.AtTagLimit() {
 		status += ". Tag limit reached."

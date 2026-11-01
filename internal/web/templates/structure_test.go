@@ -202,3 +202,13 @@ func TestFilterRequestsReplaceEachOtherAndScrollPagingNeverCancelsThem(t *testin
 	more.HasMore = true
 	assert.Contains(t, render(t, AssetPage(Filters{}, more)), `hx-sync="closest .search-page:drop"`)
 }
+
+func TestFragmentStatusSaysWhenResultsMatchAnyWord(t *testing.T) {
+	r := sampleResults()
+	r.AnyWordFallback = true
+	html := render(t, ResultsFragment(Filters{Query: "pack loops"}, r))
+	assert.Contains(t, html, `<p id="result-status" hx-swap-oob="innerHTML">2 assets for pack loops. No results contain every word; showing results that match any word.</p>`)
+
+	r.AnyWordFallback = false
+	assert.NotContains(t, render(t, ResultsFragment(Filters{Query: "pack loops"}, r)), "match any word")
+}

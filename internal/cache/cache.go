@@ -516,19 +516,28 @@ var queryAnalyzer = func() analysis.Analyzer {
 	return a
 }()
 
-// textQuery requires every whitespace-separated term of s to match in at
-// least one text field: a conjunction over terms, each term a disjunction of
-// an exact match and a light-typo match over the four fields. Terms the
-// analyzer reduces to nothing (stop words such as "of" or "the") are skipped,
-// because the index holds no token for them and they would otherwise make
-// every query containing one match nothing. If every term is skipped the
-// query matches nothing, as a lone stop word always has.
-func textQuery(s string) query.Query {
-	var terms []query.Query
+// indexedWords returns the whitespace-separated words of s that survive the
+// analyzer. Stop words such as "of" or "the" are dropped: the index holds no
+// token for them, so a match query on one would match nothing.
+func indexedWords(s string) []string {
+	var out []string
 	for _, word := range strings.Fields(s) {
-		if len(queryAnalyzer.Analyze([]byte(word))) == 0 {
-			continue
+		if len(queryAnalyzer.Analyze([]byte(word))) > 0 {
+			out = append(out, word)
 		}
+	}
+	return out
+}
+
+// textQuery requires every indexed word of s to match in at least one text
+// field: a conjunction over words, each word a disjunction of an exact match
+// and a light-typo match over the four fields. With anyWord set it is a
+// disjunction over words instead (the fallback for a query nothing satisfies
+// as a whole), with the same per-word clauses and boosts. If s has no indexed
+// word the query matches nothing, as a lone stop word always has.
+func textQuery(s string, anyWord bool) query.Query {
+	var terms []query.Query
+	for _, word := range indexedWords(s) {
 		exact := buildFieldQuery(word, 0, 0)
 		exact.SetBoost(10)
 		fuzzy := buildFieldQuery(word, 1, fuzzyPrefixLen)
@@ -540,6 +549,9 @@ func textQuery(s string) query.Query {
 		return bleve.NewMatchNoneQuery()
 	case 1:
 		return terms[0]
+	}
+	if anyWord {
+		return bleve.NewDisjunctionQuery(terms...)
 	}
 	return bleve.NewConjunctionQuery(terms...)
 }
