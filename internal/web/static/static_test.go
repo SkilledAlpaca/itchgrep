@@ -1,6 +1,7 @@
 package static
 
 import (
+	"os"
 	"testing"
 	"testing/fstest"
 
@@ -68,4 +69,22 @@ func TestEmbeddedFilesAreOnlyTheServedAssets(t *testing.T) {
 		assert.Len(t, Hash(name), hashLen, name)
 	}
 	assert.Len(t, hashes, 3, "no Go source or VENDOR.md may be embedded")
+}
+
+// TestAppJSDefinesEveryFunctionItsListenersCall guards against an edit that
+// deletes a helper another listener still calls. The failure is silent in Go and
+// shows up only as a ReferenceError in the browser, inside an htmx event handler
+// that then skips everything after it.
+func TestAppJSDefinesEveryFunctionItsListenersCall(t *testing.T) {
+	src, err := os.ReadFile("app.js")
+	require.NoError(t, err)
+	js := string(src)
+	for _, name := range []string{
+		"localizeTimestamps", "localizeAbsoluteTimestamps", "localizeRelativeTimestamps",
+		"formatLocalDateTime", "refreshRelativeTimes", "relativeAgeLabel", "relativeDueLabel",
+		"filterFacets", "loadFacetTail", "expandFacets", "facetTailFailed", "restoreFacetState",
+		"applySavedState", "renderSavedGrid", "syncFacets", "moveFocusAfterSwap", "syncQueryInput",
+	} {
+		assert.Regexp(t, `function `+name+`\(`, js, name)
+	}
 }
