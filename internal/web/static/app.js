@@ -23,7 +23,8 @@ function pageBuild() {
 
 // The page-level address of a fragment request: HX-Push-Url when the server
 // sent one, else /results?... becomes /?... (without the implicit page=1).
-// /results/tags has no page of its own to go to; the caller reloads.
+// /results/tags and later pages have no page of their own to go to; the
+// caller reloads.
 function pageForFragment(evt) {
 	var xhr = evt.detail.xhr;
 	var pushed = xhr.getResponseHeader('HX-Push-Url');
@@ -34,6 +35,9 @@ function pageForFragment(evt) {
 	var parts = path.slice('/results?'.length).split('&');
 	var kept = [];
 	for (var i = 0; i < parts.length; i++) {
+		// A later page comes from infinite scroll: reload the page the
+		// visitor is on rather than open that batch on its own.
+		if (parts[i].indexOf('page=') === 0 && parts[i] !== 'page=1') return '';
 		if (parts[i] !== 'page=1' && parts[i] !== '') kept.push(parts[i]);
 	}
 	return kept.length ? '/?' + kept.join('&') : '/';
