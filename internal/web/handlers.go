@@ -110,6 +110,9 @@ type handler struct {
 	// it: Last-Modified is the later of this and the data time (see
 	// lastModified). Captured once, so the validator does not drift.
 	started time.Time
+
+	// build identifies the running release; see BuildID.
+	build string
 }
 
 // NewHandler builds the handler every page route in cmd/webserver/main.go is
@@ -120,6 +123,7 @@ func NewHandler(cache *cache.Cache, crawlInterval time.Duration, m *metrics.Coun
 		crawlInterval: crawlInterval,
 		metrics:       m,
 		started:       time.Now(),
+		build:         BuildID(),
 	}
 }
 
@@ -253,7 +257,7 @@ func pageParam(r *http.Request) (int64, bool) {
 func Handle404(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNotFound)
-	component := templates.Layout("Not found — ITCHGREP", templates.Shell{}, templates.Error404())
+	component := templates.Layout("Not found — ITCHGREP", templates.Shell{Build: BuildID()}, templates.Error404())
 	component.Render(r.Context(), w)
 }
 
@@ -326,17 +330,17 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 func (h *handler) badPage(w http.ResponseWriter, r *http.Request, firstPage string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusBadRequest)
-	templates.Layout("Invalid page — ITCHGREP", templates.Shell{Age: h.freshness(), Coverage: h.coverage()}, templates.BadPage(firstPage)).Render(r.Context(), w)
+	templates.Layout("Invalid page — ITCHGREP", h.shell(), templates.BadPage(firstPage)).Render(r.Context(), w)
 }
 
 // shell is the page frame for every route that is not a result list.
 func (h *handler) shell() templates.Shell {
-	return templates.Shell{Age: h.freshness(), Coverage: h.coverage()}
+	return templates.Shell{Age: h.freshness(), Coverage: h.coverage(), Build: h.build}
 }
 
 // searchShell is the page frame for the routes built around a result list.
 func (h *handler) searchShell() templates.Shell {
-	return templates.Shell{Age: h.freshness(), Coverage: h.coverage(), Search: true}
+	return templates.Shell{Age: h.freshness(), Coverage: h.coverage(), Search: true, Build: h.build}
 }
 
 // requestedForm is the request's own address in the shape Filters.PageURL
@@ -356,6 +360,7 @@ func requestedForm(r *http.Request) string {
 // work. The response carries HX-Push-Url so the address bar shows the shareable
 // /?... form rather than this endpoint.
 func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
+	h.stampBuild(w)
 	filters := parseFilters(r, h.cache.Rates())
 
 	page, ok := pageParam(r)
@@ -452,6 +457,7 @@ func (h *handler) cacheableFor(w http.ResponseWriter, page int64, results templa
 // The v parameter in the URL only keys the caches by data generation; the
 // answer is always the current one.
 func (h *handler) HandleResultsTags(w http.ResponseWriter, r *http.Request) {
+	h.stampBuild(w)
 	filters := parseFilters(r, h.cache.Rates())
 
 	if h.notModified(w, r) {

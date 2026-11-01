@@ -20,6 +20,11 @@ type Shell struct {
 	// straight to it, past the sidebar's forty-odd links, instead of to the top
 	// of <main>.
 	Search bool
+
+	// Build is the release that rendered the page. It goes out as a meta tag
+	// that app.js compares with the X-Itchgrep-Build header of every fragment
+	// it is about to swap; see web.BuildID.
+	Build string
 }
 
 // skipHref and skipLabel describe the skip link, the first focusable element
@@ -53,6 +58,7 @@ templ LayoutHead(title string, head templ.Component, shell Shell, content templ.
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<meta name="description" content="Full-text search over itch.io game assets, by title, author, description and tag."/>
 			<meta name="color-scheme" content="dark light"/>
+			<meta name="itchgrep-build" content={ shell.Build }/>
 			// htmx injects an inline <style> for .htmx-indicator unless told not
 			// to, and the CSP (style-src 'self') blocks it with a console error.
 			// The spinner is styled in app.css instead.
