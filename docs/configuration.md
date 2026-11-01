@@ -255,8 +255,8 @@ Upper bound on how many tags discovery will visit.
 
 Read by both binaries, in `internal/storage/storage.go`'s `Dir()`. The single
 directory both processes treat as the entire storage layer:
-`assets.json`, `tags.json`, `checkpoint.json`, `rates.json`, `stats.json`,
-`traffic.json`, `history.json`, and the `index.bleve/` search index.
+`assets.json`, `firstseen.json`, `tags.json`, `checkpoint.json`, `rates.json`,
+`stats.json`, `traffic.json`, `history.json`, and the `index.bleve/` search index.
 
 - **Format**: a filesystem path, relative or absolute.
 - **Not a secret.**
