@@ -50,7 +50,7 @@ func TestConditionalRequestsAreAnsweredBeforeAnySearch(t *testing.T) {
 }
 
 func TestConditionalRequestsThatCannotBeAnsweredGet200(t *testing.T) {
-	r, _ := perfRouter(t)
+	r, _, h := perfRouterHandler(t)
 	full := get(t, r, "/?q=pixel")
 	lm := full.Header().Get("Last-Modified")
 	parsed, err := http.ParseTime(lm)
@@ -79,7 +79,6 @@ func TestConditionalRequestsThatCannotBeAnsweredGet200(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set("If-Modified-Since", lm)
 	rec := httptest.NewRecorder()
-	h := NewHandler(manyTagsCache(t), 0, nil)
 	assert.False(t, h.notModified(rec, req))
 }
 
@@ -102,9 +101,10 @@ func TestConditionalRequestAfterNewDataGets200(t *testing.T) {
 }
 
 func TestHeadRequestsAreConditionalToo(t *testing.T) {
-	_, c := perfRouter(t)
-	h := NewHandler(c, 0, nil)
-	lm := c.DataUpdatedTime().UTC().Format(http.TimeFormat)
+	_, _, h := perfRouterHandler(t)
+	// The handler's own validator, not the data time: Last-Modified is the later
+	// of the data time and the process start.
+	lm := h.lastModified().UTC().Format(http.TimeFormat)
 	req := httptest.NewRequest(http.MethodHead, "/about", nil)
 	req.Header.Set("If-Modified-Since", lm)
 	w := httptest.NewRecorder()

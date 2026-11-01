@@ -18,8 +18,9 @@ import (
 // sidebarRouter is perfRouter plus the tag tail route.
 func sidebarRouter(t *testing.T) (*chi.Mux, *cache.Cache) {
 	t.Helper()
-	r, c := perfRouter(t)
-	h := NewHandler(c, 0, nil)
+	// The same handler as the other routes: the validator includes the
+	// handler's start time, so a second handler would validate differently.
+	r, c, h := perfRouterHandler(t)
 	r.Get("/results/tags", h.HandleResultsTags)
 	r.Head("/results/tags", h.HandleResultsTags)
 	return r, c
@@ -40,12 +41,14 @@ func TestSidebarRendersTheHeadAndLeavesTheRestToTheTail(t *testing.T) {
 	page := get(t, r, "/").Body.String()
 
 	assert.Equal(t, 40, strings.Count(page, "<li data-facet="), "the page carries the head")
-	assert.Contains(t, page, fmt.Sprintf(`data-tail-url="/results/tags?v=%d"`, c.DataUpdatedTime().Unix()),
-		"the fragment is keyed by the data generation")
+	gen := fmt.Sprintf("%d-%s", c.DataUpdatedTime().Unix(), assetHashPrefix("app.js"))
+	assert.Regexp(t, `^\d+-[0-9a-f]{8}$`, gen, "data time plus a prefix of app.js's fingerprint")
+	assert.Contains(t, page, fmt.Sprintf(`data-tail-url="/results/tags?v=%s"`, gen),
+		"the fragment is keyed by the data and script generation")
 	assert.Contains(t, page, `href="/?alltags=1"`)
 	assert.Contains(t, page, "More tags")
 
-	list := get(t, r, fmt.Sprintf("/results/tags?v=%d", c.DataUpdatedTime().Unix()))
+	list := get(t, r, "/results/tags?v="+gen)
 	require.Equal(t, http.StatusOK, list.Code)
 	rows := regexp.MustCompile(`<li data-facet="([^"]+)"`).FindAllStringSubmatch(list.Body.String(), -1)
 	assert.Len(t, rows, 60, "the whole ranked list: 60 tags, head and tail")
@@ -167,4 +170,13 @@ func TestTagTailIsConditionalAndCacheable(t *testing.T) {
 func TestHeadOfTheTagTailIsAnsweredWithoutABody(t *testing.T) {
 	r, _ := sidebarRouter(t)
 	assertHeadIsConditional(t, r, "/results/tags")
+}
+
+func TestAssetHashPrefixTracksTheFingerprint(t *testing.T) {
+	js, css := assetHashPrefix("app.js"), assetHashPrefix("app.css")
+	assert.Len(t, js, 8)
+	assert.Len(t, css, 8)
+	assert.NotEqual(t, js, css, "each file has its own fingerprint")
+	assert.Contains(t, templates.Asset("app.js"), js, "it is read back out of the fingerprinted URL")
+	assert.Empty(t, assetHashPrefix("no-such-file.js"))
 }

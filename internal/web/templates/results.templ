@@ -1,7 +1,6 @@
 package templates
 
 import "net/url"
-import "strconv"
 import "strings"
 import "itchgrep/pkg/models"
 import "itchgrep/pkg/money"
@@ -36,10 +35,12 @@ type Results struct {
 	// cache.Results.LikeTitle. Empty when Like is unset or matched nothing.
 	LikeTitle string
 
-	// DataUnix is the publish time of the dataset the results came from, in Unix
-	// seconds. The sidebar's on-demand list is fetched under it, so each data
-	// generation has its own cache key.
-	DataUnix int64
+	// Generation names the data and the code the page was rendered from: the
+	// dataset's publish time in Unix seconds, a dash, and a prefix of app.js's
+	// content fingerprint. The sidebar's on-demand list is fetched under it, so a
+	// new publish, or a deploy that changes the script (and with it the markup
+	// the list is swapped into), gets its own cache key at the edge.
+	Generation string
 
 	// FirstPageURL, when set, is where "back to the first page" goes, for a
 	// page whose first page is not at f.PageURL(1) - a /tag/{slug} page.
@@ -78,17 +79,17 @@ const MoreTagsParam = "alltags"
 
 // tagTailURL is the endpoint that renders the whole ranked sidebar list for
 // these filters, the same query string the results fragment takes (so it is as
-// cacheable as the results it belongs to) plus v, the data generation the page
-// was rendered from. Each generation is its own cache key, so a copy of the
+// cacheable as the results it belongs to) plus v, the generation the page was rendered
+// from: the data time and a prefix of app.js's fingerprint (see Generation). Each generation is its own cache key, so a copy of the
 // fragment from before a publish is never handed to a page from after it.
 //
 // Sort and currency are carried only when set: they change nothing about the
 // tags, but the rows' links lead to a results page and have to keep them. The
 // common case has neither, and shares one key.
-func tagTailURL(f Filters, generation int64) string {
+func tagTailURL(f Filters, generation string) string {
 	v := f.Values()
-	if generation != 0 {
-		v.Set("v", strconv.FormatInt(generation, 10))
+	if generation != "" {
+		v.Set("v", generation)
 	}
 	if len(v) == 0 {
 		return "/results/tags"
@@ -434,7 +435,7 @@ templ TagSidebar(f Filters, r Results) {
 					class="facet-list"
 					id="facet-list"
 					if sidebarRest(f, r.Tags) > 0 {
-						data-tail-url={ tagTailURL(f, r.DataUnix) }
+						data-tail-url={ tagTailURL(f, r.Generation) }
 						hx-sync="this:replace"
 					}
 				>

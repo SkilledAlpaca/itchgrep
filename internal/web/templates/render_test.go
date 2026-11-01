@@ -332,12 +332,12 @@ func TestTagListRendersEveryRowAndHidesThoseBeyondTheHead(t *testing.T) {
 }
 
 func TestTagListURLNamesTheDataGeneration(t *testing.T) {
-	assert.Equal(t, "/results/tags", tagTailURL(Filters{}, 0))
-	assert.Equal(t, "/results/tags?v=1790000000", tagTailURL(Filters{}, 1790000000))
+	assert.Equal(t, "/results/tags", tagTailURL(Filters{}, ""))
+	assert.Equal(t, "/results/tags?v=1790000000-ab12cd34", tagTailURL(Filters{}, "1790000000-ab12cd34"))
 	f := Filters{Query: "tile", Sort: models.SortTitle}.WithTag("2d")
-	assert.Equal(t, "/results/tags?q=tile&sort=title&tags=2d&v=1790000000", tagTailURL(f, 1790000000),
+	assert.Equal(t, "/results/tags?q=tile&sort=title&tags=2d&v=1790000000-ab12cd34", tagTailURL(f, "1790000000-ab12cd34"),
 		"narrowing fields and v; sort only because the rows' links must keep it")
-	assert.Equal(t, "/results/tags?q=tile&tags=2d&v=5", tagTailURL(Filters{Query: "tile"}.WithTag("2d"), 5), "the default sort is omitted")
+	assert.Equal(t, "/results/tags?q=tile&tags=2d&v=5-x", tagTailURL(Filters{Query: "tile"}.WithTag("2d"), "5-x"), "the default sort is omitted")
 }
 
 func TestFilterLinksInheritTheirTargetFromTheSearchPage(t *testing.T) {

@@ -410,6 +410,29 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 	templates.AssetPage(filters, results).Render(r.Context(), w)
 }
 
+// generation is the token the sidebar fragment URL carries (v=): the data time
+// and the first characters of app.js's content fingerprint. Either changing
+// gives the fragment a new URL, so an edge copy rendered for the old data or the
+// old script is never handed to a page that expects the new.
+func (h *handler) generation() string {
+	return fmt.Sprintf("%d-%s", h.cache.DataUpdatedTime().Unix(), assetHashPrefix("app.js"))
+}
+
+// assetHashPrefix is the first 8 characters of a static file's fingerprint, read
+// back out of its fingerprinted URL (/static/app.<hash>.js); empty if the file
+// is not fingerprinted.
+func assetHashPrefix(name string) string {
+	parts := strings.Split(templates.Asset(name), ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	hash := parts[len(parts)-2]
+	if len(hash) > 8 {
+		hash = hash[:8]
+	}
+	return hash
+}
+
 // cacheableFor is cacheable for a page of results, with the short lifetime for
 // a page past the last (see cacheableBriefly).
 func (h *handler) cacheableFor(w http.ResponseWriter, page int64, results templates.Results) {
@@ -471,7 +494,7 @@ func (h *handler) find(filters templates.Filters, page int64, facets bool) (temp
 		Tags:          found.Tags,
 		Page:          page,
 		Rates:         h.cache.Rates(),
-		DataUnix:      h.cache.DataUpdatedTime().Unix(),
+		Generation:    h.generation(),
 		HasRecency:    h.cache.HasRecency(),
 		HasPriceBands: h.cache.HasPriceBands(),
 		// Computed from the totals rather than from whether this page came back
