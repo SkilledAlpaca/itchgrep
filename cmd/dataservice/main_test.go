@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"itchgrep/internal/storage"
 	"itchgrep/pkg/models"
+	"itchgrep/pkg/money"
 	"os"
 	"path/filepath"
 	"testing"
@@ -423,4 +425,47 @@ func TestFirstSeenHistoryLostIsFlaggedOnlyWhenAnIndexWasAlreadyPublished(t *test
 	assert.True(t, firstSeenHistoryLost(nil, nil), "an index but no history anywhere")
 	assert.False(t, firstSeenHistoryLost(storage.FirstSeenMap{"a": {}}, nil), "the map survived")
 	assert.False(t, firstSeenHistoryLost(nil, []models.Asset{{GameId: "a"}}), "assets.json survived")
+}
+
+// TestRatesArePublishedOnlyWithTheIndexTheyPriced pins the order of a publish.
+// The webserver prices its in-memory orderings from rates.json and opens the
+// index the crawl built, so a crawl whose publish fails must leave the old
+// rates in place, and one that succeeds must have replaced them by the time
+// assets.json (the reload trigger) is written.
+func TestRatesArePublishedOnlyWithTheIndexTheyPriced(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	oldRates := money.Fallback()
+	oldRates.Date = "2020-01-01"
+	require.NoError(t, storage.PutRates(oldRates))
+	newRates := money.Fallback()
+	newRates.Date = "2026-10-31"
+
+	origSource, origPublish := ratesSource, publishIndex
+	t.Cleanup(func() { ratesSource, publishIndex = origSource, origPublish })
+	ratesSource = func() money.Rates { return newRates }
+
+	assets := []models.Asset{{GameId: "1", Title: "A", Price: "$3", InvPopularity: 1}}
+
+	publishIndex = func() error { return errors.New("rename failed") }
+	require.Error(t, publishCrawl(assets, nil))
+	got, err := storage.GetRates()
+	require.NoError(t, err)
+	assert.Equal(t, "2020-01-01", got.Date, "a failed publish leaves the old index's rates")
+	_, err = os.Stat(storage.IndexPath())
+	assert.True(t, os.IsNotExist(err))
+
+	publishIndex = func() error {
+		// By now the new rates must not be stored yet, and are by the time
+		// assets.json is written.
+		mid, err := storage.GetRates()
+		require.NoError(t, err)
+		assert.Equal(t, "2020-01-01", mid.Date, "rates are not stored before the index is published")
+		return storage.PublishIndex()
+	}
+	require.NoError(t, publishCrawl(assets, nil))
+	got, err = storage.GetRates()
+	require.NoError(t, err)
+	assert.Equal(t, "2026-10-31", got.Date)
+	_, err = os.Stat(filepath.Join(os.Getenv("DATA_DIR"), storage.DataFileName))
+	assert.NoError(t, err, "assets.json is written after the rates")
 }
