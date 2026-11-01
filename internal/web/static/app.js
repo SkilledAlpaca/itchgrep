@@ -1,8 +1,84 @@
+// ------------------------------------------------------- release check --
+//
+// The edge caches page HTML and fragments independently, so for up to an hour
+// after a deploy a page from one release can fetch fragments from the next.
+// They disagree about markup (which element carries hx-target, what the
+// sidebar looks like), and swapping one into the other once nested the whole
+// results region inside a tag link. Every fragment names its release in
+// X-Itchgrep-Build and every page in <meta name="itchgrep-build">; when they
+// differ the swap is cancelled and the visitor gets a full page of the new
+// release instead.
+//
+// One forced navigation per target build per tab: if the page that comes back
+// is still the old one (a stale edge copy), the next mismatch swaps as usual
+// rather than looping. A navigation only follows a tap, never happens on its
+// own, so even without sessionStorage (the guard is then per page load) it
+// cannot spin.
+var reloadedFor = {};
+
+function pageBuild() {
+	var meta = document.querySelector('meta[name="itchgrep-build"]');
+	return meta ? meta.getAttribute('content') : '';
+}
+
+// The page-level address of a fragment request: HX-Push-Url when the server
+// sent one, else /results?... becomes /?... (without the implicit page=1).
+// /results/tags has no page of its own to go to; the caller reloads.
+function pageForFragment(evt) {
+	var xhr = evt.detail.xhr;
+	var pushed = xhr.getResponseHeader('HX-Push-Url');
+	if (pushed && pushed.indexOf('/') === 0 && pushed.indexOf('//') !== 0) return pushed;
+	var info = evt.detail.pathInfo;
+	var path = (info && info.requestPath) || '';
+	if (path.indexOf('/results?') !== 0) return '';
+	var parts = path.slice('/results?'.length).split('&');
+	var kept = [];
+	for (var i = 0; i < parts.length; i++) {
+		if (parts[i] !== 'page=1' && parts[i] !== '') kept.push(parts[i]);
+	}
+	return kept.length ? '/?' + kept.join('&') : '/';
+}
+
+function alreadyReloadedFor(build) {
+	var key = 'itchgrep-reload-' + build;
+	if (reloadedFor[build]) return true;
+	reloadedFor[build] = true;
+	try {
+		if (window.sessionStorage.getItem(key)) return true;
+		window.sessionStorage.setItem(key, '1');
+	} catch (e) {
+		// No storage: the in-memory flag above still stops a loop within
+		// this page load; the navigation itself happens once.
+	}
+	return false;
+}
+
+function releaseMismatch(evt) {
+	var xhr = evt.detail.xhr;
+	var theirs = xhr && xhr.getResponseHeader && xhr.getResponseHeader('X-Itchgrep-Build');
+	var ours = pageBuild();
+	if (!theirs || !ours || theirs === ours) return false;
+	if (alreadyReloadedFor(theirs)) return false;
+	evt.detail.shouldSwap = false;
+	evt.detail.isError = false;
+	var dest = pageForFragment(evt);
+	if (dest) {
+		window.location.assign(dest);
+	} else {
+		window.location.reload();
+	}
+	return true;
+}
+
 // htmx discards non-2xx responses without swapping, so a 503 from a
 // server with no index yet would render nothing at all. These
 // responses carry a rendered explanation, so let them through while
 // leaving the status code honest.
+//
+// The release check comes first: nothing below should act on a response the
+// page is about to discard.
 document.addEventListener('htmx:beforeSwap', function (evt) {
+	if (releaseMismatch(evt)) return;
 	var status = evt.detail.xhr.status;
 	var target = evt.detail.target;
 	if (target && target.id === 'facet-list' && status !== 200) {
