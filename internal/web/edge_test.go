@@ -55,6 +55,7 @@ func manyTagsCache(t *testing.T) *cache.Cache {
 	require.NoError(t, index.Close())
 
 	c := cache.NewCache(36)
+	t.Cleanup(func() { _ = c.Close() })
 	require.NoError(t, c.RefreshDataCache())
 	return c
 }

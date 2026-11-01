@@ -35,6 +35,7 @@ func TestSitemapListsFixedPagesAndTags(t *testing.T) {
 	require.NoError(t, index.Close())
 
 	c := cache.NewCache(36)
+	t.Cleanup(func() { _ = c.Close() })
 	require.NoError(t, c.RefreshDataCache())
 	h := NewHandler(c, 0, nil)
 	r := chi.NewRouter()
