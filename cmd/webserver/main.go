@@ -76,6 +76,7 @@ func checkHealthz(port string, timeout time.Duration) error {
 type pageHandler interface {
 	HandleIndex(w http.ResponseWriter, r *http.Request)
 	HandleResults(w http.ResponseWriter, r *http.Request)
+	HandleResultsTags(w http.ResponseWriter, r *http.Request)
 	HandleAbout(w http.ResponseWriter, r *http.Request)
 	HandleStats(w http.ResponseWriter, r *http.Request)
 	HandleNew(w http.ResponseWriter, r *http.Request)
@@ -176,6 +177,7 @@ func newRouter(h pageHandler, m *metrics.Counters, limiter *web.Limiter) *chi.Mu
 			r.Use(web.RateLimitedGroupMarker)
 			r.Get("/", h.HandleIndex)
 			r.Get("/results", h.HandleResults)
+			r.Get("/results/tags", h.HandleResultsTags)
 			r.Get("/about", h.HandleAbout)
 			r.Get("/stats", h.HandleStats)
 			r.Get("/new", h.HandleNew)

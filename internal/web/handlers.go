@@ -388,6 +388,29 @@ func (h *handler) cacheableFor(w http.ResponseWriter, page int64, results templa
 	h.cacheable(w)
 }
 
+// HandleResultsTags serves /results/tags: the sidebar rows past the head, for
+// the filters in the query string. The page leaves them out to stay small and
+// app.js fetches them when the visitor looks for a tag. A fragment of rows and
+// nothing else, so an error is an empty body with the honest status: the
+// sidebar then simply has no more to offer.
+func (h *handler) HandleResultsTags(w http.ResponseWriter, r *http.Request) {
+	filters := parseFilters(r, h.cache.Rates())
+
+	if h.notModified(w, r) {
+		return
+	}
+	results, err := h.find(filters, 1, true)
+	if err != nil {
+		logging.Error("Error fetching the tag tail: %s", err)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(statusFor(err))
+		return
+	}
+
+	h.cacheable(w)
+	templates.TagTail(filters, results.Tags).Render(r.Context(), w)
+}
+
 // find runs the query and shapes the answer for the templates.
 func (h *handler) find(filters templates.Filters, page int64, facets bool) (templates.Results, error) {
 	found, err := h.cache.Find(cache.SearchOptions{
@@ -592,6 +615,9 @@ not:
 	}
 
 	f.Currency = normalizeCurrency(q.Get("cur"), rates)
+
+	// The no-script "More tags" link. Display only; see Filters.AllTags.
+	f.AllTags = q.Get(templates.MoreTagsParam) == "1"
 
 	return f
 }

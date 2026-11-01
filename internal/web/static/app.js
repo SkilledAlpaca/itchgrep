@@ -11,12 +11,11 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 	rememberLoadMoreFocus(evt);
 });
 
-// The sidebar shows the top few dozen tags and carries the rest hidden
-// (data-facet-tail); this narrows the whole list to what was typed, so
-// a match past the head shows up too. An empty box puts the head back.
-// Purely presentational - it hides and reveals list items that are
-// already on the page rather than asking the server for more - so the
-// sidebar stays exactly as useful with scripting off.
+// The sidebar shows the top few dozen tags. The rest are not in the page: they
+// are fetched when the visitor focuses "Find a tag" or follows "More tags" (see
+// loadFacetTail), and arrive hidden (data-facet-tail). This narrows the whole
+// list to what was typed, so a match past the head shows up too. An empty box
+// puts the head back, plus the rest if the visitor asked for more tags.
 //
 // Delegated, because the sidebar is replaced on every filter change.
 document.addEventListener('input', function (e) {
@@ -27,14 +26,97 @@ document.addEventListener('input', function (e) {
 
 function filterFacets(box) {
 	var needle = box.value.trim().toLowerCase();
+	var details = box.closest('.facets-details');
+	var expanded = !!details && details.hasAttribute('data-expanded');
 	var list = box.parentNode.querySelectorAll('[data-facet]');
 	for (var i = 0; i < list.length; i++) {
 		var slug = list[i].getAttribute('data-facet');
 		list[i].hidden = needle === ''
-			? list[i].hasAttribute('data-facet-tail')
+			? list[i].hasAttribute('data-facet-tail') && !expanded
 			: slug.indexOf(needle) === -1;
 	}
 }
+
+// ------------------------------------------------------------- tag tail --
+//
+// The sidebar's list element carries data-tail-url when the page left tags
+// out. Asking for them is one cacheable GET whose rows are appended to the
+// list. data-tail is "loading" while it runs and "loaded" after; a failure
+// puts it back so the next try asks again. Without scripting none of this
+// runs and "More tags" is a plain link to a page that lists everything.
+var expandAfterTail = false;
+
+function facetList() {
+	return document.getElementById('facet-list');
+}
+
+function loadFacetTail(list) {
+	if (!list || !list.getAttribute('data-tail-url') || list.hasAttribute('data-tail')) return;
+	if (!window.htmx) return;
+	list.setAttribute('data-tail', 'loading');
+	htmx.ajax('GET', list.getAttribute('data-tail-url'), { source: list, target: list, swap: 'beforeend' });
+}
+
+// Revealing the rest keeps focus where the visitor was: the link they used is
+// removed, so focus goes to the first row it brought in rather than to <body>.
+function expandFacets(details, moveFocus) {
+	if (!details) return;
+	details.setAttribute('data-expanded', '');
+	var box = details.querySelector('[data-facet-search]');
+	if (box) filterFacets(box);
+	var more = details.querySelector('[data-facets-more]');
+	if (more) {
+		var wrap = more.closest('.facets-more-wrap') || more;
+		wrap.remove();
+	}
+	if (moveFocus) {
+		var first = details.querySelector('[data-facet-tail] a.facet');
+		if (first) first.focus();
+	}
+}
+
+// Focusing the box says the visitor is about to look for a tag; fetch the rest
+// now so a match past the head is there by the time they type.
+document.addEventListener('focusin', function (e) {
+	if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-facet-search')) loadFacetTail(facetList());
+});
+
+document.addEventListener('click', function (e) {
+	var more = e.target.closest && e.target.closest('[data-facets-more]');
+	if (!more) return;
+	var list = facetList();
+	if (!list || !window.htmx) return; // the link works as a link
+	e.preventDefault();
+	var details = more.closest('.facets-details');
+	if (list.getAttribute('data-tail') === 'loaded') {
+		expandFacets(details, true);
+		return;
+	}
+	expandAfterTail = true;
+	loadFacetTail(list);
+});
+
+document.addEventListener('htmx:afterSwap', function (evt) {
+	var list = evt.target;
+	if (!list || list.id !== 'facet-list' || !document.contains(list)) return;
+	list.setAttribute('data-tail', 'loaded');
+	var details = list.closest('.facets-details');
+	var box = details && details.querySelector('[data-facet-search]');
+	if (box) filterFacets(box);
+	if (expandAfterTail) {
+		expandAfterTail = false;
+		expandFacets(details, true);
+	}
+});
+
+function facetTailFailed(evt) {
+	var list = evt.target;
+	if (!list || list.id !== 'facet-list') return;
+	list.removeAttribute('data-tail');
+	expandAfterTail = false;
+}
+document.addEventListener('htmx:responseError', facetTailFailed);
+document.addEventListener('htmx:sendError', facetTailFailed);
 
 // Spelled out as getDate/getMonth/etc rather than toLocaleString: those
 // read in whatever zone the browser is already in, with no Intl call and
@@ -505,7 +587,8 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 	var box = document.querySelector('[data-facet-search]');
 	facetState = {
 		open: details ? details.open : null,
-		needle: box ? box.value : ''
+		needle: box ? box.value : '',
+		expanded: !!details && details.hasAttribute('data-expanded')
 	};
 });
 
@@ -520,6 +603,13 @@ function restoreFacetState(root) {
 	if (box && state.needle) {
 		box.value = state.needle;
 		filterFacets(box);
+	}
+	// The new sidebar has only its head. A visitor who was searching the whole
+	// list, or had asked for more tags, gets the rest fetched again for the new
+	// filters; the search text is applied when it arrives.
+	if (state.needle || state.expanded) {
+		if (state.expanded && details) details.setAttribute('data-expanded', '');
+		loadFacetTail(root.querySelector('#facet-list'));
 	}
 }
 

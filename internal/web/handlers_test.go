@@ -34,6 +34,7 @@ func newTestRouter() (*chi.Mux, *handler) {
 	r := chi.NewRouter()
 	r.Get("/", h.HandleIndex)
 	r.Get("/results", h.HandleResults)
+	r.Get("/results/tags", h.HandleResultsTags)
 	r.Get("/about", h.HandleAbout)
 	r.Get("/stats", h.HandleStats)
 	r.Get("/new", h.HandleNew)

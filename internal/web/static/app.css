@@ -594,6 +594,33 @@ a:hover {
   list-style: none;
 }
 
+/* "More tags": a link to the full list, replaced in place by the rest of the
+ * tags when scripting is on. The same faint register as the other secondary
+ * controls, with a target tall enough for a thumb. */
+.facets-more-wrap {
+  margin: 0.4rem 0 0;
+}
+
+.facets-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.8rem;
+  padding: 0 0.6rem;
+  font-size: 1.3rem;
+  color: var(--text-dim);
+  text-decoration: underline;
+}
+
+.facets-more:hover {
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .facets-more {
+    min-height: 4.4rem;
+  }
+}
+
 /* Each row is the tag link plus a separate exclude control, so the row is a
    flex container and the link inside it takes the remaining width. */
 .facet-list li {

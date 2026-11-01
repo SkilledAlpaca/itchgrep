@@ -271,21 +271,76 @@ func TestSidebarRendersTagsWithCounts(t *testing.T) {
 	assert.Contains(t, html, `hx-get="/results?page=1&amp;tags=2d"`)
 }
 
-func TestSidebarRendersTheTailHiddenForTheTagSearch(t *testing.T) {
-	// Only the head shows at rest, but every counted tag must be on the page,
-	// or the find-a-tag box can only ever match the forty already visible.
+func TestSidebarRendersOnlyTheHeadAndOffersTheRest(t *testing.T) {
+	// The page carries the first forty tags; the rest are one request away, so
+	// the markup of every results page (and every filter tap) is smaller.
 	r := sampleResults()
 	r.Tags = nil
-	for i := 0; i <= sidebarTags; i++ {
+	for i := 0; i <= sidebarTags+5; i++ {
 		r.Tags = append(r.Tags, models.Tag{Slug: "tag-" + strconv.Itoa(i), Count: int64(100 - i)})
 	}
-	html := render(t, ResultsRegion(Filters{}, r))
+	f := Filters{}.WithTag("2d")
+	html := render(t, ResultsRegion(f, r))
 
 	last := strconv.Itoa(sidebarTags - 1)
 	assert.Contains(t, html, `<li data-facet="tag-`+last+`">`, "the head shows at rest")
-	tail := strconv.Itoa(sidebarTags)
-	assert.Contains(t, html, `<li data-facet="tag-`+tail+`" data-facet-tail hidden>`,
-		"the tail is rendered, hidden, for the tag search to find")
+	assert.NotContains(t, html, `data-facet="tag-`+strconv.Itoa(sidebarTags)+`"`, "the tail is not in the page")
+	assert.Equal(t, sidebarTags, strings.Count(html, "<li data-facet="))
+	assert.Contains(t, html, `data-tail-url="/results/tags?tags=2d"`, "app.js fetches the rest for the current filters")
+	assert.Contains(t, html, `href="/?alltags=1&amp;tags=2d"`, "without scripting, More tags is a link to the full list")
+	assert.Contains(t, html, `(6 more)`)
+}
+
+func TestSidebarWithAllTagsListsEveryTagAndOffersNoMore(t *testing.T) {
+	r := sampleResults()
+	r.Tags = nil
+	for i := 0; i <= sidebarTags+5; i++ {
+		r.Tags = append(r.Tags, models.Tag{Slug: "tag-" + strconv.Itoa(i), Count: int64(100 - i)})
+	}
+	f := Filters{AllTags: true}
+	html := render(t, ResultsRegion(f, r))
+
+	assert.Equal(t, sidebarTags+6, strings.Count(html, "<li data-facet="))
+	assert.NotContains(t, html, "data-facets-more")
+	assert.NotContains(t, html, "data-tail-url")
+	assert.NotContains(t, html, "data-facet-tail", "no row is hidden when the page was asked for the whole list")
+}
+
+func TestMoreTagsLinkOnATagPageStaysOnTheTagPage(t *testing.T) {
+	r := sampleResults()
+	r.Tags = nil
+	for i := 0; i <= sidebarTags+5; i++ {
+		r.Tags = append(r.Tags, models.Tag{Slug: "tag-" + strconv.Itoa(i), Count: int64(100 - i)})
+	}
+	r.FirstPageURL = "/tag/2d"
+	html := render(t, ResultsRegion(Filters{}.WithTag("2d"), r))
+	assert.Contains(t, html, `href="/tag/2d?alltags=1"`)
+}
+
+func TestTagTailRendersTheRowsPastTheHeadHidden(t *testing.T) {
+	var tags []models.Tag
+	for i := 0; i <= sidebarTags+2; i++ {
+		tags = append(tags, models.Tag{Slug: "tag-" + strconv.Itoa(i), Count: int64(100 - i)})
+	}
+	html := render(t, TagTail(Filters{}, tags))
+	first := strconv.Itoa(sidebarTags)
+	assert.Contains(t, html, `<li data-facet="tag-`+first+`" data-facet-tail hidden>`)
+	assert.NotContains(t, html, `data-facet="tag-`+strconv.Itoa(sidebarTags-1)+`"`)
+	assert.Equal(t, 3, strings.Count(html, "<li "))
+
+	assert.Empty(t, render(t, TagTail(Filters{}, tags[:sidebarTags])), "nothing past the head, nothing to add")
+}
+
+func TestFilterLinksInheritTheirTargetFromTheSearchPage(t *testing.T) {
+	// htmx inherits hx-target and hx-swap, so they are written once on the
+	// container rather than on each of the hundreds of links.
+	html := render(t, Index(Filters{}, sampleResults()))
+	assert.Contains(t, html, `class="search-page" hx-indicator=".searchbar .spinner" hx-sync="this:replace" hx-target="#results-region" hx-swap="innerHTML"`)
+	for _, link := range anchorsWith(html, "facet") {
+		assert.NotContains(t, link, "hx-target")
+		assert.NotContains(t, link, "hx-swap")
+		assert.Contains(t, link, "hx-get=")
+	}
 }
 
 func TestAppliedFiltersRenderAsRemovableChips(t *testing.T) {
@@ -702,7 +757,7 @@ func TestBareFrontPageSidebarLinksToTagPages(t *testing.T) {
 	assert.Contains(t, facets[0], `href="/tag/2d"`)
 	assert.NotContains(t, facets[0], "nofollow")
 	assert.Contains(t, facets[0], `hx-get="/results?page=1&amp;tags=2d"`)
-	assert.Contains(t, facets[0], `hx-target="#results-region"`)
+	assert.NotContains(t, facets[0], "hx-target", "inherited from .search-page")
 
 	for _, a := range anchorsWith(html, `class="facet-exclude"`) {
 		assert.Contains(t, a, `href="/?not=`)

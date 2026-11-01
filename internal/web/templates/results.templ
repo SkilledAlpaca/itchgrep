@@ -57,17 +57,54 @@ func priceFilterLabel(price string) string {
 	}
 }
 
-// sidebarTags caps how many facets the sidebar shows at rest. The vocabulary
-// runs to several hundred tags and the long tail is single-digit counts, so
-// showing all of them would bury the useful ones under noise. The tail is still
-// rendered, hidden, so that the find-a-tag box can match a tag past the head
-// instead of only the forty already on screen.
+// sidebarTags is how many facets the sidebar renders. The vocabulary runs to
+// several hundred tags and the long tail is single-digit counts, so showing all
+// of them would bury the useful ones under noise, and sending all of them to
+// every visitor, on every filter tap, was most of the markup of a results page.
+// The rest is fetched on demand (see TagTail) or, with scripting off, by
+// following the "More tags" link to a page that lists them all.
 const sidebarTags = 40
 
-// facetTail reports whether the i'th facet is past the head the sidebar shows
-// at rest.
-func facetTail(i int) bool {
-	return i >= sidebarTags
+// MoreTagsParam is the query parameter of the no-script "More tags" link. It
+// asks the full page to list every tag in the sidebar and changes nothing
+// about which assets match.
+const MoreTagsParam = "alltags"
+
+// tagTailURL is the endpoint that renders the rest of the sidebar for these
+// filters: the same query string the results fragment takes, so the fragment is
+// as cacheable as the results it belongs to.
+func tagTailURL(f Filters) string {
+	v := f.Values()
+	if len(v) == 0 {
+		return "/results/tags"
+	}
+	return "/results/tags?" + v.Encode()
+}
+
+// moreTagsHref is the no-script "More tags" destination: this page again with
+// the whole list.
+func moreTagsHref(f Filters, r Results) string {
+	if r.FirstPageURL != "" {
+		return r.FirstPageURL + "?" + MoreTagsParam + "=1"
+	}
+	f.AllTags = true
+	return f.PageURL(1)
+}
+
+// sidebarHead is the tags the sidebar renders in the page itself.
+func sidebarHead(f Filters, tags []models.Tag) []models.Tag {
+	if f.AllTags || len(tags) <= sidebarTags {
+		return tags
+	}
+	return tags[:sidebarTags]
+}
+
+// sidebarRest is how many tags the page leaves for TagTail.
+func sidebarRest(f Filters, tags []models.Tag) int {
+	if f.AllTags || len(tags) <= sidebarTags {
+		return 0
+	}
+	return len(tags) - sidebarTags
 }
 
 // facetHref is where a sidebar tag link goes. On the bare front page that is
@@ -130,14 +167,16 @@ func resultStatus(f Filters, r Results) string {
 // href is a parameter, not derived from next, because the one link that should
 // differ is the unfiltered sidebar's, which points at /tag/{slug} - see
 // facetHref. attrs carries per-link extras such as aria-current.
+//
+// hx-target and hx-swap are not repeated on every link: htmx inherits them, and
+// the .search-page container carries them (see Index). A page has hundreds of
+// these links, and the sidebar alone has eighty.
 templ filterLink(class string, href string, next Filters, attrs templ.Attributes) {
 	<a
 		class={ class }
 		href={ templ.SafeURL(href) }
 		{ filterRel(href)... }
 		hx-get={ next.FragmentURL(1) }
-		hx-target="#results-region"
-		hx-swap="innerHTML"
 		{ attrs... }
 	>
 		{ children... }
@@ -349,10 +388,15 @@ templ ActiveFilters(f Filters, likeTitle string) {
 // counts are over the whole match set rather than the visible page, which is
 // what makes it a map of the results rather than a description of them: at a
 // glance it says how much of a search is pixel art and how much is 3D.
-templ TagSidebar(f Filters, tags []models.Tag) {
+//
+// Only the head is rendered here. The rest is one request away: app.js fetches
+// it from data-tail-url when the visitor focuses "Find a tag" or follows "More
+// tags". Without scripting "More tags" is an ordinary link to this page with
+// every tag listed.
+templ TagSidebar(f Filters, r Results) {
 	<aside class="facets" aria-label="Filter by tag">
 		<h2 class="facets-heading">Tags</h2>
-		if len(tags) == 0 {
+		if len(r.Tags) == 0 {
 			<p class="facets-empty">No tags to narrow by.</p>
 		} else {
 			// A disclosure so a phone does not open on a screenful of tags with
@@ -371,34 +415,25 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 					autocomplete="off"
 					data-facet-search
 				/>
-				<ul class="facet-list">
-					for i, tag := range tags {
-						<li data-facet={ tag.Slug } data-facet-tail?={ facetTail(i) } hidden?={ facetTail(i) }>
-							if f.AtTagLimit() {
-								// Plain text, not a link: WithTag refuses at the
-								// cap, so the link would lead to the page it is on.
-								<span class="facet is-capped">
-									<span class="facet-name">{ tag.Slug }</span>
-									<span class="facet-count">{ humanizeCount(tag.Count) }</span>
-								</span>
-							} else {
-								@filterLink("facet", facetHref(f, tag.Slug), f.WithTag(tag.Slug), nil) {
-									<span class="facet-name">{ tag.Slug }</span>
-									<span class="facet-count">{ humanizeCount(tag.Count) }</span>
-								}
-							}
-							// A sibling of the facet link rather than a child of it:
-							// nesting one anchor inside another is invalid, and
-							// browsers resolve it by silently dropping the inner one.
-							// Omitted at the exclusion cap for the reason above.
-							if !f.AtNotTagLimit() {
-								@filterLink("facet-exclude", f.WithNotTag(tag.Slug).ShareURL(), f.WithNotTag(tag.Slug), excludeAttrs(tag.Slug)) {
-									−
-								}
-							}
-						</li>
+				<ul
+					class="facet-list"
+					id="facet-list"
+					if sidebarRest(f, r.Tags) > 0 {
+						data-tail-url={ tagTailURL(f) }
+						hx-sync="this:replace"
+					}
+				>
+					for _, tag := range sidebarHead(f, r.Tags) {
+						@facetItem(f, tag, false)
 					}
 				</ul>
+				if n := sidebarRest(f, r.Tags); n > 0 {
+					<p class="facets-more-wrap">
+						<a class="facets-more" href={ templ.SafeURL(moreTagsHref(f, r)) } rel="nofollow" data-facets-more>
+							More tags<span class="visually-hidden">{ " (" + humanizeCount(int64(n)) + " more)" }</span>
+						</a>
+					</p>
+				}
 				if f.AtTagLimit() {
 					<p class="facets-empty">Tag limit reached.</p>
 				}
@@ -408,6 +443,47 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 			</details>
 		}
 	</aside>
+}
+
+// facetItem is one row of the sidebar: the tag link and its exclude control.
+// tail marks a row that belongs to the on-demand part of the list; those start
+// hidden and app.js reveals them when the visitor searches or asks for more.
+templ facetItem(f Filters, tag models.Tag, tail bool) {
+	<li data-facet={ tag.Slug } data-facet-tail?={ tail } hidden?={ tail }>
+		if f.AtTagLimit() {
+			// Plain text, not a link: WithTag refuses at the
+			// cap, so the link would lead to the page it is on.
+			<span class="facet is-capped">
+				<span class="facet-name">{ tag.Slug }</span>
+				<span class="facet-count">{ humanizeCount(tag.Count) }</span>
+			</span>
+		} else {
+			@filterLink("facet", facetHref(f, tag.Slug), f.WithTag(tag.Slug), nil) {
+				<span class="facet-name">{ tag.Slug }</span>
+				<span class="facet-count">{ humanizeCount(tag.Count) }</span>
+			}
+		}
+		// A sibling of the facet link rather than a child of it:
+		// nesting one anchor inside another is invalid, and
+		// browsers resolve it by silently dropping the inner one.
+		// Omitted at the exclusion cap for the reason above.
+		if !f.AtNotTagLimit() {
+			@filterLink("facet-exclude", f.WithNotTag(tag.Slug).ShareURL(), f.WithNotTag(tag.Slug), excludeAttrs(tag.Slug)) {
+				−
+			}
+		}
+	</li>
+}
+
+// TagTail is the sidebar rows past the head, as the fragment app.js appends to
+// the list. Hidden rows, for the same reason the page used to render them
+// hidden: the visitor chooses when they appear.
+templ TagTail(f Filters, tags []models.Tag) {
+	if len(tags) > sidebarTags {
+		for _, tag := range tags[sidebarTags:] {
+			@facetItem(f, tag, true)
+		}
+	}
 }
 
 // ResultsFragment is the response to a first-page /results request: the region
@@ -443,7 +519,7 @@ templ ResultsFragment(f Filters, r Results) {
 // changing a filter changes all three - the tag counts in the sidebar are
 // counts within the new result set, not the old one.
 templ ResultsRegion(f Filters, r Results) {
-	@TagSidebar(f, r.Tags)
+	@TagSidebar(f, r)
 	<div class="results-main">
 		<div class="toolbar">
 			<div class="toolbar-lead">

@@ -248,3 +248,14 @@ func TestSnapshotAddsRestoredTotalsToLiveOnes(t *testing.T) {
 	assert.EqualValues(t, 11, snap.Total)
 	assert.EqualValues(t, 3, snap.Searches)
 }
+
+func TestTagTailCountsWithResultsAndIsNeverASearch(t *testing.T) {
+	// /results/tags is the sidebar's rows: part of the results page, so it sits
+	// in that bucket, and it never counts as a search however it is asked.
+	c := New()
+	c.RecordRequest("/results/tags", true, 200)
+	snap := c.Snapshot()
+	assert.EqualValues(t, 1, snap.Results)
+	assert.EqualValues(t, 0, snap.Other)
+	assert.EqualValues(t, 0, snap.Searches)
+}

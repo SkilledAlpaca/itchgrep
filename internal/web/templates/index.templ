@@ -153,7 +153,12 @@ templ Index(f Filters, r Results) {
 	// queue, and a new one replaces whatever is still in flight. Without it two
 	// quick taps race, and whichever response arrives last wins - not the tap
 	// that was made last.
-	<div class="search-page" hx-indicator=".searchbar .spinner" hx-sync="this:replace">
+	//
+	// hx-target and hx-swap are inherited too: every filter link swaps the
+	// results region, so the one place that says so is here instead of on each
+	// of the hundreds of links. Anything that targets something else (the search
+	// form, load-more, the tag list's own fetch) says so itself.
+	<div class="search-page" hx-indicator=".searchbar .spinner" hx-sync="this:replace" hx-target="#results-region" hx-swap="innerHTML">
 		@SearchBar(f)
 		// Outside #results-region, which every filter link swaps: a live region
 		// that is replaced is announced inconsistently, because assistive

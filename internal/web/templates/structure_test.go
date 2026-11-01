@@ -160,7 +160,7 @@ func TestCardTitleIsAHeadingInsideTheLink(t *testing.T) {
 func TestTagSidebarIsAnOpenDisclosure(t *testing.T) {
 	// Open in the markup: with scripting off the list is simply there. app.js
 	// folds it on a narrow screen; CSS hides the summary on a wide one.
-	html := render(t, TagSidebar(Filters{}, sampleResults().Tags))
+	html := render(t, TagSidebar(Filters{}, sampleResults()))
 	assert.Contains(t, html, `<details class="facets-details" open>`)
 	assert.Contains(t, html, `<summary class="facets-toggle">Filter by tag</summary>`)
 	assert.Less(t, strings.Index(html, "<summary"), strings.Index(html, "data-facet-search"))
