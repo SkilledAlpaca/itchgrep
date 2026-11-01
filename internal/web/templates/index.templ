@@ -8,9 +8,15 @@ package templates
 // crawl has not run since".
 templ IndexAge(f Freshness, c Coverage) {
 	if f.Known() {
-		<p class={ "index-age", templ.KV("is-stale", f.Stale()) }>
+		// The words are rendered here for scripting off and for the first paint,
+		// but a cached or revalidated copy is read long after it was rendered, so
+		// app.js recomputes the age, the due date and the stale warning from the
+		// datetime attributes and data-stale-at on every load (see
+		// refreshRelativeTimes). Its wording rules mirror Label, DueLabel and
+		// Stale, and testdata/freshness_wording.json pins them.
+		<p class={ "index-age", templ.KV("is-stale", f.Stale()) } data-stale-at={ f.StaleAt() }>
 			index updated
-			<time datetime={ f.DateTime() } title={ f.Absolute() }>{ f.Label() }</time>
+			<time data-relative="age" datetime={ f.DateTime() } title={ f.Absolute() }>{ f.Label() }</time>
 			if f.Stale() {
 				<span class="index-age-warn">— the crawl may have stopped</span>
 			}
@@ -34,7 +40,7 @@ templ IndexAge(f Freshness, c Coverage) {
 			// routine next to the schedule that produced it.
 			<p class="index-age index-next">
 				next update
-				<time datetime={ f.DueDateTime() } title={ f.DueAbsolute() }>{ f.DueLabel() }</time>
+				<time data-relative="due" datetime={ f.DueDateTime() } title={ f.DueAbsolute() }>{ f.DueLabel() }</time>
 			</p>
 		}
 	}

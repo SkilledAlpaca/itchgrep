@@ -1,0 +1,43 @@
+{
+  "comment": "The wording table for the masthead age, the next-update line, and the stale threshold. internal/web/templates/freshness_test.go checks the Go code against it; app.js (relativeAgeLabel, relativeDueLabel, refreshRelativeTimes) implements the same rules and the browser check reads this same file. Change a rule in one place and this file makes the other fail.",
+  "age": [
+    [0, "less than an hour ago"],
+    [3599, "less than an hour ago"],
+    [3600, "1 hour ago"],
+    [7199, "1 hour ago"],
+    [7200, "2 hours ago"],
+    [86399, "23 hours ago"],
+    [86400, "yesterday"],
+    [172799, "yesterday"],
+    [172800, "2 days ago"],
+    [259199, "2 days ago"],
+    [259200, "3 days ago"],
+    [864000, "10 days ago"]
+  ],
+  "due": [
+    [-90000, "any time now"],
+    [0, "any time now"],
+    [1, "within the hour"],
+    [3599, "within the hour"],
+    [3600, "in about an hour"],
+    [7199, "in about an hour"],
+    [7200, "in about 2 hours"],
+    [86399, "in about 23 hours"],
+    [86400, "tomorrow"],
+    [172799, "tomorrow"],
+    [172800, "in about 2 days"],
+    [518400, "in about 6 days"]
+  ],
+  "staleNoSchedule": [
+    [604799, false],
+    [604800, true],
+    [700000, true]
+  ],
+  "staleWeeklySchedule": [
+    [604800, false],
+    [604800, false],
+    [691199, false],
+    [691200, true],
+    [800000, true]
+  ]
+}

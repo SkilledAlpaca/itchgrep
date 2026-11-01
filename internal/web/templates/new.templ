@@ -26,7 +26,7 @@ templ ArrivalsPage(assets []models.Asset, rates money.Rates, age Freshness) {
 				The newest assets across all crawls, most recent first, dated by
 				when this site first saw them rather than when they were published
 				on itch.io. The latest crawl completed
-				<time datetime={ age.DateTime() } title={ age.Absolute() }>{ age.Label() }</time>{ "." }
+				<time data-relative="age" datetime={ age.DateTime() } title={ age.Absolute() }>{ age.Label() }</time>{ "." }
 			</p>
 		}
 	</div>

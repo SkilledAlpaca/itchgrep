@@ -1,10 +1,15 @@
 package templates
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
+	"itchgrep/pkg/money"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var published = time.Date(2026, 8, 9, 14, 30, 0, 0, time.UTC)
@@ -132,4 +137,76 @@ func TestTheExactTimeIsAlwaysAvailableBehindTheRoundedOne(t *testing.T) {
 	assert.Contains(t, html, `datetime="2026-08-09T14:30:00Z"`)
 	assert.Contains(t, html, `title="9 August 2026, 14:30 UTC"`)
 	assert.Contains(t, html, "3 days ago")
+}
+
+// wording is testdata/freshness_wording.json, the table app.js is held to as
+// well (see the file's own comment).
+type wording struct {
+	Age                 [][2]any `json:"age"`
+	Due                 [][2]any `json:"due"`
+	StaleNoSchedule     [][2]any `json:"staleNoSchedule"`
+	StaleWeeklySchedule [][2]any `json:"staleWeeklySchedule"`
+}
+
+func loadWording(t *testing.T) wording {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/freshness_wording.json")
+	require.NoError(t, err)
+	var w wording
+	require.NoError(t, json.Unmarshal(raw, &w))
+	return w
+}
+
+func TestWordingTablePinsTheAgeAndDueLabels(t *testing.T) {
+	w := loadWording(t)
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	for _, row := range w.Age {
+		secs := time.Duration(row[0].(float64)) * time.Second
+		f := NewFreshness(now.Add(-secs), now, 0)
+		assert.Equal(t, row[1], f.Label(), "age %v", secs)
+	}
+	for _, row := range w.Due {
+		until := time.Duration(row[0].(float64)) * time.Second
+		f := NewFreshness(now.Add(-1000*time.Hour), now, 1000*time.Hour+until)
+		assert.Equal(t, row[1], f.DueLabel(), "until %v", until)
+	}
+}
+
+func TestWordingTablePinsTheStaleThreshold(t *testing.T) {
+	w := loadWording(t)
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	for _, row := range w.StaleNoSchedule {
+		age := time.Duration(row[0].(float64)) * time.Second
+		f := NewFreshness(now.Add(-age), now, 0)
+		assert.Equal(t, row[1], f.Stale(), "no schedule, age %v", age)
+		// StaleAt is the first instant Stale turns true, which is what app.js
+		// compares the visitor's clock with.
+		at, err := time.Parse(time.RFC3339, f.StaleAt())
+		require.NoError(t, err)
+		assert.Equal(t, row[1], !now.Before(at), "StaleAt, no schedule, age %v", age)
+	}
+	for _, row := range w.StaleWeeklySchedule {
+		age := time.Duration(row[0].(float64)) * time.Second
+		f := NewFreshness(now.Add(-age), now, 7*24*time.Hour)
+		assert.Equal(t, row[1], f.Stale(), "weekly schedule, age %v", age)
+		at, err := time.Parse(time.RFC3339, f.StaleAt())
+		require.NoError(t, err)
+		assert.Equal(t, row[1], !now.Before(at), "StaleAt, weekly, age %v", age)
+	}
+	assert.Empty(t, Freshness{}.StaleAt())
+}
+
+func TestStalenessIsExposedForTheBrowserToDecide(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	f := NewFreshness(now.Add(-24*time.Hour), now, 7*24*time.Hour)
+	html := render(t, IndexAge(f, Coverage{}))
+	assert.Contains(t, html, `data-stale-at="2026-11-07T12:00:00Z"`, "the due time plus the grace")
+	assert.Contains(t, html, `<time data-relative="age"`)
+	assert.Contains(t, html, `<time data-relative="due"`)
+	assert.NotContains(t, html, "the crawl may have stopped", "fresh at render time: no server-rendered warning")
+
+	old := NewFreshness(now.Add(-30*24*time.Hour), now, 7*24*time.Hour)
+	assert.Contains(t, render(t, IndexAge(old, Coverage{})), "the crawl may have stopped", "the no-script fallback still warns")
+
+	assert.Contains(t, render(t, ArrivalsPage(sampleResults().Assets, money.Fallback(), f)), `<time data-relative="age"`)
 }

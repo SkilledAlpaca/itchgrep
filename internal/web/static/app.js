@@ -194,6 +194,68 @@ function localizeRelativeTimestamps(root) {
 	}
 }
 
+// ------------------------------------------------------- relative times --
+//
+// Pages are served from caches and revalidated with 304, so the words the
+// server wrote ("index updated 2 days ago", "next update in about 3 days") can
+// be read long after they were true. The server still writes them, for
+// scripting off and for the first paint; this recomputes them from the
+// <time datetime> values on load and after every swap, with the same bucket
+// rules as Freshness.Label and Freshness.DueLabel (internal/web/templates/
+// freshness.go; testdata/freshness_wording.json pins both). Text only: no
+// live region, so nothing is announced.
+var HOUR_MS = 3600000;
+var DAY_MS = 24 * HOUR_MS;
+
+function relativeAgeLabel(ms) {
+	if (ms < 0) ms = 0; // a timestamp slightly ahead of this clock is skew
+	if (ms < HOUR_MS) return 'less than an hour ago';
+	if (ms < 2 * HOUR_MS) return '1 hour ago';
+	if (ms < DAY_MS) return Math.floor(ms / HOUR_MS) + ' hours ago';
+	if (ms < 2 * DAY_MS) return 'yesterday';
+	return Math.floor(ms / DAY_MS) + ' days ago';
+}
+
+function relativeDueLabel(ms) {
+	if (ms <= 0) return 'any time now';
+	if (ms < HOUR_MS) return 'within the hour';
+	if (ms < 2 * HOUR_MS) return 'in about an hour';
+	if (ms < DAY_MS) return 'in about ' + Math.floor(ms / HOUR_MS) + ' hours';
+	if (ms < 2 * DAY_MS) return 'tomorrow';
+	return 'in about ' + Math.floor(ms / DAY_MS) + ' days';
+}
+
+function refreshRelativeTimes(root) {
+	var now = Date.now();
+	var times = root.querySelectorAll('time[data-relative]');
+	for (var i = 0; i < times.length; i++) {
+		var when = Date.parse(times[i].getAttribute('datetime'));
+		if (isNaN(when)) continue;
+		var kind = times[i].getAttribute('data-relative');
+		var text = kind === 'due' ? relativeDueLabel(when - now) : relativeAgeLabel(now - when);
+		if (times[i].textContent !== text) times[i].textContent = text;
+	}
+	// The stale warning: shown from data-stale-at on, which the server computed
+	// from the same rule as Freshness.Stale.
+	var ages = root.querySelectorAll('[data-stale-at]');
+	for (var j = 0; j < ages.length; j++) {
+		var at = Date.parse(ages[j].getAttribute('data-stale-at'));
+		if (isNaN(at)) continue;
+		var stale = now >= at;
+		ages[j].classList.toggle('is-stale', stale);
+		var warn = ages[j].querySelector('.index-age-warn');
+		if (stale && !warn) {
+			warn = document.createElement('span');
+			warn.className = 'index-age-warn';
+			warn.textContent = '— the crawl may have stopped';
+			ages[j].appendChild(document.createTextNode(' '));
+			ages[j].appendChild(warn);
+		} else if (!stale && warn) {
+			warn.remove();
+		}
+	}
+}
+
 // Escape leaves the search box, so the keyboard is never stuck in it.
 // There is deliberately no key that jumps *to* it: a single-character
 // shortcut cannot be turned off or remapped, which WCAG 2.1.4 requires, and
@@ -456,6 +518,7 @@ document.addEventListener('click', function (e) {
 });
 
 document.addEventListener('DOMContentLoaded', function () {
+	refreshRelativeTimes(document);
 	localizeTimestamps(document);
 	applySavedState(document);
 	renderSavedGrid();
@@ -468,6 +531,7 @@ document.addEventListener('DOMContentLoaded', function () {
 // listener.
 document.addEventListener('htmx:afterSwap', function (evt) {
 	var root = evt.target || document;
+	refreshRelativeTimes(document);
 	localizeTimestamps(root);
 	applySavedState(root);
 	restoreFacetState(root);
