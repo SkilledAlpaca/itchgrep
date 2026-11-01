@@ -31,6 +31,10 @@ import (
 // still retrying in the background).
 var ErrNotReady = errors.New("cache: not ready")
 
+// ErrClosed is returned by RefreshDataCache once Close has been called. A
+// closed Cache never opens an index again.
+var ErrClosed = errors.New("cache: closed")
+
 // expiryCheckTTL is the minimum interval between live storage.GetAssetsUpdateTime
 // checks in IsCacheExpired. The underlying data only changes when the
 // dataservice finishes a scrape (weekly, per CRAWL_INTERVAL), so checking on every
@@ -139,6 +143,9 @@ type Cache struct {
 	refreshing  bool
 	refreshDone chan struct{}
 	refreshErr  error
+	// closed is set by Close, under refreshMu, so that no refresh can start
+	// after it and reopen the index.
+	closed bool
 }
 
 // NewCache builds an empty Cache with no data loaded yet - callers must call
@@ -288,6 +295,10 @@ func (c *Cache) IsCacheExpired() bool {
 // single in-flight refresh and all observe its result (single-flight).
 func (c *Cache) RefreshDataCache() error {
 	c.refreshMu.Lock()
+	if c.closed {
+		c.refreshMu.Unlock()
+		return ErrClosed
+	}
 	if c.refreshing {
 		done := c.refreshDone
 		c.refreshMu.Unlock()
@@ -316,6 +327,49 @@ func (c *Cache) RefreshDataCache() error {
 	}()
 	err = c.doRefresh()
 	return err
+}
+
+// Close releases the currently open index and stops the Cache from opening
+// another: it waits for any in-flight refresh to finish, then closes the
+// index, and every later RefreshDataCache returns ErrClosed. Afterwards Ready
+// reports false and Find returns ErrNotReady.
+//
+// It is safe to call more than once and on a Cache that never loaded (both
+// return nil, the repeat call doing nothing). Only the first call reports an
+// error from closing the index.
+//
+// The production webserver does not call Close today: the process exits on
+// shutdown and the operating system releases the index. It exists so tests
+// that build a Cache over a temporary directory can close the index before
+// the directory is removed; bleve's background persister and merger can still
+// be writing into it otherwise, which makes the directory's removal fail with
+// "directory not empty".
+func (c *Cache) Close() error {
+	c.refreshMu.Lock()
+	c.closed = true
+	var done chan struct{}
+	if c.refreshing {
+		done = c.refreshDone
+	}
+	c.refreshMu.Unlock()
+	// Waited on without refreshMu, which the refresh's own exit path takes.
+	// It cannot have reopened the index after this point being observed:
+	// closed was set first, so any refresh still running was started before it
+	// and has finished once done is closed.
+	if done != nil {
+		<-done
+	}
+
+	c.cacheLock.Lock()
+	idx := c.index
+	c.index = nil
+	c.indexInfo = nil
+	c.cacheLock.Unlock()
+
+	if idx == nil {
+		return nil
+	}
+	return idx.Close()
 }
 
 // indexOpenTimeout bounds how long opening an index waits for its bolt file

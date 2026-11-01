@@ -36,6 +36,7 @@ func loadedCacheWithTags(t *testing.T, tags []models.Tag) *Cache {
 	require.NoError(t, index.Close())
 
 	c := NewCache(36)
+	t.Cleanup(func() { _ = c.Close() })
 	require.NoError(t, c.RefreshDataCache())
 	return c
 }
@@ -71,6 +72,7 @@ func TestTagUniverseIsEmptyRatherThanErrorWhenNeverDiscovered(t *testing.T) {
 	require.NoError(t, index.Close())
 
 	c := NewCache(36)
+	t.Cleanup(func() { _ = c.Close() })
 	require.NoError(t, c.RefreshDataCache())
 
 	assert.Empty(t, c.TagSlugs())
@@ -117,4 +119,53 @@ func TestRefreshingTheDirectoryAlreadyOpenKeepsItInsteadOfFightingForTheLock(t *
 
 func TestACacheThatNeverLoadedIsNotReady(t *testing.T) {
 	assert.False(t, NewCache(36).Ready())
+}
+
+func TestCloseIsIdempotentAndWorksOnACacheThatNeverLoaded(t *testing.T) {
+	never := NewCache(36)
+	require.NoError(t, never.Close())
+	require.NoError(t, never.Close())
+	assert.False(t, never.Ready())
+
+	c := loadedCacheWithTags(t, nil)
+	require.True(t, c.Ready())
+	require.NoError(t, c.Close())
+	require.NoError(t, c.Close(), "a second Close does nothing")
+	assert.False(t, c.Ready())
+
+	_, err := c.Find(SearchOptions{Query: "zebra", Page: 1})
+	assert.ErrorIs(t, err, ErrNotReady)
+}
+
+func TestCloseReleasesTheIndexDirectoryForRemoval(t *testing.T) {
+	c := loadedCacheWithTags(t, nil)
+	dir := storage.IndexPath()
+	require.NoError(t, c.Close())
+
+	require.NoError(t, os.RemoveAll(dir))
+	_, err := os.Stat(dir)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestRefreshAfterCloseFailsInsteadOfReopeningTheIndex(t *testing.T) {
+	c := loadedCacheWithTags(t, nil)
+	require.NoError(t, c.Close())
+
+	assert.ErrorIs(t, c.RefreshDataCache(), ErrClosed)
+	assert.False(t, c.Ready(), "Close must not be undone by a late refresh")
+}
+
+func TestCloseWaitsForARefreshInFlight(t *testing.T) {
+	c := loadedCacheWithTags(t, nil)
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		go func() { errs <- c.RefreshDataCache() }()
+	}
+	require.NoError(t, c.Close())
+	for i := 0; i < 8; i++ {
+		if err := <-errs; err != nil {
+			assert.ErrorIs(t, err, ErrClosed)
+		}
+	}
+	assert.False(t, c.Ready(), "no refresh may reopen the index after Close returns")
 }
