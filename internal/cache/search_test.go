@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"fmt"
 	"math"
+	"math/rand"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -424,13 +426,17 @@ func TestAnIndexWithoutConvertedPricesIsDetected(t *testing.T) {
 }
 
 func TestQuotedTermsAreMatchedAsAPhrase(t *testing.T) {
-	// Unquoted, these words match both pixel-art assets in any order. Quoted,
-	// only the one whose title actually reads "Pixel Art Icons" should survive.
+	// Unquoted, the words match in any order. Quoted, they must be adjacent
+	// and in that order: "icons art" matches the asset loosely but not as a phrase.
 	c := newLoadedCache(t, 36)
 
-	loose, err := c.Find(SearchOptions{Query: "art icons", Page: 1})
+	loose, err := c.Find(SearchOptions{Query: "icons art", Page: 1})
 	require.NoError(t, err)
-	assert.Greater(t, loose.Total, int64(1))
+	assert.Equal(t, []string{"4"}, ids(loose))
+
+	reversed, err := c.Find(SearchOptions{Query: `"icons art"`, Page: 1})
+	require.NoError(t, err)
+	assert.Empty(t, ids(reversed))
 
 	phrase, err := c.Find(SearchOptions{Query: `"art icons"`, Page: 1})
 	require.NoError(t, err)
@@ -492,7 +498,7 @@ func TestAHitWithNoAssetBehindItIsDroppedNotRendered(t *testing.T) {
 	c := newLoadedCache(t, 36)
 	delete(c.dataMap, "1")
 
-	got, err := c.Find(SearchOptions{Query: "pixel art", Page: 1})
+	got, err := c.Find(SearchOptions{Query: "art", Page: 1})
 
 	require.NoError(t, err)
 	assert.NotContains(t, ids(got), "1")
@@ -675,4 +681,76 @@ func TestMinFacetCount(t *testing.T) {
 	assert.Equal(t, int64(10), minFacetCount(1000))
 	assert.Equal(t, int64(2), minFacetCount(3), "never so high a small result set gets no tags")
 	assert.Equal(t, int64(1), minFacetCount(1))
+}
+
+func TestTextQueryRequiresEveryWord(t *testing.T) {
+	c := newLoadedCache(t, 100)
+	find := func(q string) []string {
+		t.Helper()
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return ids(r)
+	}
+
+	assert.ElementsMatch(t, []string{"1", "4", "5"}, find("art"))
+	assert.ElementsMatch(t, []string{"1", "4"}, find("pixel art"))
+	assert.ElementsMatch(t, []string{"1"}, find("pixel art tileset"))
+	assert.Empty(t, find("pixel music"))
+
+	// A typo in one of two words still matches; the other word is still required.
+	assert.ElementsMatch(t, []string{"1"}, find("pixel tilset"))
+	assert.ElementsMatch(t, []string{"1", "4"}, find("pixle art"))
+	assert.Empty(t, find("pixle music"))
+}
+
+func TestTextQueryStopAndShortWords(t *testing.T) {
+	c := newLoadedCacheFromAssets(t, 100, []models.Asset{
+		{GameId: "1", Title: "Sword of Fire", Author: "ana", Tags: []string{"2d"}, InvPopularity: 1},
+		{GameId: "2", Title: "Ice Sword", Author: "bo", Tags: []string{"3d"}, InvPopularity: 2},
+		{GameId: "3", Title: "Fire Staff", Author: "cy", Tags: []string{"2d"}, InvPopularity: 3},
+	})
+	find := func(q string) []string {
+		t.Helper()
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return ids(r)
+	}
+	assert.ElementsMatch(t, []string{"1"}, find("sword of fire"))
+	assert.ElementsMatch(t, []string{"1", "2"}, find("sword of"))
+	assert.ElementsMatch(t, []string{"1"}, find("2d sword"))
+	assert.ElementsMatch(t, []string{"1", "3"}, find("2d"))
+	assert.Empty(t, find("of"), "a lone stop word matches nothing, as before")
+}
+
+// Adding a word to a query must never add results.
+func TestTextQueryMonotonic(t *testing.T) {
+	vocab := []string{"pixel", "art", "sword", "fire", "ice", "forest", "music", "loop", "tile", "icon"}
+	rng := rand.New(rand.NewSource(7))
+	pick := func(n int) string {
+		w := make([]string, n)
+		for i := range w {
+			w[i] = vocab[rng.Intn(len(vocab))]
+		}
+		return strings.Join(w, " ")
+	}
+	assets := make([]models.Asset, 300)
+	for i := range assets {
+		assets[i] = models.Asset{
+			GameId: fmt.Sprint(i + 1), Title: pick(3), Description: pick(6), Author: pick(1),
+			Tags: []string{strings.ReplaceAll(pick(2), " ", "-")}, InvPopularity: int64(i + 1),
+		}
+	}
+	c := newLoadedCacheFromAssets(t, 10, assets)
+	total := func(q string) int64 {
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return r.Total
+	}
+	for i := 0; i < 60; i++ {
+		q := pick(1 + rng.Intn(3))
+		base := total(q)
+		for _, extra := range vocab {
+			assert.LessOrEqual(t, total(q+" "+extra), base, "%q + %q", q, extra)
+		}
+	}
 }

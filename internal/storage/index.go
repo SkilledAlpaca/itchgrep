@@ -43,7 +43,7 @@ func IndexMapping() *mapping.IndexMappingImpl {
 
 	// The composite "_all" field bleve builds by concatenating every other
 	// field's terms exists for a query that names no field of its own.
-	// Nothing in search.go issues one - buildFuzzyQuery, buildExactQuery and
+	// Nothing in search.go issues one - textQuery and
 	// phraseQuery all call SetField - so it is disabled outright rather than
 	// merely excluded field by field.
 	doc.AddSubDocumentMapping("_all", bleve.NewDocumentDisabledMapping())
@@ -98,8 +98,8 @@ func IndexMapping() *mapping.IndexMappingImpl {
 		return f
 	}
 
-	// Title, Description, Tags and Author are the fields buildFuzzyQuery,
-	// buildExactQuery and phraseQuery search. All four keep term vectors for
+	// Title, Description, Tags and Author are the fields textQuery
+	// and phraseQuery search. All four keep term vectors for
 	// the same reason: phraseQuery runs a MatchPhraseQuery against Title,
 	// Description and Tags, and Author is searched by the same fuzzy/exact
 	// machinery as the other three - leaving it without term vectors would

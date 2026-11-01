@@ -379,23 +379,13 @@ func buildQuery(opts SearchOptions, likeTags []string) query.Query {
 	}
 
 	if rest != "" {
-		// Three passes over the same text, layered by how literally they read
-		// it, each boosted higher than the last so a better-matching pass
-		// always outranks a looser one when both match the same document.
-		// Both fuzzy passes allow a single-character edit (fuzzyness 1:
-		// one insertion, deletion, substitution or transposition); what
-		// differs between them is the prefix, the number of leading
-		// characters that must match exactly before the edit is allowed -
-		// veryFuzzy requires only the first 2 characters exact, so it drifts
-		// further from what was typed, while fuzzy requires the first 4 and
-		// so stays closer. exact requires the term precisely as typed.
-		veryFuzzyQuery := buildFuzzyQuery(rest, 1, 2)
-		veryFuzzyQuery.SetBoost(2)
-		fuzzyQuery := buildFuzzyQuery(rest, 1, 4)
-		fuzzyQuery.SetBoost(4)
-		exactQuery := buildExactQuery(rest)
-		exactQuery.SetBoost(6)
-		conjuncts = append(conjuncts, bleve.NewDisjunctionQuery(veryFuzzyQuery, fuzzyQuery, exactQuery))
+		// Every whitespace-separated term must match in at least one field
+		// (title, description, author, tags), so each added word narrows the
+		// result set instead of widening it. Per term, two layers by how
+		// literally they read it, boosted so a literal hit outranks a typo
+		// when both match: exact, and a single-character edit (fuzzyness 1)
+		// with the first 2 characters held exact.
+		conjuncts = append(conjuncts, textQuery(rest))
 	}
 
 	// TermQuery, not MatchQuery: TagSlugs is indexed with the keyword analyzer,
