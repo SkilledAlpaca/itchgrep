@@ -493,3 +493,43 @@ document.addEventListener('htmx:historyRestore', function () {
 	setResultsBusy(false);
 	syncFacets(document);
 });
+
+// ----------------------------------------------------------- search box --
+//
+// The search box sits outside the swapped region so typing and focus survive
+// a swap, which means a swap cannot update it. The fragment carries the query
+// in #search-filters (data-query); copy it in unless the visitor is in the
+// box, or has typed something not yet submitted: tapping a filter moves focus
+// off the box, and throwing away what they were typing would be worse than
+// leaving the box a little behind the results.
+var queryDirty = false;
+
+document.addEventListener('input', function (e) {
+	if (e.target && e.target.id === 'query-input') queryDirty = true;
+});
+
+document.addEventListener('submit', function (e) {
+	if (e.target && e.target.classList && e.target.classList.contains('searchbar')) queryDirty = false;
+});
+
+function syncQueryInput() {
+	var input = document.getElementById('query-input');
+	var filters = document.getElementById('search-filters');
+	if (!input || !filters || queryDirty || document.activeElement === input) return;
+	var q = filters.getAttribute('data-query');
+	if (q !== null && input.value !== q) input.value = q;
+}
+
+document.addEventListener('htmx:afterSwap', function (evt) {
+	if (evt.target && evt.target.id === 'results-region') syncQueryInput();
+});
+
+// A history snapshot is the page's HTML, and HTML does not keep what was typed
+// into a text box, so the box would come back empty beside results for the
+// old query. The restored address is the truth.
+document.addEventListener('htmx:historyRestore', function () {
+	var input = document.getElementById('query-input');
+	if (!input) return;
+	queryDirty = false;
+	input.value = new URLSearchParams(window.location.search).get('q') || '';
+});

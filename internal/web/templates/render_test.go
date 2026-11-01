@@ -805,7 +805,7 @@ func TestSearchBoxAndCurrencyFormCarryDifferentFields(t *testing.T) {
 	assert.Contains(t, bar, `name="author" value="ana"`)
 	assert.Contains(t, bar, `name="cur" value="EUR"`)
 	assert.NotContains(t, bar, `name="like"`, "a typed search is a new intent, not a refinement of similar-to")
-	assert.NotContains(t, bar, `name="sort"`)
+	assert.Contains(t, bar, `name="sort" value="title"`, "a chosen ordering outlives a new search")
 	assert.Equal(t, 1, strings.Count(bar, `name="q"`), "the box owns q")
 
 	cur := render(t, CurrencyControl(f, money.Fallback()))

@@ -351,6 +351,11 @@ a:hover {
 
 /* ---------------------------------------------------------------- search  */
 
+/* Only hidden inputs live in it; it must not become a flex item with a gap. */
+.search-filters {
+  display: contents;
+}
+
 .searchbar {
   position: sticky;
   top: 0;

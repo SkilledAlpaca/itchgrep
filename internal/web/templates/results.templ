@@ -253,15 +253,30 @@ templ CurrencyControl(f Filters, rates money.Rates) {
 	</form>
 }
 
+func oobAttrs(oob bool) templ.Attributes {
+	if !oob {
+		return nil
+	}
+	return templ.Attributes{"hx-swap-oob": "true"}
+}
+
+// SearchFilters is the search box's hidden fields in their wrapper. oob adds
+// the attribute that makes htmx swap it in from a fragment.
+templ SearchFilters(f Filters, oob bool) {
+	<div id="search-filters" class="search-filters" data-query={ f.Query } { oobAttrs(oob)... }>
+		@hiddenFilters(f, true)
+	</div>
+}
+
 // hiddenFilters carries the current filter state through a form submission, so
 // that changing the currency or running a new search does not silently discard
 // the tags and the query the visitor already chose.
 //
 // The two forms own different fields. The search box supplies q itself and
-// deliberately drops sort - its sensible default changes with the query, from
-// popularity to relevance - and like, since a typed search is a new intent
-// rather than a refinement of "similar to X". The currency form supplies cur
-// itself and keeps everything else.
+// deliberately drops like, since a typed search is a new intent rather than a
+// refinement of "similar to X". It keeps sort: a visitor who chose an ordering
+// still wants it for the next search. The currency form supplies cur itself and
+// keeps everything else.
 templ hiddenFilters(f Filters, forSearchBox bool) {
 	if !forSearchBox && f.Query != "" {
 		<input type="hidden" name="q" value={ f.Query }/>
@@ -281,7 +296,7 @@ templ hiddenFilters(f Filters, forSearchBox bool) {
 	if f.Price != "" {
 		<input type="hidden" name="price" value={ f.Price }/>
 	}
-	if !forSearchBox && f.Sort != "" {
+	if f.Sort != "" {
 		<input type="hidden" name="sort" value={ f.Sort }/>
 	}
 	if forSearchBox && f.Currency != "" {
@@ -403,9 +418,19 @@ templ TagSidebar(f Filters, tags []models.Tag) {
 // The #result-status element is an out-of-band swap, "innerHTML" so the live
 // region node itself is kept and only its text changes. Replacing the node
 // would defeat the point - see Index.
+//
+// #search-filters is out of band too, and for the same reason it cannot live
+// inside the region: the search box sits outside it so that typing and focus
+// survive every swap, but its hidden fields must follow the filters or the
+// next submitted search would send the ones the page was first rendered with.
+// It is swapped as a whole (outerHTML) because it carries data-query, which
+// app.js reads to bring the visible box in line with the pushed address; the
+// element holds nothing that can have focus. Only here, in the first-page
+// fragment: a load-more page does not change any filter.
 templ ResultsFragment(f Filters, r Results) {
 	<title>{ PageTitle(f, r.LikeTitle) }</title>
 	<p id="result-status" hx-swap-oob="innerHTML">{ resultStatus(f, r) }</p>
+	@SearchFilters(f, true)
 	@ResultsRegion(f, r)
 }
 

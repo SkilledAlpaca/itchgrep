@@ -132,7 +132,7 @@ templ SearchBar(f Filters) {
 			autocapitalize="off"
 			spellcheck="false"
 		/>
-		@hiddenFilters(f, true)
+		@SearchFilters(f, false)
 		<button type="submit">Search</button>
 		<div class="spinner" aria-hidden="true"></div>
 	</form>
