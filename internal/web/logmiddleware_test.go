@@ -160,3 +160,24 @@ func TestRequestLoggerEmitsAccessRecordWithoutTheQueryValue(t *testing.T) {
 		assert.False(t, strings.Contains(out, "1.2.3.4"), "the full client IP must never reach the log")
 	}
 }
+
+func TestOnlyAFirstPageNarrowedByAQueryOrFilterIsASearch(t *testing.T) {
+	for target, want := range map[string]bool{
+		"/?q=sword":                  true,
+		"/results?tags=2d&page=1":    true,
+		"/?price=free":               true,
+		"/?author=ana":               true,
+		"/?like=12":                  true,
+		"/?not=3d":                   true,
+		"/":                          false,
+		"/?cur=EUR":                  false,
+		"/?sort=title":               false,
+		"/?cur=EUR&sort=title":       false,
+		"/results?q=sword&page=2":    false,
+		"/results?tags=2d&page=3":    false,
+		"/?q=%20":                    false,
+		"/results?q=&cur=EUR&page=1": false,
+	} {
+		assert.Equal(t, want, isSearchRequest(httptest.NewRequest(http.MethodGet, target, nil)), target)
+	}
+}

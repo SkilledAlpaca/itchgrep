@@ -124,10 +124,17 @@ func TestRecordRequestOnlyCountsSuccessfulSearches(t *testing.T) {
 	c.RecordRequest(routeResults, true, 503) // index not ready yet: served nothing
 	c.RecordRequest(routeIndex, true, 200)
 	c.RecordRequest(routeResults, false, 200) // no query: not a search
+	c.RecordRequest(routeIndex, true, 302)    // canonical redirect: the follow-up request does the work
+	c.RecordRequest(routeIndex, true, 400)
 
 	snap := c.Snapshot()
 	assert.EqualValues(t, 1, snap.Searches)
-	assert.EqualValues(t, 3, snap.Total)
+	assert.EqualValues(t, 5, snap.Total)
+	var days uint64
+	for _, d := range snap.Days {
+		days += uint64(d.Searches)
+	}
+	assert.EqualValues(t, 1, days, "the daily grid uses the same definition as the total")
 }
 
 func TestTagRouteWithAQueryStringCountsAsASearch(t *testing.T) {

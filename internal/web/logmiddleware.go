@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"itchgrep/internal/metrics"
@@ -91,7 +92,7 @@ func RequestLogger(trustProxy bool, trustedCIDRs []*net.IPNet, m *metrics.Counte
 			routePattern := chi.RouteContext(r.Context()).RoutePattern()
 
 			status := statusOr200(ww.Status())
-			m.RecordRequest(routePattern, r.URL.RawQuery != "", status)
+			m.RecordRequest(routePattern, isSearchRequest(r), status)
 
 			// Path only, never r.URL - the raw query may carry a search term
 			// the visitor typed, and that must never reach the log. The
@@ -132,4 +133,26 @@ func statusOr200(status int) int {
 		return http.StatusOK
 	}
 	return status
+}
+
+// isSearchRequest reports whether r asks for the first page of results narrowed
+// by something the visitor chose: a query or at least one filter (tags,
+// exclusions, similar-to, author, price). Later pages are the same search
+// continued, and a request carrying only a currency or a sort is the same
+// results re-displayed, so neither counts. Only the presence of a value is
+// read; it is not stored.
+func isSearchRequest(r *http.Request) bool {
+	q := r.URL.Query()
+	if p := q.Get("page"); p != "" && p != "1" {
+		return false
+	}
+	if strings.TrimSpace(q.Get("q")) != "" {
+		return true
+	}
+	for _, key := range []string{"tags", "not", "like", "author", "price"} {
+		if strings.TrimSpace(q.Get(key)) != "" {
+			return true
+		}
+	}
+	return false
 }
