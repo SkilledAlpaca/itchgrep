@@ -18,6 +18,7 @@ import (
 	"itchgrep/pkg/models"
 	"itchgrep/pkg/money"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -206,7 +207,7 @@ func (h *handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := h.find(filters, page)
+	results, err := h.find(filters, page, true)
 	if err != nil {
 		// The page itself still renders - masthead, search box, filters - with
 		// the problem shown where the results would be. A visitor arriving
@@ -290,10 +291,16 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("HX-Push-Url", filters.ShareURL())
 	}
 
-	results, err := h.find(filters, page)
+	results, err := h.find(filters, page, page == 1)
 	if err != nil {
 		logging.Error("Error fetching results: %s", err)
 		renderProblem(w, r, err)
+		if page == 1 {
+			// The address was pushed above, so the search box's hidden fields
+			// must follow it even though the results did not load: a retry
+			// from the form would otherwise carry the previous filters.
+			templates.SearchFilters(filters, true).Render(r.Context(), w)
+		}
 		return
 	}
 
@@ -309,7 +316,7 @@ func (h *handler) HandleResults(w http.ResponseWriter, r *http.Request) {
 }
 
 // find runs the query and shapes the answer for the templates.
-func (h *handler) find(filters templates.Filters, page int64) (templates.Results, error) {
+func (h *handler) find(filters templates.Filters, page int64, facets bool) (templates.Results, error) {
 	found, err := h.cache.Find(cache.SearchOptions{
 		Query:       filters.Query,
 		Tags:        filters.Tags,
@@ -319,6 +326,10 @@ func (h *handler) find(filters templates.Filters, page int64) (templates.Results
 		Sort:        filters.Sort,
 		Like:        filters.Like,
 		Page:        page,
+		// A load-more page appends cards alone, so the facet (and the lift
+		// ranking over it) would be computed and thrown away. A full page
+		// render, even of page 2, still needs the sidebar.
+		NoFacets: !facets,
 	})
 	if err != nil {
 		return templates.Results{}, err
@@ -427,7 +438,12 @@ func (h *handler) HandleFeed(w http.ResponseWriter, r *http.Request) {
 // those with a 400 would put an error page behind a link that has an obvious,
 // harmless reading - whereas a bad ?page= is structural and does get rejected.
 func parseFilters(r *http.Request, rates money.Rates) templates.Filters {
-	q := r.URL.Query()
+	return parseFilterValues(r.URL.Query(), rates)
+}
+
+// parseFilterValues is parseFilters over an already-parsed query string, so
+// the request logger can read the HX-Current-URL header the same way.
+func parseFilterValues(q url.Values, rates money.Rates) templates.Filters {
 
 	f := templates.Filters{Query: clampQuery(q.Get("q"))}
 

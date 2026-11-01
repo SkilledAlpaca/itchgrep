@@ -16,8 +16,9 @@ import (
 //
 // Required, not merely advisory, once header trust is turned on. Without this
 // gate, TRUST_PROXY_HEADERS=true honored CF-Connecting-IP from any peer that
-// could reach the published port at all, including a LAN client hitting the
-// origin directly past the reverse proxy - letting it mint a fresh identity
+// could reach the published port at all (with the port now bound to loopback,
+// any process on the host; before that, a LAN client) hitting the origin
+// directly past the reverse proxy - letting it mint a fresh identity
 // per request to bypass the rate limiter and poison the access log. Failing
 // closed - nothing trusted until a network is named - means turning on header
 // trust without configuring who it is extended to does nothing, rather than

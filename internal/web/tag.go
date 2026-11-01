@@ -48,7 +48,7 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	canonical := templates.BaseURL + "/tag/" + slug
-	results, err := h.find(filters, page)
+	results, err := h.find(filters, page, true)
 	if err != nil {
 		logging.Error("Error rendering /tag/%s: %s", slug, err)
 		w.Header().Set("Cache-Control", "no-store")
@@ -59,6 +59,9 @@ func (h *handler) HandleTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.cacheable(w)
+	// Past the last page, "back to the first page" is this tag page, not the
+	// equivalent /?tags= query-string form.
+	results.FirstPageURL = "/tag/" + slug
 	templates.LayoutHead(templates.PageTitle(filters, ""), templates.CanonicalLink(canonical), h.searchShell(),
 		templates.Index(filters, results)).Render(r.Context(), w)
 }

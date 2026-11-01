@@ -471,6 +471,20 @@ func checkCoverageFloor(coverage, floor float64) error {
 	return nil
 }
 
+// publishedIndexExists reports whether an index is already published, which
+// tells a first-ever publish from one that lost its history.
+func publishedIndexExists() bool {
+	fi, err := os.Stat(storage.IndexPath())
+	return err == nil && fi.IsDir()
+}
+
+// firstSeenHistoryLost reports whether this publish has no arrival history to
+// carry forward even though a previous publish evidently happened: neither the
+// map nor the previous assets.json yielded anything, but an index is published.
+func firstSeenHistoryLost(known storage.FirstSeenMap, previous []models.Asset) bool {
+	return known == nil && len(previous) == 0 && publishedIndexExists()
+}
+
 // publishCrawl builds the search index from assets and publishes it, then
 // writes assets.json - in that order, and only that order. The webserver
 // decides a new dataset is ready by watching assets.json's timestamp, so
@@ -496,6 +510,12 @@ func publishCrawl(assets, previousAssets []models.Asset) error {
 			logging.Error("firstseen.json is unreadable (%v); falling back to the FirstSeen values in assets.json", err)
 		}
 		known = nil
+	}
+	if firstSeenHistoryLost(known, previousAssets) {
+		// A published index means a previous publish happened, so an empty
+		// history here is lost history, not a first run. Every asset about to
+		// be stamped will look new on /new and in the feed.
+		logging.Error("FirstSeen history is lost: a published index exists, but neither firstseen.json nor the previous assets.json could be read. Every asset will be stamped as new in this publish.")
 	}
 	firstSeen := stampFirstSeen(known, previousAssets, assets, time.Now().UTC())
 

@@ -414,3 +414,13 @@ func TestBackoffDelayNeverExceedsAShortInterval(t *testing.T) {
 	assert.Equal(t, interval, backoffDelay(3, interval))
 	assert.Equal(t, interval, backoffDelay(4, interval))
 }
+
+func TestFirstSeenHistoryLostIsFlaggedOnlyWhenAnIndexWasAlreadyPublished(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	assert.False(t, firstSeenHistoryLost(nil, nil), "no index yet: a genuine first run")
+
+	require.NoError(t, os.MkdirAll(storage.IndexPath(), 0o755))
+	assert.True(t, firstSeenHistoryLost(nil, nil), "an index but no history anywhere")
+	assert.False(t, firstSeenHistoryLost(storage.FirstSeenMap{"a": {}}, nil), "the map survived")
+	assert.False(t, firstSeenHistoryLost(nil, []models.Asset{{GameId: "a"}}), "assets.json survived")
+}

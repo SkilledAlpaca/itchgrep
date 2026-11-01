@@ -279,12 +279,19 @@ templ NoResults(f Filters) {
 // way back, not an empty grid that reads as a broken page. It stays a 200 with
 // the fragment's short cache lifetime rather than redirecting, because a
 // redirect would cache poorly and confuse the load-more request that asked.
-templ PastTheEnd(f Filters) {
+templ PastTheEnd(f Filters, firstPage string) {
 	<div class="notice">
 		<h2>No more results</h2>
 		<p>That page is past the end of these results.</p>
-		<p><a href={ templ.SafeURL(f.PageURL(1)) }>Back to the first page</a></p>
+		<p><a href={ templ.SafeURL(firstPage) }>Back to the first page</a></p>
 	</div>
+}
+
+func firstPageURL(f Filters, r Results) string {
+	if r.FirstPageURL != "" {
+		return r.FirstPageURL
+	}
+	return f.PageURL(1)
 }
 
 // AssetPage renders one page of cards, plus the trigger that pulls the next.
@@ -297,7 +304,7 @@ templ AssetPage(f Filters, r Results) {
 	if len(r.Assets) == 0 && r.Page == 1 {
 		@NoResults(f)
 	} else if len(r.Assets) == 0 && r.Page > 1 {
-		@PastTheEnd(f)
+		@PastTheEnd(f, firstPageURL(f, r))
 	}
 	for _, asset := range r.Assets {
 		@AssetCard(f, asset, r.Rates)
@@ -310,9 +317,12 @@ templ AssetPage(f Filters, r Results) {
 		// merely awkward. It still auto-loads on scroll; the click path is the
 		// floor.
 		//
-		// "intersect once", not "revealed": htmx 1.9 only watches elements
-		// whose trigger is exactly "revealed", so "revealed, click" never
-		// fired on scroll.
+		// "intersect", not "revealed": htmx 1.9 only watches elements whose
+		// trigger is exactly "revealed", so "revealed, click" never fired on
+		// scroll. Not "once": a request dropped by hx-sync while a filter
+		// request is in flight must be able to fire on the next intersection.
+		// Duplicates cannot happen - the sync drop refuses a second request
+		// while one is in flight, and the swap replaces this element.
 		//
 		// hx-sync drops this request when another is in flight on the page,
 		// so scroll paging can never cancel a filter request, which replaces
@@ -330,7 +340,7 @@ templ AssetPage(f Filters, r Results) {
 			href={ templ.SafeURL(f.PageURL(r.Page + 1)) }
 			rel="nofollow"
 			hx-get={ f.FragmentURL(r.Page + 1) }
-			hx-trigger="intersect once, click"
+			hx-trigger="intersect, click"
 			hx-sync="closest .search-page:drop"
 			hx-target="this"
 			hx-swap="outerHTML"

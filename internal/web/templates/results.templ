@@ -34,6 +34,10 @@ type Results struct {
 	// results rather than looked up again by the template - see
 	// cache.Results.LikeTitle. Empty when Like is unset or matched nothing.
 	LikeTitle string
+
+	// FirstPageURL, when set, is where "back to the first page" goes, for a
+	// page whose first page is not at f.PageURL(1) - a /tag/{slug} page.
+	FirstPageURL string
 }
 
 // priceFilterLabel is the human name of a price filter, for the control and for

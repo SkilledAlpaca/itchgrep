@@ -435,7 +435,7 @@ func TestMoreResultsAreReachableWithoutScrolling(t *testing.T) {
 	html := render(t, AssetPage(Filters{}.WithTag("2d"), more))
 
 	assert.Contains(t, html, "Load more results", "it must be operable, not just observable")
-	assert.Contains(t, html, `hx-trigger="intersect once, click"`, "htmx 1.9 never fires 'revealed, click' on scroll")
+	assert.Contains(t, html, `hx-trigger="intersect, click"`, "htmx 1.9 never fires 'revealed, click' on scroll")
 	assert.Contains(t, html, `hx-sync="closest .search-page:drop"`, "scroll paging must not cancel a filter request")
 	assert.Contains(t, html, `href="/?page=2&amp;tags=2d"`, "and a real link with scripting off")
 }
