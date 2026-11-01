@@ -22,6 +22,10 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
 document.addEventListener('input', function (e) {
 	var box = e.target.closest('[data-facet-search]');
 	if (!box) return;
+	filterFacets(box);
+});
+
+function filterFacets(box) {
 	var needle = box.value.trim().toLowerCase();
 	var list = box.parentNode.querySelectorAll('[data-facet]');
 	for (var i = 0; i < list.length; i++) {
@@ -30,7 +34,7 @@ document.addEventListener('input', function (e) {
 			? list[i].hasAttribute('data-facet-tail')
 			: slug.indexOf(needle) === -1;
 	}
-});
+}
 
 // Spelled out as getDate/getMonth/etc rather than toLocaleString: those
 // read in whatever zone the browser is already in, with no Intl call and
@@ -384,7 +388,7 @@ document.addEventListener('htmx:afterSwap', function (evt) {
 	var root = evt.target || document;
 	localizeTimestamps(root);
 	applySavedState(root);
-	syncFacets(root);
+	restoreFacetState(root);
 	moveFocusAfterSwap(root);
 });
 
@@ -486,6 +490,38 @@ if (NARROW) {
 // document; folding it here rather than on DOMContentLoaded keeps the open
 // state from painting first.
 syncFacets(document);
+
+// A swap replaces the whole sidebar with one the server rendered open and with
+// an empty "find a tag" box. Folding it again after every swap cost a second
+// tap on every other tag pick, and clearing the box threw away what was being
+// looked for - so the state the visitor left it in is carried across. The
+// server's open state is only right for the initial render and for width
+// changes, which is where syncFacets runs.
+var facetState = null;
+
+document.addEventListener('htmx:beforeSwap', function (evt) {
+	if (!evt.detail.target || evt.detail.target.id !== 'results-region') return;
+	var details = document.querySelector('.facets-details');
+	var box = document.querySelector('[data-facet-search]');
+	facetState = {
+		open: details ? details.open : null,
+		needle: box ? box.value : ''
+	};
+});
+
+function restoreFacetState(root) {
+	if (root.id !== 'results-region') return;
+	var state = facetState;
+	facetState = null;
+	if (!state) return;
+	var details = root.querySelector('.facets-details');
+	if (details && state.open !== null) details.open = state.open;
+	var box = root.querySelector('[data-facet-search]');
+	if (box && state.needle) {
+		box.value = state.needle;
+		filterFacets(box);
+	}
+}
 
 // Going back restores a saved copy of the page. htmx took that snapshot during a
 // swap, so the region was still marked busy and the sidebar was open; reset both.

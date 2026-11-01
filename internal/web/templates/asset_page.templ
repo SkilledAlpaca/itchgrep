@@ -295,6 +295,10 @@ templ AssetPage(f Filters, r Results) {
 		// at all - the remaining results were unreachable rather than merely
 		// awkward. It still auto-loads on scroll; the click path is the floor.
 		//
+		// hx-sync drops this request when another is in flight on the page,
+		// so scroll paging can never cancel a filter request, which replaces
+		// whatever it finds (see Index).
+		//
 		// With scripting off htmx does nothing, so it degrades to a plain link
 		// to the next page.
 		//
@@ -308,6 +312,7 @@ templ AssetPage(f Filters, r Results) {
 			rel="nofollow"
 			hx-get={ f.FragmentURL(r.Page + 1) }
 			hx-trigger="revealed, click"
+			hx-sync="closest .search-page:drop"
 			hx-target="this"
 			hx-swap="outerHTML"
 		>Load more results</a>

@@ -192,3 +192,13 @@ func TestNotReadyNoticeGivesNoOperatorAdvice(t *testing.T) {
 	assert.NotContains(t, html, "docker")
 	assert.Contains(t, html, "being built")
 }
+
+func TestFilterRequestsReplaceEachOtherAndScrollPagingNeverCancelsThem(t *testing.T) {
+	// Without hx-sync two quick taps race and the slower response wins. The
+	// page's own requests replace each other; the load-more trigger yields.
+	assert.Contains(t, pageHTML(t, Shell{Search: true}), `hx-sync="this:replace"`)
+
+	more := sampleResults()
+	more.HasMore = true
+	assert.Contains(t, render(t, AssetPage(Filters{}, more)), `hx-sync="closest .search-page:drop"`)
+}
