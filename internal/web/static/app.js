@@ -4,6 +4,16 @@
 // leaving the status code honest.
 document.addEventListener('htmx:beforeSwap', function (evt) {
 	var status = evt.detail.xhr.status;
+	var target = evt.detail.target;
+	if (target && target.id === 'facet-list' && status !== 200) {
+		// The sidebar list is replaced by the response, so an error page (or an
+		// empty 503 body) would wipe the tags the visitor already has. Treat it
+		// as a failure instead: no swap, and htmx:responseError runs
+		// facetTailFailed (More falls back to its link; Find a tag can retry).
+		evt.detail.shouldSwap = false;
+		evt.detail.isError = true;
+		return;
+	}
 	if (status === 503 || status === 400) {
 		evt.detail.shouldSwap = true;
 		evt.detail.isError = false;
@@ -49,6 +59,10 @@ function filterFacets(box) {
 // scripting none of this runs and "More tags" is a plain link to a page that
 // lists everything.
 var expandAfterTail = false;
+// Set when a filter swap re-fetches the list for a visitor who had expanded it:
+// the More link goes only once the list has actually loaded (see afterSwap), so
+// a failed fetch leaves the link to try again.
+var expandSilently = false;
 var moreHref = '';
 var tailFocus = null;
 
@@ -152,7 +166,12 @@ document.addEventListener('htmx:afterSwap', function (evt) {
 	var focus = tailFocus;
 	if (expandAfterTail) {
 		expandAfterTail = false;
+		expandSilently = false;
 		expandFacets(details, true);
+	} else if (expandSilently) {
+		expandSilently = false;
+		expandFacets(details, false);
+		if (focus && focus.slug) focusFacet(list, focus.slug, focus.cls);
 	} else if (focus && focus.slug) {
 		// The rows were replaced under the visitor's focus.
 		focusFacet(list, focus.slug, focus.cls);
@@ -165,6 +184,7 @@ function facetTailFailed(evt) {
 	var list = evt.target;
 	if (!list || list.id !== 'facet-list') return;
 	list.removeAttribute('data-tail');
+	expandSilently = false;
 	if (expandAfterTail && moreHref) {
 		expandAfterTail = false;
 		window.location.href = moreHref;
@@ -259,7 +279,8 @@ function localizeRelativeTimestamps(root) {
 // scripting off and for the first paint; this recomputes them from the
 // <time datetime> values on load and after every swap, with the same bucket
 // rules as Freshness.Label and Freshness.DueLabel (internal/web/templates/
-// freshness.go; testdata/freshness_wording.json pins both). Text only: no
+// freshness.go; testdata/freshness_wording.json pins the Go side in CI,
+// and a manual Playwright check holds this side to the same table). Text only: no
 // live region, so nothing is announced.
 var HOUR_MS = 3600000;
 var DAY_MS = 24 * HOUR_MS;
@@ -729,10 +750,11 @@ function restoreFacetState(root) {
 	// list, or had asked for more tags, gets the rest fetched again for the new
 	// filters; the search text is applied when it arrives.
 	if (state.needle || state.expanded) {
-		// Everything is about to be shown, so the link that would show it goes
-		// now, with no focus move: the visitor is not on it.
-		if (state.expanded && details) expandFacets(details, false);
-		loadFacetTail(root.querySelector('#facet-list'));
+		// Everything is to be shown once it arrives; the link that would show
+		// it goes then (no focus move: the visitor is not on it), not before.
+		var newList = root.querySelector('#facet-list');
+		expandSilently = !!state.expanded && !!newList && !!newList.getAttribute('data-tail-url');
+		loadFacetTail(newList);
 	}
 }
 
