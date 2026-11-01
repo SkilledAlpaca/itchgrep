@@ -15,7 +15,7 @@ For how to configure either program, see [configuration](configuration.md). For 
 |---|---|---|
 | webserver entrypoint | `cmd/webserver/` | Starts the HTTP server, wires up routes and middleware, loads the cache at startup. |
 | dataservice entrypoint | `cmd/dataservice/` | Runs the crawl scheduler, the crawl itself, self-heals a broken index at startup, exposes `/trigger-fetch`. |
-| cache | `internal/cache/` | The webserver's in-memory copy of the published dataset (assets plus the search index), kept fresh by watching `assets.json`. Answers every search and browse request. |
+| cache | `internal/cache/` | The webserver's in-memory copy of the published dataset (assets plus the search index), kept fresh by watching `assets.json`. Answers every search and browse request: from memory when there is no text query, from the index when there is one. |
 | storage | `internal/storage/` | The only code that reads or writes the shared data directory. Defines the bleve field mapping. Both programs depend on it; it depends on nothing else project-specific. |
 | fetcher | `internal/fetcher/` | Everything that talks to itch.io over HTTP: page fetching, rate limiting, the crawl planner, tag discovery. |
 | web | `internal/web/` | The webserver's HTTP surface: route handlers, rate limiting, scanner-probe filtering, security headers, access logging, client-IP resolution. |
@@ -71,10 +71,15 @@ Inside `webserver`, a request passes through a fixed chain of middleware (`cmd/w
 
 From there, a handler in `internal/web/handlers.go` (or `tag.go` for `/tag/{slug}`) parses the query string into a `templates.Filters` value, calls `cache.Find` (`internal/cache/search.go`), and renders the result through `internal/web/templates`.
 
-`cache.Find` decides between two paths (`internal/cache/search.go`):
+`cache.Find` decides between three paths (`internal/cache/search.go`):
 
-- An **unfiltered front page** (no query, no tags, popularity order) is served directly from an in-memory slice already sorted by popularity — no bleve query at all.
-- Anything else — a search, a tag filter, a price filter, a different sort — runs against the bleve index.
+- An **unfiltered front page** (no query, no tags, popularity order) is served directly from an in-memory slice already sorted by popularity.
+- A request **without a text query** (tags, exclusions, price bands, author, a "similar to" tag set, any sort, `/tag/{slug}`, `/new`) is answered by the in-memory engine (`internal/cache/engine.go`). At every refresh the cache derives, from the asset list it already holds, compact per-asset records (interned tag IDs, author ID, price in US dollars as the index stores it, first-seen time) and one precomputed ordering for each of the title, price, recency, and newest-arrival sorts, each ending in the same popularity tiebreak the index applies. A request is then one sequential pass that tests each asset against the filters and counts the total and, when a sidebar is wanted, every match's tags, followed by a walk down the requested ordering that stops when the page is full. That is 2 to 5 ms on 127,000 assets where the index took 130 to 740 ms, because the index spent most of its time visiting doc values for the tag facet and the sort keys. The sidebar ranking (raw counts on an unfiltered request, lift once anything narrows the results) is the same code on either path.
+- A request **with a text query** runs against the bleve index, through the hit cache (`internal/cache/hitcache.go`). The cache is a least-recently-used map of 256 entries keyed by the normalized filters minus the page. An entry holds the ordered hits for ten pages, the total, and the ranked sidebar, so the first page of a search pays for the index pass and pages 2 to 10 are slices of the same answer. Concurrent requests for the same key share one pass (single-flight), and every refresh clears the cache and starts a new generation so no answer outlives its dataset. A page past the tenth goes straight to the index. Capped requests (`/feed` with a query) bypass the cache.
+
+The engine and the index must agree on what matches. `internal/cache/parity_test.go` builds a generated catalog through the same indexing code the dataservice uses (`models.NewIndexedAsset`, `storage.IndexMapping`, and the shared `Asset.PriceUSD` conversion) and compares the engine with the index on more than 1,300 random filter combinations: ids in order, totals, and the sidebar. Where popularity ties, the order inside a tie is the index's own accident (it numbers documents in the order it analyzed a batch, a map iteration), so those tests compare sort keys instead of ids.
+
+The tag sidebar renders its first 40 tags in the page. The rest come from `GET /results/tags` (`HandleResultsTags`), a cacheable fragment of `<li>` rows for the same filters that `app.js` fetches when a visitor focuses "Find a tag" or follows "More tags". Without JavaScript "More tags" is a link to the same page with `alltags=1`, which renders every tag server-side; the canonical redirect accepts the parameter (only `PageURL` writes it) and it changes no result.
 
 ```mermaid
 flowchart LR
@@ -88,9 +93,13 @@ flowchart LR
     RL --> H[Handler]
     H --> Cache[cache.Find]
     Cache -->|unfiltered| Slice[In-memory popularity slice]
-    Cache -->|filtered / searched| Bleve[bleve index]
+    Cache -->|no text query| Engine[In-memory engine]
+    Cache -->|text query| Hits[Hit cache]
+    Hits -->|miss| Bleve[bleve index]
     Slice --> T[templ render]
-    Bleve --> T
+    Engine --> T
+    Hits --> T
+    Bleve --> Hits
     T --> Browser
 ```
 
