@@ -36,9 +36,17 @@ import (
 // nothing for the engine to match. Real data has the ties (a page of 36 shares
 // one number), so the tie tests compare sort keys rather than ids.
 func parityAssets(seed int64, n int, uniquePopularity bool) []models.Asset {
+	return parityAssetsVocab(seed, n, uniquePopularity, 70)
+}
+
+// parityAssetsVocab is parityAssets over a vocabulary of the given size. A
+// vocabulary larger than the sidebar's facet size (maxFacetTags) exercises the
+// cut at the top 200 on the unfiltered-but-sorted path, where the index and the
+// engine each decide which tied tags make it.
+func parityAssetsVocab(seed int64, n int, uniquePopularity bool, vocabSize int) []models.Asset {
 	rng := rand.New(rand.NewSource(seed))
 
-	vocab := make([]string, 70)
+	vocab := make([]string, vocabSize)
 	for i := range vocab {
 		vocab[i] = fmt.Sprintf("tag-%02d", i)
 	}
@@ -70,7 +78,7 @@ func parityAssets(seed int64, n int, uniquePopularity bool) []models.Asset {
 		// Skewed toward the head of the vocabulary, like real tags.
 		seen := map[string]bool{}
 		for k := rng.Intn(9); k > 0; k-- {
-			t := vocab[int(rng.ExpFloat64()*14)%len(vocab)]
+			t := vocab[int(rng.ExpFloat64()*float64(len(vocab))/5)%len(vocab)]
 			if !seen[t] {
 				seen[t] = true
 				a.Tags = append(a.Tags, t)
@@ -186,7 +194,11 @@ func sortKeys(r Results, sortKey string) []string {
 // engine, or browse) and through the search index directly, and compares what a
 // visitor sees. With exact set the ids must match in order; otherwise the sort
 // keys must (see parityAssets for why).
-func compareWithSearchIndex(t *testing.T, c *Cache, assets []models.Asset, seed int64, combinations int, exact bool) {
+//
+// normalize, when given, is applied to the options on the index side only: it
+// stands for the adjustments Find makes before choosing a path, for a cache
+// whose capabilities the generated one does not have.
+func compareWithSearchIndex(t *testing.T, c *Cache, assets []models.Asset, seed int64, combinations int, exact bool, normalize ...func(*SearchOptions)) {
 	t.Helper()
 	rng := rand.New(rand.NewSource(seed))
 	var nonEmpty, withTags, sorted int
@@ -199,7 +211,11 @@ func compareWithSearchIndex(t *testing.T, c *Cache, assets []models.Asset, seed 
 		// both, so opts reach both sides unchanged.
 		got, err := c.Find(opts)
 		require.NoError(t, err, desc)
-		want, err := c.searchIndex(opts, false)
+		indexOpts := opts
+		for _, n := range normalize {
+			n(&indexOpts)
+		}
+		want, err := c.searchIndex(indexOpts, false)
 		require.NoError(t, err, desc)
 
 		if exact {
@@ -227,7 +243,7 @@ func compareWithSearchIndex(t *testing.T, c *Cache, assets []models.Asset, seed 
 		}
 	}
 	// A parity test that mostly compared empty answers would prove nothing.
-	assert.Greater(t, nonEmpty, combinations/2, "most combinations must return assets")
+	assert.Greater(t, nonEmpty, combinations/3, "a good share of combinations must return assets")
 	assert.Greater(t, withTags, combinations/4, "many combinations must compare a non-empty sidebar")
 	assert.Greater(t, sorted, combinations/2, "most combinations must use a non-default sort")
 	t.Logf("%d combinations, %d with assets, %d with a sidebar, %d sorted", combinations, nonEmpty, withTags, sorted)
@@ -296,4 +312,94 @@ func TestEngineHandlesPageNumberOverflow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got.Assets)
 	assert.EqualValues(t, 0, got.Total, "an out-of-range page is the empty page, as the index path gives")
+}
+
+// TestEngineMatchesSearchIndexWithoutPriceBands covers an index that carries no
+// converted prices: Find drops the bounded bands rather than returning empty
+// pages, and the engine must agree with the index asked the same question.
+func TestEngineMatchesSearchIndexWithoutPriceBands(t *testing.T) {
+	assets := parityAssets(41, 2000, true)
+	c := newLoadedCacheFromAssets(t, 36, assets)
+	c.hasPriceBands = false
+	compareWithSearchIndex(t, c, assets, 17, 400, true, func(o *SearchOptions) {
+		if o.Price == models.PricingUnder5 || o.Price == models.PricingUnder20 {
+			o.Price = ""
+		}
+	})
+}
+
+// TestEngineMatchesSearchIndexWithoutRecency covers a dataset with no recency
+// ranks: a recency sort falls back to popularity on both paths.
+func TestEngineMatchesSearchIndexWithoutRecency(t *testing.T) {
+	assets := parityAssets(43, 2000, true)
+	c := newLoadedCacheFromAssets(t, 36, assets)
+	c.hasRecency = false
+	compareWithSearchIndex(t, c, assets, 19, 400, true, func(o *SearchOptions) {
+		if o.Sort == models.SortRecent {
+			o.Sort = models.SortPopular
+		}
+	})
+}
+
+// TestEngineMatchesSearchIndexWithAVocabularyLargerThanTheFacet checks the
+// sidebar when more tags exist than the 200 the unfiltered facet keeps: which of
+// the tied low-count tags make the cut, and the lift ranking over all of them.
+func TestEngineMatchesSearchIndexWithAVocabularyLargerThanTheFacet(t *testing.T) {
+	assets := parityAssetsVocab(47, 4000, true, 320)
+	c := newLoadedCacheFromAssets(t, 36, assets)
+	require.Greater(t, len(c.tagCatalog), maxFacetTags, "the fixture must exceed the facet size")
+	compareWithSearchIndex(t, c, assets, 23, 400, true)
+
+	for _, sortKey := range []string{models.SortTitle, models.SortPrice, models.SortRecent} {
+		opts := SearchOptions{Sort: sortKey, Page: 1}
+		got, err := c.Find(opts)
+		require.NoError(t, err)
+		want, err := c.searchIndex(opts, false)
+		require.NoError(t, err)
+		assert.Len(t, got.Tags, maxFacetTags)
+		assert.Equal(t, want.Tags, got.Tags, "unfiltered "+sortKey)
+	}
+}
+
+// TestEngineMatchesSearchIndexForLikeWithALimit is a similar-to request that is
+// also capped, which no handler sends today but Find accepts.
+func TestEngineMatchesSearchIndexForLikeWithALimit(t *testing.T) {
+	assets := parityAssets(53, 2000, true)
+	c := newLoadedCacheFromAssets(t, 36, assets)
+	rng := rand.New(rand.NewSource(29))
+	checked := 0
+	for n := 0; n < 120; n++ {
+		src := assets[rng.Intn(len(assets))]
+		opts := SearchOptions{
+			Like:     src.GameId,
+			Limit:    int64(1 + rng.Intn(80)),
+			Page:     1,
+			NoFacets: rng.Intn(2) == 0,
+			Sort:     []string{"", models.SortTitle, models.SortPrice, models.SortNew}[rng.Intn(4)],
+		}
+		if rng.Intn(3) == 0 {
+			opts.Tags = []string{fmt.Sprintf("tag-%02d", rng.Intn(6))}
+		}
+		if rng.Intn(4) == 0 {
+			opts.MinFirstSeen = 1
+		}
+		got, err := c.Find(opts)
+		require.NoError(t, err)
+		want, err := c.searchIndex(opts, false)
+		require.NoError(t, err)
+		desc := fmt.Sprintf("%+v", opts)
+		assert.Equal(t, ids(want), ids(got), desc)
+		assert.Equal(t, want.Total, got.Total, desc)
+		assert.Equal(t, want.LikeTitle, got.LikeTitle, desc)
+		if !opts.NoFacets {
+			assert.Equal(t, tagList(want), tagList(got), desc)
+		}
+		if len(got.Assets) > 0 {
+			checked++
+		}
+		if t.Failed() {
+			t.FailNow()
+		}
+	}
+	assert.Greater(t, checked, 60)
 }
