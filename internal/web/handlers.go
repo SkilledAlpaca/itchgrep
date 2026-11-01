@@ -503,7 +503,8 @@ func (h *handler) find(filters templates.Filters, page int64, facets bool) (temp
 		HasMore: page*h.cache.PageSize() < found.Total,
 		// LikeTitle threads the ?like= source asset's title from the search
 		// layer through to the chip row - see cache.Results.LikeTitle.
-		LikeTitle: found.LikeTitle,
+		LikeTitle:       found.LikeTitle,
+		AnyWordFallback: found.AnyWordFallback,
 	}, nil
 }
 

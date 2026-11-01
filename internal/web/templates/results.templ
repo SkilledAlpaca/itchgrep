@@ -42,6 +42,10 @@ type Results struct {
 	// the list is swapped into), gets its own cache key at the edge.
 	Generation string
 
+	// AnyWordFallback is set when no asset contains every query word and
+	// these are the ones matching any word. See cache.Results.AnyWordFallback.
+	AnyWordFallback bool
+
 	// FirstPageURL, when set, is where "back to the first page" goes, for a
 	// page whose first page is not at f.PageURL(1) - a /tag/{slug} page.
 	FirstPageURL string
@@ -145,6 +149,9 @@ func excludeAttrs(slug string) templ.Attributes {
 	}
 }
 
+// anyWordNote is shown beside the count when no asset has every query word.
+const anyWordNote = "No results contain every word; showing results that match any word."
+
 func resultSummary(r Results) string {
 	if r.Total == 1 {
 		return "1 asset"
@@ -164,6 +171,9 @@ func resultStatus(f Filters, r Results) string {
 	status := resultSummary(r)
 	if summary := filterSummary(f, r.LikeTitle); summary != "" {
 		status += " for " + summary
+	}
+	if r.AnyWordFallback {
+		status += ". " + anyWordNote
 	}
 	if f.AtTagLimit() {
 		status += ". Tag limit reached."
@@ -548,6 +558,12 @@ templ ResultsRegion(f Filters, r Results) {
 				// The count is the visible half. Announcing it is the job of
 				// #result-status, which lives outside this region.
 				<span class="result-count">{ resultSummary(r) }</span>
+				if r.AnyWordFallback {
+					// Visible, unlike the sentence in #result-status, so sighted
+					// visitors and full page loads see it too. Not a live region:
+					// the status line already announces it.
+					<span class="result-note">{ anyWordNote }</span>
+				}
 			</div>
 			<div class="toolbar-controls">
 				@PriceControl(f, r.HasPriceBands)

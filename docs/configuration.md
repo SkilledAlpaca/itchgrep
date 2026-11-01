@@ -426,7 +426,7 @@ believed at all.
 
 Read only by the webserver, in `internal/web/ratelimit.go`'s `NewLimiter()`
 (a `config.EnvFloat` call). Per-client steady-state request budget — search
-is not a cheap request (multiple fuzzy passes over the whole index), and
+is not a cheap request (a fuzzy pass per word over the whole index), and
 nothing else in the request path pushes back on a client sending many at
 once.
 

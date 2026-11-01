@@ -51,7 +51,7 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
   from the LAN. Public traffic does not use it: `cloudflared` connects over
   the compose network to `http://webserver:8080`. It applies:
   - **Per-client rate limiting** (`internal/web/ratelimit.go`) — a search is
-    expensive (three disjunctions, two fuzzy, over the whole catalog), and
+    expensive (per word, an exact and a fuzzy disjunction over the whole catalog), and
     nothing else in the request path pushes back. Probe traffic (below)
     draws from the same per-client budget as real requests, so an unlimited
     scanner sweep can't write to disk faster than a real client could be

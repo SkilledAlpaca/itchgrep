@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"fmt"
 	"math"
+	"math/rand"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -424,13 +426,17 @@ func TestAnIndexWithoutConvertedPricesIsDetected(t *testing.T) {
 }
 
 func TestQuotedTermsAreMatchedAsAPhrase(t *testing.T) {
-	// Unquoted, these words match both pixel-art assets in any order. Quoted,
-	// only the one whose title actually reads "Pixel Art Icons" should survive.
+	// Unquoted, the words match in any order. Quoted, they must be adjacent
+	// and in that order: "icons art" matches the asset loosely but not as a phrase.
 	c := newLoadedCache(t, 36)
 
-	loose, err := c.Find(SearchOptions{Query: "art icons", Page: 1})
+	loose, err := c.Find(SearchOptions{Query: "icons art", Page: 1})
 	require.NoError(t, err)
-	assert.Greater(t, loose.Total, int64(1))
+	assert.Equal(t, []string{"4"}, ids(loose))
+
+	reversed, err := c.Find(SearchOptions{Query: `"icons art"`, Page: 1})
+	require.NoError(t, err)
+	assert.Empty(t, ids(reversed))
 
 	phrase, err := c.Find(SearchOptions{Query: `"art icons"`, Page: 1})
 	require.NoError(t, err)
@@ -492,7 +498,7 @@ func TestAHitWithNoAssetBehindItIsDroppedNotRendered(t *testing.T) {
 	c := newLoadedCache(t, 36)
 	delete(c.dataMap, "1")
 
-	got, err := c.Find(SearchOptions{Query: "pixel art", Page: 1})
+	got, err := c.Find(SearchOptions{Query: "art", Page: 1})
 
 	require.NoError(t, err)
 	assert.NotContains(t, ids(got), "1")
@@ -675,4 +681,183 @@ func TestMinFacetCount(t *testing.T) {
 	assert.Equal(t, int64(10), minFacetCount(1000))
 	assert.Equal(t, int64(2), minFacetCount(3), "never so high a small result set gets no tags")
 	assert.Equal(t, int64(1), minFacetCount(1))
+}
+
+func TestTextQueryRequiresEveryWord(t *testing.T) {
+	c := newLoadedCache(t, 100)
+	find := func(q string) []string {
+		t.Helper()
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return ids(r)
+	}
+
+	assert.ElementsMatch(t, []string{"1", "4", "5"}, find("art"))
+	assert.ElementsMatch(t, []string{"1", "4"}, find("pixel art"))
+	assert.ElementsMatch(t, []string{"1"}, find("pixel art tileset"))
+	// No asset has both, so the strict rule matches nothing and the any-word
+	// fallback (flagged) answers instead.
+	r, err := c.Find(SearchOptions{Query: "pixel music", Page: 1})
+	require.NoError(t, err)
+	assert.True(t, r.AnyWordFallback)
+
+	// A typo in one of two words still matches; the other word is still required.
+	assert.ElementsMatch(t, []string{"1"}, find("pixel tilset"))
+	assert.ElementsMatch(t, []string{"1", "4"}, find("pixle art"))
+	r, err = c.Find(SearchOptions{Query: "pixle music", Page: 1})
+	require.NoError(t, err)
+	assert.True(t, r.AnyWordFallback)
+}
+
+func TestTextQueryStopAndShortWords(t *testing.T) {
+	c := newLoadedCacheFromAssets(t, 100, []models.Asset{
+		{GameId: "1", Title: "Sword of Fire", Author: "ana", Tags: []string{"2d"}, InvPopularity: 1},
+		{GameId: "2", Title: "Ice Sword", Author: "bo", Tags: []string{"3d"}, InvPopularity: 2},
+		{GameId: "3", Title: "Fire Staff", Author: "cy", Tags: []string{"2d"}, InvPopularity: 3},
+	})
+	find := func(q string) []string {
+		t.Helper()
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return ids(r)
+	}
+	assert.ElementsMatch(t, []string{"1"}, find("sword of fire"))
+	assert.ElementsMatch(t, []string{"1", "2"}, find("sword of"))
+	assert.ElementsMatch(t, []string{"1"}, find("2d sword"))
+	assert.ElementsMatch(t, []string{"1", "3"}, find("2d"))
+	assert.Empty(t, find("of"), "a lone stop word matches nothing, as before")
+}
+
+// Adding a word to a query must never add results.
+func TestTextQueryMonotonic(t *testing.T) {
+	vocab := []string{"pixel", "art", "sword", "fire", "ice", "forest", "music", "loop", "tile", "icon"}
+	rng := rand.New(rand.NewSource(7))
+	pick := func(n int) string {
+		w := make([]string, n)
+		for i := range w {
+			w[i] = vocab[rng.Intn(len(vocab))]
+		}
+		return strings.Join(w, " ")
+	}
+	assets := make([]models.Asset, 300)
+	for i := range assets {
+		assets[i] = models.Asset{
+			GameId: fmt.Sprint(i + 1), Title: pick(3), Description: pick(6), Author: pick(1),
+			Tags: []string{strings.ReplaceAll(pick(2), " ", "-")}, InvPopularity: int64(i + 1),
+		}
+	}
+	c := newLoadedCacheFromAssets(t, 10, assets)
+	find := func(q string) Results {
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return r
+	}
+	// Monotonicity holds while the strict query has hits. A pair where either
+	// side fell back to any-word matching is a different rule, covered by
+	// TestAnyWordFallback and the explicit case below.
+	checked := 0
+	for i := 0; i < 60; i++ {
+		q := pick(1 + rng.Intn(3))
+		base := find(q)
+		for _, extra := range vocab {
+			more := find(q + " " + extra)
+			if base.AnyWordFallback || more.AnyWordFallback {
+				continue
+			}
+			checked++
+			assert.LessOrEqual(t, more.Total, base.Total, "%q + %q", q, extra)
+		}
+	}
+	assert.Greater(t, checked, 100, "the property must be exercised, not skipped")
+
+	// A word no asset shares with the rest turns a strict query into the
+	// fallback, which may return more: this is the one allowed exception.
+	solo := append(slices.Clone(assets), models.Asset{GameId: "9999", Title: "zebra", InvPopularity: 9999})
+	c = newLoadedCacheFromAssets(t, 10, solo)
+	strict := find("pixel")
+	fb := find("pixel zebra")
+	assert.False(t, strict.AnyWordFallback)
+	assert.True(t, fb.AnyWordFallback)
+	assert.Greater(t, fb.Total, strict.Total)
+}
+
+func TestTextQueryUsesAnalyzedTerms(t *testing.T) {
+	c := newLoadedCacheFromAssets(t, 100, []models.Asset{
+		{GameId: "1", Title: "Pixel Art Pack", Author: "ana", InvPopularity: 1},
+		{GameId: "2", Title: "Pixel Sword", Author: "bo", InvPopularity: 2},
+		{GameId: "3", Title: "Art Sword", Author: "cy", InvPopularity: 3},
+		{GameId: "4", Title: "魔法剣", Author: "dee", InvPopularity: 4},
+		{GameId: "5", Title: "魔法盾", Author: "el", InvPopularity: 5},
+	})
+	find := func(q string) Results {
+		t.Helper()
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return r
+	}
+	assert.ElementsMatch(t, ids(find("pixel art")), ids(find("pixel-art")))
+	assert.ElementsMatch(t, []string{"1"}, ids(find("pixel-art")))
+
+	both := find("pixel-sword")
+	assert.ElementsMatch(t, []string{"2"}, ids(both))
+	assert.False(t, both.AnyWordFallback)
+
+	assert.ElementsMatch(t, ids(find("pixel")), ids(find("pixel pixel PIXEL")))
+	assert.ElementsMatch(t, ids(find("pixel art")), ids(find("pixel art art pixel")))
+
+	// Without spaces, each character is its own token, and all are required.
+	cjk := find("魔法剣")
+	assert.Equal(t, []string{"4"}, ids(cjk))
+	assert.False(t, cjk.AnyWordFallback)
+}
+
+func TestAnyWordFallback(t *testing.T) {
+	assets := []models.Asset{
+		{GameId: "1", Title: "Sword Pack", Author: "ana", Tags: []string{"2d"}, InvPopularity: 1},
+		{GameId: "2", Title: "Sword Icons", Author: "bo", Tags: []string{"2d"}, InvPopularity: 2},
+		{GameId: "3", Title: "Fire Loops", Author: "cy", Tags: []string{"music"}, InvPopularity: 3},
+		{GameId: "4", Title: "Fire Sword", Author: "dee", Tags: []string{"2d"}, InvPopularity: 4},
+	}
+	c := newLoadedCacheFromAssets(t, 1, assets)
+	find := func(o SearchOptions) Results {
+		t.Helper()
+		o.Page = max(o.Page, 1)
+		r, err := c.Find(o)
+		require.NoError(t, err)
+		return r
+	}
+
+	// Words that co-occur: strict result, no flag.
+	r := find(SearchOptions{Query: "fire sword"})
+	assert.Equal(t, int64(1), r.Total)
+	assert.False(t, r.AnyWordFallback)
+
+	// Each word exists but never together: any-word set, flagged.
+	r = find(SearchOptions{Query: "pack loops"})
+	assert.Equal(t, int64(2), r.Total)
+	assert.True(t, r.AnyWordFallback)
+	assert.NotEmpty(t, r.Tags, "sidebar comes from the fallback set")
+
+	// Page 2 of the same search keeps the flag (served from the hit cache).
+	r2 := find(SearchOptions{Query: "pack loops", Page: 2, NoFacets: true})
+	assert.True(t, r2.AnyWordFallback)
+	assert.Len(t, r2.Assets, 1)
+	assert.NotEqual(t, ids(r)[0], ids(r2)[0])
+
+	// Filters apply in the fallback pass.
+	r = find(SearchOptions{Query: "pack loops", Tags: []string{"music"}})
+	assert.Equal(t, []string{"3"}, ids(r))
+	assert.True(t, r.AnyWordFallback)
+
+	// No word matches: empty, no flag.
+	r = find(SearchOptions{Query: "zzqxv qqwwzz"})
+	assert.Zero(t, r.Total)
+	assert.False(t, r.AnyWordFallback)
+
+	// Single words, stop-word-reduced queries, and phrases never fall back.
+	for _, q := range []string{"zzqxv", "zzqxv of", `"pack loops"`, `"sword pack" loops`} {
+		r = find(SearchOptions{Query: q})
+		assert.Zero(t, r.Total, q)
+		assert.False(t, r.AnyWordFallback, q)
+	}
 }

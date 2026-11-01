@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/analysis"
+	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
 )
 
@@ -484,7 +486,7 @@ func (c *Cache) doRefresh() error {
 	return nil
 }
 
-// Field weights shared by every text query buildFuzzyQuery, buildExactQuery
+// Field weights shared by every text query textQuery
 // and phraseQuery (search.go) build. Tags outweigh the rest because they are
 // curated classification rather than prose - a hit there is a stronger
 // signal than one in a description that merely mentions the word - and
@@ -497,63 +499,92 @@ const (
 	tagBoost         = 4
 )
 
-// buildFuzzyQuery builds a disjunction over Title, Description, Author and
-// Tags that tolerates typos: fuzzyness is the edit distance bleve's
-// MatchQuery allows, and prefixLen is how many leading characters of each
-// term must match exactly before fuzziness applies. buildQuery (search.go)
-// calls this twice, at two different prefix lengths, to layer a tight and a
-// loose fuzzy pass over the same query text.
-func buildFuzzyQuery(queryString string, fuzzyness int, prefixLen int) *query.DisjunctionQuery {
-	titleQuery := bleve.NewMatchQuery(queryString)
-	titleQuery.SetField("Title")
-	titleQuery.SetBoost(titleBoost)
-	titleQuery.SetPrefix(prefixLen)
-	titleQuery.SetFuzziness(fuzzyness)
-	descriptionQuery := bleve.NewMatchQuery(queryString)
-	descriptionQuery.SetField("Description")
-	descriptionQuery.SetBoost(descriptionBoost)
-	descriptionQuery.SetPrefix(prefixLen)
-	descriptionQuery.SetFuzziness(fuzzyness)
-	authorQuery := bleve.NewMatchQuery(queryString)
-	authorQuery.SetField("Author")
-	authorQuery.SetBoost(authorBoost)
-	authorQuery.SetPrefix(prefixLen)
-	authorQuery.SetFuzziness(fuzzyness)
-	// Tags are curated classification rather than prose, so a hit here is a
-	// stronger signal than one in a description that merely mentions the word.
-	// Slugs are hyphenated ("pixel-art"), which bleve's standard analyzer
-	// splits into terms, so a "pixel art" query matches without special casing.
-	tagQuery := bleve.NewMatchQuery(queryString)
-	tagQuery.SetField("Tags")
-	tagQuery.SetBoost(tagBoost)
-	tagQuery.SetPrefix(prefixLen)
-	tagQuery.SetFuzziness(fuzzyness)
+// fuzzyPrefixLen is the number of leading characters of a term that must match
+// exactly before a typo is tolerated.
+const fuzzyPrefixLen = 2
 
-	// Combine queries with a disjunction (OR) query
-	query := bleve.NewDisjunctionQuery(titleQuery, descriptionQuery, authorQuery, tagQuery)
-	return query
+// queryAnalyzer is the analyzer the index applies to the text fields (bleve's
+// default, "standard"). textQuery runs terms through it to find the ones the
+// index drops entirely, such as stop words.
+var queryAnalyzer = func() analysis.Analyzer {
+	im := mapping.NewIndexMapping()
+	a := im.AnalyzerNamed(im.DefaultAnalyzer)
+	if a == nil {
+		panic("cache: default analyzer not found")
+	}
+	return a
+}()
+
+// queryTerms returns the distinct terms the analyzer makes of s, in order.
+// Splitting by analyzer rather than by whitespace keeps the query in step with
+// the index: "pixel-art" is two terms, like "pixel art"; stop words such as
+// "of" or "the" vanish, since the index holds no token for them; and a script
+// without spaces, such as Chinese, yields the per-token terms it was indexed
+// under. Repeats collapse to one.
+func queryTerms(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, tok := range queryAnalyzer.Analyze([]byte(s)) {
+		term := string(tok.Term)
+		if !seen[term] {
+			seen[term] = true
+			out = append(out, term)
+		}
+	}
+	return out
 }
 
-// buildExactQuery is buildFuzzyQuery without the fuzziness or prefix: an
-// exact-term match over the same four fields, at the same relative weights,
-// for the un-fuzzed disjunct buildQuery scores highest of the three.
-func buildExactQuery(queryString string) *query.DisjunctionQuery {
-	titleQuery := bleve.NewMatchQuery(queryString)
-	titleQuery.SetField("Title")
-	titleQuery.SetBoost(titleBoost)
-	descriptionQuery := bleve.NewMatchQuery(queryString)
-	descriptionQuery.SetField("Description")
-	descriptionQuery.SetBoost(descriptionBoost)
-	authorQuery := bleve.NewMatchQuery(queryString)
-	authorQuery.SetField("Author")
-	authorQuery.SetBoost(authorBoost)
-	tagQuery := bleve.NewMatchQuery(queryString)
-	tagQuery.SetField("Tags")
-	tagQuery.SetBoost(tagBoost)
+// textQuery requires every term of s to match in at least one text field: a
+// conjunction over terms, each term a disjunction of an exact match and a
+// light-typo match over the four fields. With anyWord set it is a disjunction
+// over terms instead (the fallback for a query nothing satisfies as a whole),
+// with the same per-term clauses and boosts. If s has no terms the query
+// matches nothing, as a lone stop word always has.
+func textQuery(s string, anyWord bool) query.Query {
+	var terms []query.Query
+	for _, word := range queryTerms(s) {
+		exact := buildFieldQuery(word, 0, 0)
+		exact.SetBoost(10)
+		fuzzy := buildFieldQuery(word, 1, fuzzyPrefixLen)
+		fuzzy.SetBoost(2)
+		terms = append(terms, bleve.NewDisjunctionQuery(exact, fuzzy))
+	}
+	switch len(terms) {
+	case 0:
+		return bleve.NewMatchNoneQuery()
+	case 1:
+		return terms[0]
+	}
+	if anyWord {
+		return bleve.NewDisjunctionQuery(terms...)
+	}
+	return bleve.NewConjunctionQuery(terms...)
+}
 
-	// Combine queries with a disjunction (OR) query
-	query := bleve.NewDisjunctionQuery(titleQuery, descriptionQuery, authorQuery, tagQuery)
-	return query
+// buildFieldQuery builds a disjunction over Title, Description, Author and
+// Tags for one term. fuzzyness is the edit distance bleve's MatchQuery allows
+// (0 for an exact match) and prefixLen is how many leading characters must
+// match exactly before fuzziness applies. Slugs in Tags are hyphenated
+// ("pixel-art"), which the standard analyzer splits, so tags match by word.
+func buildFieldQuery(term string, fuzzyness int, prefixLen int) *query.DisjunctionQuery {
+	field := func(name string, boost float64) query.Query {
+		q := bleve.NewMatchQuery(term)
+		q.SetField(name)
+		q.SetBoost(boost)
+		if fuzzyness > 0 {
+			q.SetPrefix(prefixLen)
+			q.SetFuzziness(fuzzyness)
+		}
+		return q
+	}
+	return bleve.NewDisjunctionQuery(
+		field("Title", titleBoost),
+		field("Description", descriptionBoost),
+		field("Author", authorBoost),
+		// Tags are curated classification rather than prose, so a hit here
+		// is a stronger signal than one in a description.
+		field("Tags", tagBoost),
+	)
 }
 
 // Both entry points this file used to expose - QueryCache and Page - are now

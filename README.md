@@ -30,7 +30,10 @@ the known limitations, and how to report a barrier.
 ## What it does
 
 - Searches four weighted fields at once (tags, title, description, author),
-  with exact and fuzzy matching, plus exact phrase search for quoted text.
+  with exact and typo-tolerant matching, plus exact phrase search for quoted
+  text. Every word you type must match in at least one field, so each added
+  word narrows the results, unless no asset has every word. Then the page
+  says so and shows results that match any word.
 - Filters by tag (including exclusion), price, author, and currency, with
   live facet counts as you narrow.
 - Reaches the whole catalog by crawling many tag-filtered views and
