@@ -222,18 +222,9 @@ func buildIndex(assets []models.Asset, rates money.Rates) (count int, err error)
 	unpriced := 0
 	smolAssets := make([]models.IndexedAsset, len(assets))
 	for i, asset := range assets {
-		priceUSD := 0.0
-		if !asset.Free() {
-			m, ok := money.Parse(asset.Price)
-			if ok {
-				priceUSD, ok = rates.USD(m)
-			}
-			if !ok {
-				// Not zero: an unreadable price must not look like a free asset
-				// to a ceiling filter or a cheapest-first sort.
-				priceUSD = models.UnknownPrice
-				unpriced++
-			}
+		priceUSD, priced := asset.PriceUSD(rates)
+		if !priced {
+			unpriced++
 		}
 		smolAssets[i] = models.NewIndexedAsset(asset, priceUSD)
 	}

@@ -1,8 +1,10 @@
 package cache
 
 import (
+	"cmp"
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -69,14 +71,21 @@ func newLoadedCacheFromAssets(t *testing.T, pageSize int64, assets []models.Asse
 	}
 	require.NoError(t, index.Batch(batch))
 
+	// The data is in popularity order, as doRefresh leaves it, and stably so:
+	// the index above was written in the order given, and a tie in InvPopularity
+	// is broken by that order.
+	data := slices.Clone(assets)
+	slices.SortStableFunc(data, func(a, b models.Asset) int { return cmp.Compare(a.InvPopularity, b.InvPopularity) })
+
 	c := NewCache(pageSize)
 	c.index = index
-	c.data = assets
-	c.dataMap = make(map[string]int, len(assets))
-	for i, a := range assets {
+	c.data = data
+	c.dataMap = make(map[string]int, len(data))
+	for i, a := range data {
 		c.dataMap[a.GameId] = i
 	}
-	c.tagCatalog = tagHistogram(assets)
+	c.eng = buildEngine(data, storedRates)
+	c.tagCatalog = tagHistogram(data)
 	c.tagCounts = topTags(c.tagCatalog)
 	c.rates = storedRates
 	c.hasRecency = true
@@ -91,17 +100,7 @@ func newLoadedCacheFromAssets(t *testing.T, pageSize int64, assets []models.Asse
 // priceUSD mirrors what the dataservice bakes into a document, so the fixtures
 // filter and sort by price exactly as published data does.
 func priceUSD(a models.Asset) float64 {
-	if a.Free() {
-		return 0
-	}
-	m, ok := money.Parse(a.Price)
-	if !ok {
-		return models.UnknownPrice
-	}
-	usd, ok := storedRates.USD(m)
-	if !ok {
-		return models.UnknownPrice
-	}
+	usd, _ := a.PriceUSD(storedRates)
 	return usd
 }
 
