@@ -378,11 +378,15 @@ func (c *Cache) runQuery(opts SearchOptions, likeTags []string, from, size int, 
 }
 
 // canFallBack reports whether a zero-hit answer should be retried with
-// any-word matching: the loose text must hold at least two words the index
-// keeps. Single words and phrase-only queries have nothing to relax.
+// any-word matching: the text must hold at least two distinct terms the
+// index keeps and no quoted phrase. Single terms have nothing to relax, and
+// someone who quoted a phrase asked for exactly that.
 func canFallBack(opts SearchOptions) bool {
-	_, rest := splitPhrases(opts.Query)
-	return len(indexedWords(rest)) >= 2
+	phrases, rest := splitPhrases(opts.Query)
+	if len(phrases) > 0 {
+		return false
+	}
+	return len(queryTerms(rest)) >= 2
 }
 
 // buildQuery assembles the text query and the filters into one bleve query.

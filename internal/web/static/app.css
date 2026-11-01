@@ -764,6 +764,11 @@ a.facet:active .facet-count {
   color: var(--text-dim);
 }
 
+.result-note {
+  font-size: 1.25rem;
+  color: var(--text-dim);
+}
+
 .segmented {
   display: flex;
   border: 1px solid var(--border-control);

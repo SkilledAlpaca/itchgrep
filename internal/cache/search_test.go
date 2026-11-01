@@ -747,18 +747,68 @@ func TestTextQueryMonotonic(t *testing.T) {
 		}
 	}
 	c := newLoadedCacheFromAssets(t, 10, assets)
-	total := func(q string) int64 {
+	find := func(q string) Results {
 		r, err := c.Find(SearchOptions{Query: q, Page: 1})
 		require.NoError(t, err)
-		return r.Total
+		return r
 	}
+	// Monotonicity holds while the strict query has hits. A pair where either
+	// side fell back to any-word matching is a different rule, covered by
+	// TestAnyWordFallback and the explicit case below.
+	checked := 0
 	for i := 0; i < 60; i++ {
 		q := pick(1 + rng.Intn(3))
-		base := total(q)
+		base := find(q)
 		for _, extra := range vocab {
-			assert.LessOrEqual(t, total(q+" "+extra), base, "%q + %q", q, extra)
+			more := find(q + " " + extra)
+			if base.AnyWordFallback || more.AnyWordFallback {
+				continue
+			}
+			checked++
+			assert.LessOrEqual(t, more.Total, base.Total, "%q + %q", q, extra)
 		}
 	}
+	assert.Greater(t, checked, 100, "the property must be exercised, not skipped")
+
+	// A word no asset shares with the rest turns a strict query into the
+	// fallback, which may return more: this is the one allowed exception.
+	solo := append(slices.Clone(assets), models.Asset{GameId: "9999", Title: "zebra", InvPopularity: 9999})
+	c = newLoadedCacheFromAssets(t, 10, solo)
+	strict := find("pixel")
+	fb := find("pixel zebra")
+	assert.False(t, strict.AnyWordFallback)
+	assert.True(t, fb.AnyWordFallback)
+	assert.Greater(t, fb.Total, strict.Total)
+}
+
+func TestTextQueryUsesAnalyzedTerms(t *testing.T) {
+	c := newLoadedCacheFromAssets(t, 100, []models.Asset{
+		{GameId: "1", Title: "Pixel Art Pack", Author: "ana", InvPopularity: 1},
+		{GameId: "2", Title: "Pixel Sword", Author: "bo", InvPopularity: 2},
+		{GameId: "3", Title: "Art Sword", Author: "cy", InvPopularity: 3},
+		{GameId: "4", Title: "魔法剣", Author: "dee", InvPopularity: 4},
+		{GameId: "5", Title: "魔法盾", Author: "el", InvPopularity: 5},
+	})
+	find := func(q string) Results {
+		t.Helper()
+		r, err := c.Find(SearchOptions{Query: q, Page: 1})
+		require.NoError(t, err)
+		return r
+	}
+	assert.ElementsMatch(t, ids(find("pixel art")), ids(find("pixel-art")))
+	assert.ElementsMatch(t, []string{"1"}, ids(find("pixel-art")))
+
+	both := find("pixel-sword")
+	assert.ElementsMatch(t, []string{"2"}, ids(both))
+	assert.False(t, both.AnyWordFallback)
+
+	assert.ElementsMatch(t, ids(find("pixel")), ids(find("pixel pixel PIXEL")))
+	assert.ElementsMatch(t, ids(find("pixel art")), ids(find("pixel art art pixel")))
+
+	// Without spaces, each character is its own token, and all are required.
+	cjk := find("魔法剣")
+	assert.Equal(t, []string{"4"}, ids(cjk))
+	assert.False(t, cjk.AnyWordFallback)
 }
 
 func TestAnyWordFallback(t *testing.T) {
@@ -805,7 +855,7 @@ func TestAnyWordFallback(t *testing.T) {
 	assert.False(t, r.AnyWordFallback)
 
 	// Single words, stop-word-reduced queries, and phrases never fall back.
-	for _, q := range []string{"zzqxv", "zzqxv of", `"pack loops"`} {
+	for _, q := range []string{"zzqxv", "zzqxv of", `"pack loops"`, `"sword pack" loops`} {
 		r = find(SearchOptions{Query: q})
 		assert.Zero(t, r.Total, q)
 		assert.False(t, r.AnyWordFallback, q)

@@ -208,7 +208,21 @@ func TestFragmentStatusSaysWhenResultsMatchAnyWord(t *testing.T) {
 	r.AnyWordFallback = true
 	html := render(t, ResultsFragment(Filters{Query: "pack loops"}, r))
 	assert.Contains(t, html, `<p id="result-status" hx-swap-oob="innerHTML">2 assets for pack loops. No results contain every word; showing results that match any word.</p>`)
+	assert.Contains(t, html, `<span class="result-note">No results contain every word; showing results that match any word.</span>`,
+		"the visible note sits in the swapped region")
 
 	r.AnyWordFallback = false
-	assert.NotContains(t, render(t, ResultsFragment(Filters{Query: "pack loops"}, r)), "match any word")
+	html = render(t, ResultsFragment(Filters{Query: "pack loops"}, r))
+	assert.NotContains(t, html, "match any word")
+	assert.NotContains(t, html, "result-note")
+}
+
+func TestFullPageShowsTheAnyWordNote(t *testing.T) {
+	r := sampleResults()
+	r.AnyWordFallback = true
+	html := render(t, Index(Filters{Query: "pack loops"}, r))
+	note := strings.Index(html, `<span class="result-note">`)
+	require.True(t, note >= 0, "a full page load has no OOB status swap, so the note must be in the page")
+	assert.Greater(t, note, strings.Index(html, `class="result-count"`), "the note follows the count")
+	assert.NotContains(t, html[note:note+120], "aria-live")
 }

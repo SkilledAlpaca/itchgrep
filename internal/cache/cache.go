@@ -17,7 +17,6 @@ import (
 	"os"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -516,28 +515,34 @@ var queryAnalyzer = func() analysis.Analyzer {
 	return a
 }()
 
-// indexedWords returns the whitespace-separated words of s that survive the
-// analyzer. Stop words such as "of" or "the" are dropped: the index holds no
-// token for them, so a match query on one would match nothing.
-func indexedWords(s string) []string {
+// queryTerms returns the distinct terms the analyzer makes of s, in order.
+// Splitting by analyzer rather than by whitespace keeps the query in step with
+// the index: "pixel-art" is two terms, like "pixel art"; stop words such as
+// "of" or "the" vanish, since the index holds no token for them; and a script
+// without spaces, such as Chinese, yields the per-token terms it was indexed
+// under. Repeats collapse to one.
+func queryTerms(s string) []string {
 	var out []string
-	for _, word := range strings.Fields(s) {
-		if len(queryAnalyzer.Analyze([]byte(word))) > 0 {
-			out = append(out, word)
+	seen := map[string]bool{}
+	for _, tok := range queryAnalyzer.Analyze([]byte(s)) {
+		term := string(tok.Term)
+		if !seen[term] {
+			seen[term] = true
+			out = append(out, term)
 		}
 	}
 	return out
 }
 
-// textQuery requires every indexed word of s to match in at least one text
-// field: a conjunction over words, each word a disjunction of an exact match
-// and a light-typo match over the four fields. With anyWord set it is a
-// disjunction over words instead (the fallback for a query nothing satisfies
-// as a whole), with the same per-word clauses and boosts. If s has no indexed
-// word the query matches nothing, as a lone stop word always has.
+// textQuery requires every term of s to match in at least one text field: a
+// conjunction over terms, each term a disjunction of an exact match and a
+// light-typo match over the four fields. With anyWord set it is a disjunction
+// over terms instead (the fallback for a query nothing satisfies as a whole),
+// with the same per-term clauses and boosts. If s has no terms the query
+// matches nothing, as a lone stop word always has.
 func textQuery(s string, anyWord bool) query.Query {
 	var terms []query.Query
-	for _, word := range indexedWords(s) {
+	for _, word := range queryTerms(s) {
 		exact := buildFieldQuery(word, 0, 0)
 		exact.SetBoost(10)
 		fuzzy := buildFieldQuery(word, 1, fuzzyPrefixLen)
