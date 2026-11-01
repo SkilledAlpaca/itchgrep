@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -35,21 +36,31 @@ func cardIDs(body string) []string {
 }
 
 func TestSidebarRendersTheHeadAndLeavesTheRestToTheTail(t *testing.T) {
-	r, _ := sidebarRouter(t)
+	r, c := sidebarRouter(t)
 	page := get(t, r, "/").Body.String()
 
 	assert.Equal(t, 40, strings.Count(page, "<li data-facet="), "the page carries the head")
-	assert.Contains(t, page, `data-tail-url="/results/tags"`)
+	assert.Contains(t, page, fmt.Sprintf(`data-tail-url="/results/tags?v=%d"`, c.DataUpdatedTime().Unix()),
+		"the fragment is keyed by the data generation")
 	assert.Contains(t, page, `href="/?alltags=1"`)
 	assert.Contains(t, page, "More tags")
 
-	tail := get(t, r, "/results/tags")
-	require.Equal(t, http.StatusOK, tail.Code)
-	rows := strings.Count(tail.Body.String(), "<li data-facet=")
-	assert.Equal(t, 20, rows, "60 tags: 40 in the page, 20 in the tail")
-	assert.Equal(t, rows, strings.Count(tail.Body.String(), "data-facet-tail hidden"))
-	for _, slug := range regexp.MustCompile(`<li data-facet="([^"]+)"`).FindAllStringSubmatch(page, -1) {
-		assert.NotContains(t, tail.Body.String(), `data-facet="`+slug[1]+`"`, "head and tail do not overlap")
+	list := get(t, r, fmt.Sprintf("/results/tags?v=%d", c.DataUpdatedTime().Unix()))
+	require.Equal(t, http.StatusOK, list.Code)
+	rows := regexp.MustCompile(`<li data-facet="([^"]+)"`).FindAllStringSubmatch(list.Body.String(), -1)
+	assert.Len(t, rows, 60, "the whole ranked list: 60 tags, head and tail")
+	assert.Equal(t, 20, strings.Count(list.Body.String(), "data-facet-tail hidden"))
+
+	// The swap replaces the list, so what the visitor ends up with is exactly
+	// this response: no tag appears twice, and it starts with the page's head.
+	seen := map[string]bool{}
+	for _, m := range rows {
+		assert.False(t, seen[m[1]], "duplicate row "+m[1])
+		seen[m[1]] = true
+	}
+	head := regexp.MustCompile(`<li data-facet="([^"]+)"`).FindAllStringSubmatch(page, -1)
+	for i, m := range head {
+		assert.Equal(t, m[1], rows[i][1], "same generation: the page's head leads the list")
 	}
 }
 

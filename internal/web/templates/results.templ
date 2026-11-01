@@ -1,6 +1,7 @@
 package templates
 
 import "net/url"
+import "strconv"
 import "strings"
 import "itchgrep/pkg/models"
 import "itchgrep/pkg/money"
@@ -35,6 +36,11 @@ type Results struct {
 	// cache.Results.LikeTitle. Empty when Like is unset or matched nothing.
 	LikeTitle string
 
+	// DataUnix is the publish time of the dataset the results came from, in Unix
+	// seconds. The sidebar's on-demand list is fetched under it, so each data
+	// generation has its own cache key.
+	DataUnix int64
+
 	// FirstPageURL, when set, is where "back to the first page" goes, for a
 	// page whose first page is not at f.PageURL(1) - a /tag/{slug} page.
 	FirstPageURL string
@@ -61,7 +67,7 @@ func priceFilterLabel(price string) string {
 // several hundred tags and the long tail is single-digit counts, so showing all
 // of them would bury the useful ones under noise, and sending all of them to
 // every visitor, on every filter tap, was most of the markup of a results page.
-// The rest is fetched on demand (see TagTail) or, with scripting off, by
+// The rest is fetched on demand (see TagList) or, with scripting off, by
 // following the "More tags" link to a page that lists them all.
 const sidebarTags = 40
 
@@ -70,11 +76,20 @@ const sidebarTags = 40
 // about which assets match.
 const MoreTagsParam = "alltags"
 
-// tagTailURL is the endpoint that renders the rest of the sidebar for these
-// filters: the same query string the results fragment takes, so the fragment is
-// as cacheable as the results it belongs to.
-func tagTailURL(f Filters) string {
+// tagTailURL is the endpoint that renders the whole ranked sidebar list for
+// these filters, the same query string the results fragment takes (so it is as
+// cacheable as the results it belongs to) plus v, the data generation the page
+// was rendered from. Each generation is its own cache key, so a copy of the
+// fragment from before a publish is never handed to a page from after it.
+//
+// Sort and currency are carried only when set: they change nothing about the
+// tags, but the rows' links lead to a results page and have to keep them. The
+// common case has neither, and shares one key.
+func tagTailURL(f Filters, generation int64) string {
 	v := f.Values()
+	if generation != 0 {
+		v.Set("v", strconv.FormatInt(generation, 10))
+	}
 	if len(v) == 0 {
 		return "/results/tags"
 	}
@@ -99,7 +114,7 @@ func sidebarHead(f Filters, tags []models.Tag) []models.Tag {
 	return tags[:sidebarTags]
 }
 
-// sidebarRest is how many tags the page leaves for TagTail.
+// sidebarRest is how many tags the page leaves for TagList.
 func sidebarRest(f Filters, tags []models.Tag) int {
 	if f.AllTags || len(tags) <= sidebarTags {
 		return 0
@@ -419,7 +434,7 @@ templ TagSidebar(f Filters, r Results) {
 					class="facet-list"
 					id="facet-list"
 					if sidebarRest(f, r.Tags) > 0 {
-						data-tail-url={ tagTailURL(f) }
+						data-tail-url={ tagTailURL(f, r.DataUnix) }
 						hx-sync="this:replace"
 					}
 				>
@@ -475,14 +490,14 @@ templ facetItem(f Filters, tag models.Tag, tail bool) {
 	</li>
 }
 
-// TagTail is the sidebar rows past the head, as the fragment app.js appends to
-// the list. Hidden rows, for the same reason the page used to render them
-// hidden: the visitor chooses when they appear.
-templ TagTail(f Filters, tags []models.Tag) {
-	if len(tags) > sidebarTags {
-		for _, tag := range tags[sidebarTags:] {
-			@facetItem(f, tag, true)
-		}
+// TagList is the whole ranked sidebar list as rows: the fragment app.js swaps
+// into the list. The head rows are shown, the rest start hidden for the same
+// reason the page's tail does: the visitor chooses when they appear. Sending the
+// head again, not just the tail, is what lets the swap replace the list instead
+// of appending to a head that may come from another data generation.
+templ TagList(f Filters, tags []models.Tag) {
+	for i, tag := range tags {
+		@facetItem(f, tag, i >= sidebarTags)
 	}
 }
 

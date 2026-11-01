@@ -420,11 +420,14 @@ func (h *handler) cacheableFor(w http.ResponseWriter, page int64, results templa
 	h.cacheable(w)
 }
 
-// HandleResultsTags serves /results/tags: the sidebar rows past the head, for
-// the filters in the query string. The page leaves them out to stay small and
-// app.js fetches them when the visitor looks for a tag. A fragment of rows and
-// nothing else, so an error is an empty body with the honest status: the
-// sidebar then simply has no more to offer.
+// HandleResultsTags serves /results/tags: the whole ranked sidebar list, for
+// the filters in the query string. The page leaves the rows past the head out
+// to stay small, and app.js fetches the list (replacing what it holds, so a
+// head from another data generation cannot leave duplicates) when the visitor
+// looks for a tag. A fragment of rows and nothing else, so an error is an empty
+// body with the honest status: the sidebar then simply has no more to offer.
+// The v parameter in the URL only keys the caches by data generation; the
+// answer is always the current one.
 func (h *handler) HandleResultsTags(w http.ResponseWriter, r *http.Request) {
 	filters := parseFilters(r, h.cache.Rates())
 
@@ -440,7 +443,7 @@ func (h *handler) HandleResultsTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.cacheable(w)
-	templates.TagTail(filters, results.Tags).Render(r.Context(), w)
+	templates.TagList(filters, results.Tags).Render(r.Context(), w)
 }
 
 // find runs the query and shapes the answer for the templates.
@@ -468,6 +471,7 @@ func (h *handler) find(filters templates.Filters, page int64, facets bool) (temp
 		Tags:          found.Tags,
 		Page:          page,
 		Rates:         h.cache.Rates(),
+		DataUnix:      h.cache.DataUpdatedTime().Unix(),
 		HasRecency:    h.cache.HasRecency(),
 		HasPriceBands: h.cache.HasPriceBands(),
 		// Computed from the totals rather than from whether this page came back

@@ -40,11 +40,17 @@ function filterFacets(box) {
 // ------------------------------------------------------------- tag tail --
 //
 // The sidebar's list element carries data-tail-url when the page left tags
-// out. Asking for them is one cacheable GET whose rows are appended to the
-// list. data-tail is "loading" while it runs and "loaded" after; a failure
-// puts it back so the next try asks again. Without scripting none of this
-// runs and "More tags" is a plain link to a page that lists everything.
+// out. The URL returns the whole ranked list for the data generation it names
+// (v=), head and tail, and the list's contents are REPLACED with it. Appending
+// the tail to a head rendered from another generation (a publish between the
+// page and the fetch, or an edge copy of one) could repeat or skip a tag; a
+// replacement cannot. data-tail is "loading" while the request runs and
+// "loaded" after; a failure puts it back so the next try asks again. Without
+// scripting none of this runs and "More tags" is a plain link to a page that
+// lists everything.
 var expandAfterTail = false;
+var moreHref = '';
+var tailFocus = null;
 
 function facetList() {
 	return document.getElementById('facet-list');
@@ -54,11 +60,42 @@ function loadFacetTail(list) {
 	if (!list || !list.getAttribute('data-tail-url') || list.hasAttribute('data-tail')) return;
 	if (!window.htmx) return;
 	list.setAttribute('data-tail', 'loading');
-	htmx.ajax('GET', list.getAttribute('data-tail-url'), { source: list, target: list, swap: 'beforeend' });
+	htmx.ajax('GET', list.getAttribute('data-tail-url'), { source: list, target: list, swap: 'innerHTML' });
 }
 
-// Revealing the rest keeps focus where the visitor was: the link they used is
-// removed, so focus goes to the first row it brought in rather than to <body>.
+// Before the list is replaced, note where focus is inside it, so it can be put
+// back on the same tag's control afterwards, and the first row of the old tail
+// (if there was one), which is where a "More tags" press should land.
+document.addEventListener('htmx:beforeSwap', function (evt) {
+	var list = evt.detail.target;
+	if (!list || list.id !== 'facet-list') return;
+	tailFocus = { slug: null, cls: null, firstTail: null };
+	var active = document.activeElement;
+	var row = active && active !== document.body ? active.closest('li[data-facet]') : null;
+	if (row && list.contains(row)) {
+		tailFocus.slug = row.getAttribute('data-facet');
+		tailFocus.cls = active.classList.contains('facet-exclude') ? 'facet-exclude' : 'facet';
+	}
+	var oldTail = list.querySelector('[data-facet-tail]');
+	if (oldTail) tailFocus.firstTail = oldTail.getAttribute('data-facet');
+});
+
+function focusFacet(list, slug, cls) {
+	if (!slug) return false;
+	var rows = list.querySelectorAll('li[data-facet]');
+	for (var i = 0; i < rows.length; i++) {
+		if (rows[i].getAttribute('data-facet') !== slug || rows[i].hidden) continue;
+		var el = rows[i].querySelector('a.' + cls) || rows[i].querySelector('a');
+		if (el) { el.focus(); return true; }
+	}
+	return false;
+}
+
+// Revealing the rest keeps focus somewhere real: the "More tags" link they used
+// is removed, so focus goes to the row that opens the revealed part (the first
+// of the old tail if there was one, else the first new row). At the tag cap the
+// rows are text, so it falls back to the first focusable thing in the tail and,
+// failing that, the search box - never <body>.
 function expandFacets(details, moveFocus) {
 	if (!details) return;
 	details.setAttribute('data-expanded', '');
@@ -69,9 +106,16 @@ function expandFacets(details, moveFocus) {
 		var wrap = more.closest('.facets-more-wrap') || more;
 		wrap.remove();
 	}
-	if (moveFocus) {
-		var first = details.querySelector('[data-facet-tail] a.facet');
-		if (first) first.focus();
+	if (!moveFocus) return;
+	var list = details.querySelector('#facet-list');
+	var wanted = tailFocus && tailFocus.firstTail;
+	if (list && wanted && focusFacet(list, wanted, 'facet')) return;
+	var first = details.querySelector('[data-facet-tail] a.facet') ||
+		details.querySelector('[data-facet-tail] a');
+	if (first) {
+		first.focus();
+	} else if (box) {
+		box.focus();
 	}
 }
 
@@ -89,10 +133,12 @@ document.addEventListener('click', function (e) {
 	e.preventDefault();
 	var details = more.closest('.facets-details');
 	if (list.getAttribute('data-tail') === 'loaded') {
+		tailFocus = null;
 		expandFacets(details, true);
 		return;
 	}
 	expandAfterTail = true;
+	moreHref = more.href;
 	loadFacetTail(list);
 });
 
@@ -103,96 +149,31 @@ document.addEventListener('htmx:afterSwap', function (evt) {
 	var details = list.closest('.facets-details');
 	var box = details && details.querySelector('[data-facet-search]');
 	if (box) filterFacets(box);
+	var focus = tailFocus;
 	if (expandAfterTail) {
 		expandAfterTail = false;
 		expandFacets(details, true);
+	} else if (focus && focus.slug) {
+		// The rows were replaced under the visitor's focus.
+		focusFacet(list, focus.slug, focus.cls);
 	}
 });
 
+// A failed fetch after "More tags" was pressed falls back to what the link does
+// without scripting: go to the page that lists every tag.
 function facetTailFailed(evt) {
 	var list = evt.target;
 	if (!list || list.id !== 'facet-list') return;
 	list.removeAttribute('data-tail');
+	if (expandAfterTail && moreHref) {
+		expandAfterTail = false;
+		window.location.href = moreHref;
+		return;
+	}
 	expandAfterTail = false;
 }
 document.addEventListener('htmx:responseError', facetTailFailed);
 document.addEventListener('htmx:sendError', facetTailFailed);
-
-// Spelled out as getDate/getMonth/etc rather than toLocaleString: those
-// read in whatever zone the browser is already in, with no Intl call and
-// no locale-dependent reordering of day/month/year to fight - which also
-// keeps the result in the same "2 January 2006, 15:04" layout the server
-// uses for UTC, so a converted timestamp reads as the same kind of string
-// as the one it replaced rather than a foreign one.
-var MONTH_NAMES = [
-	'January', 'February', 'March', 'April', 'May', 'June',
-	'July', 'August', 'September', 'October', 'November', 'December'
-];
-
-function pad2(n) {
-	return n < 10 ? '0' + n : String(n);
-}
-
-function formatLocalDateTime(when) {
-	return when.getDate() + ' ' + MONTH_NAMES[when.getMonth()] + ' ' +
-		when.getFullYear() + ', ' + pad2(when.getHours()) + ':' + pad2(when.getMinutes());
-}
-
-// suffixUTC appends " UTC" to a server-rendered string unless it is there
-// already - CountingSince always carries it, but nothing stops a future
-// caller passing in text that already does.
-function suffixUTC(text) {
-	return /\bUTC$/.test(text) ? text : text + ' UTC';
-}
-
-// The server renders exact times in UTC because it has no way of knowing
-// the reader's zone - a visitor comparing "14:30 UTC" against their own
-// clock has to do the arithmetic themselves. Where there is a browser to
-// ask, rewrite it to local time. Two different kinds of element carry a
-// server-rendered UTC time, and each needs a different conversion:
-//
-//   - time.js-local[datetime] is already an absolute timestamp (e.g.
-//     "counting since"), so the local rendering replaces its text outright
-//     - the original UTC text moves onto the title rather than being
-//     discarded, since it is still the one instant nobody has to guess the
-//     zone of.
-//   - every other time[datetime] is a relative label ("3 days ago"): its
-//     text has to stay relative, or "3 days ago" would silently become an
-//     absolute local timestamp instead. Its title - already the UTC
-//     absolute - gains the local absolute alongside it, so hovering shows
-//     both.
-//
-// Both are guarded by a marker attribute so a second pass - after an
-// htmx swap that did not touch a given element - leaves it alone rather
-// than converting an already-local rendering as though it were still UTC.
-function localizeTimestamps(root) {
-	localizeAbsoluteTimestamps(root);
-	localizeRelativeTimestamps(root);
-}
-
-function localizeAbsoluteTimestamps(root) {
-	var nodes = root.querySelectorAll('time.js-local[datetime]:not([data-localized])');
-	for (var i = 0; i < nodes.length; i++) {
-		var when = new Date(nodes[i].getAttribute('datetime'));
-		if (isNaN(when.getTime())) continue;
-		nodes[i].setAttribute('data-localized', '');
-		var original = nodes[i].textContent;
-		nodes[i].textContent = formatLocalDateTime(when);
-		nodes[i].title = suffixUTC(original);
-	}
-}
-
-function localizeRelativeTimestamps(root) {
-	var nodes = root.querySelectorAll('time:not(.js-local)[datetime]:not([data-localized])');
-	for (var i = 0; i < nodes.length; i++) {
-		var when = new Date(nodes[i].getAttribute('datetime'));
-		if (isNaN(when.getTime())) continue;
-		nodes[i].setAttribute('data-localized', '');
-		var originalTitle = nodes[i].getAttribute('title') || '';
-		var local = formatLocalDateTime(when);
-		nodes[i].title = originalTitle ? local + ' (' + originalTitle + ')' : local;
-	}
-}
 
 // ------------------------------------------------------- relative times --
 //
@@ -672,7 +653,9 @@ function restoreFacetState(root) {
 	// list, or had asked for more tags, gets the rest fetched again for the new
 	// filters; the search text is applied when it arrives.
 	if (state.needle || state.expanded) {
-		if (state.expanded && details) details.setAttribute('data-expanded', '');
+		// Everything is about to be shown, so the link that would show it goes
+		// now, with no focus move: the visitor is not on it.
+		if (state.expanded && details) expandFacets(details, false);
 		loadFacetTail(root.querySelector('#facet-list'));
 	}
 }

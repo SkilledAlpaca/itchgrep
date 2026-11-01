@@ -317,18 +317,27 @@ func TestMoreTagsLinkOnATagPageStaysOnTheTagPage(t *testing.T) {
 	assert.Contains(t, html, `href="/tag/2d?alltags=1"`)
 }
 
-func TestTagTailRendersTheRowsPastTheHeadHidden(t *testing.T) {
+func TestTagListRendersEveryRowAndHidesThoseBeyondTheHead(t *testing.T) {
+	// The fragment replaces the sidebar's list, so it carries the head too.
 	var tags []models.Tag
 	for i := 0; i <= sidebarTags+2; i++ {
 		tags = append(tags, models.Tag{Slug: "tag-" + strconv.Itoa(i), Count: int64(100 - i)})
 	}
-	html := render(t, TagTail(Filters{}, tags))
-	first := strconv.Itoa(sidebarTags)
-	assert.Contains(t, html, `<li data-facet="tag-`+first+`" data-facet-tail hidden>`)
-	assert.NotContains(t, html, `data-facet="tag-`+strconv.Itoa(sidebarTags-1)+`"`)
-	assert.Equal(t, 3, strings.Count(html, "<li "))
+	html := render(t, TagList(Filters{}, tags))
+	assert.Equal(t, sidebarTags+3, strings.Count(html, "<li "))
+	assert.Contains(t, html, `<li data-facet="tag-0">`)
+	assert.Contains(t, html, `<li data-facet="tag-`+strconv.Itoa(sidebarTags-1)+`">`)
+	assert.Contains(t, html, `<li data-facet="tag-`+strconv.Itoa(sidebarTags)+`" data-facet-tail hidden>`)
+	assert.Equal(t, 3, strings.Count(html, "data-facet-tail hidden"))
+}
 
-	assert.Empty(t, render(t, TagTail(Filters{}, tags[:sidebarTags])), "nothing past the head, nothing to add")
+func TestTagListURLNamesTheDataGeneration(t *testing.T) {
+	assert.Equal(t, "/results/tags", tagTailURL(Filters{}, 0))
+	assert.Equal(t, "/results/tags?v=1790000000", tagTailURL(Filters{}, 1790000000))
+	f := Filters{Query: "tile", Sort: models.SortTitle}.WithTag("2d")
+	assert.Equal(t, "/results/tags?q=tile&sort=title&tags=2d&v=1790000000", tagTailURL(f, 1790000000),
+		"narrowing fields and v; sort only because the rows' links must keep it")
+	assert.Equal(t, "/results/tags?q=tile&tags=2d&v=5", tagTailURL(Filters{Query: "tile"}.WithTag("2d"), 5), "the default sort is omitted")
 }
 
 func TestFilterLinksInheritTheirTargetFromTheSearchPage(t *testing.T) {
