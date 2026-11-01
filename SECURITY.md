@@ -78,7 +78,13 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
     lasts; probes past the budget still get the 404 and the aggregate count,
     but no per-request line. See
     [docs/observability.md](docs/observability.md).
-  - **A restrictive Content-Security-Policy** plus `Referrer-Policy`,
+  - **A restrictive Content-Security-Policy**, same-origin apart from two
+    Cloudflare Web Analytics allowances: `static.cloudflareinsights.com`
+    (script) and `cloudflareinsights.com` (connect). There is no script
+    nonce: Cloudflare edge-caches the HTML with its headers, so a nonce would
+    be shared by every visitor for the cache lifetime and be publicly
+    readable. Cloudflare's inline JavaScript Detections script therefore
+    stays blocked. The policy comes with `Referrer-Policy`,
     `X-Content-Type-Options`, and `Cross-Origin-Opener-Policy`
     (`internal/web/secheaders.go`). No `X-Frame-Options` (the CSP's
     `frame-ancestors 'none'` already covers it) and no HSTS at the origin

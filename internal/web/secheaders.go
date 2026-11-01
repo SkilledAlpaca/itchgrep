@@ -11,7 +11,20 @@ import "net/http"
 // its own JS and CSS rather than pulling from a CDN. frame-ancestors 'none'
 // and base-uri 'none' close off clickjacking and base-tag injection with
 // nothing legitimate depending on either being open.
-const contentSecurityPolicy = "default-src 'self'; img-src 'self' https://img.itch.zone data:; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+//
+// The one exception to "everything is same-origin" is Cloudflare Web Analytics,
+// which Cloudflare adds to the pages in front of the site: it loads a beacon
+// from static.cloudflareinsights.com and reports to cloudflareinsights.com.
+// Without these two hosts the browser blocks both and the console fills with
+// violations.
+//
+// There is deliberately no script nonce. Cloudflare's JavaScript Detections
+// would need one for its inline script, but a Cache Rule edge-caches the HTML
+// of /, /results, /about and /stats together with its headers, so a nonce in
+// the header would be served to every visitor for up to five minutes and be
+// publicly readable - a shared "password" that protects nothing. The inline
+// script stays blocked instead; script-src never admits 'unsafe-inline'.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' https://img.itch.zone data:; script-src 'self' https://static.cloudflareinsights.com; style-src 'self'; connect-src 'self' https://cloudflareinsights.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 // SecurityHeaders sets response headers that cost nothing to apply broadly
 // and nothing to get wrong in the direction of "too strict" - none of them
@@ -36,3 +49,4 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
