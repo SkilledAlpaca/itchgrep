@@ -249,8 +249,8 @@ means:
 - **`docker compose up -d --build`** (no `--profile public`) starts only
   `dataservice` and `webserver`. Nothing is reachable from outside the
   host; only `http://127.0.0.1:62685` (dataservice, loopback-only — see the
-  warning below) and `http://<host>:62686` (webserver) work, and only from
-  the host or its local network.
+  warning below) and `http://127.0.0.1:62686` (webserver) work, and only from
+  the host itself: both ports are bound to loopback.
 - **`docker compose --profile public up -d --build`** (what both the
   first-deploy and update commands above use) additionally starts
   `cloudflared`, which dials out to Cloudflare and makes the site reachable

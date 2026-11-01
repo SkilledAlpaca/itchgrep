@@ -36,9 +36,9 @@ const contentSecurityPolicy = "default-src 'self'; img-src 'self' https://img.it
 // anyway, so setting both would just be a second thing to keep in sync.
 //
 // No HSTS here. Cloudflare terminates TLS and can set it at the edge; doing
-// it again at the origin would apply to the LAN-published plain-HTTP port
-// too, and a client that pins HTTPS there would be locking itself out of a
-// port that was never meant to serve it.
+// it again at the origin would apply to the plain-HTTP loopback port too, and
+// a client that pins HTTPS there would be locking itself out of a port that
+// was never meant to serve it.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

@@ -32,7 +32,7 @@ this can't rot silently.
 ## Trust boundaries
 
 ```
-Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver:8080 (public port 62686)
+Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver:8080 (host port 127.0.0.1:62686, loopback-only)
                                                                  → dataservice:8080 (loopback-only port 62685)
 ```
 
@@ -47,8 +47,9 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
   firewall rule — there is no port to scan or forget to close. See
   [docs/infrastructure.md](docs/infrastructure.md#what-a-cloudflare-tunnel-is).
 - **The webserver.** Listens on `8080` inside its container, published on
-  host port `62686`. This is the only port meant to ever be reachable from
-  outside the host. It applies:
+  `127.0.0.1:62686` — loopback only, never `0.0.0.0`, so it is not reachable
+  from the LAN. Public traffic does not use it: `cloudflared` connects over
+  the compose network to `http://webserver:8080`. It applies:
   - **Per-client rate limiting** (`internal/web/ratelimit.go`) — a search is
     expensive (three disjunctions, two fuzzy, over the whole catalog), and
     nothing else in the request path pushes back. Probe traffic (below)
@@ -93,7 +94,7 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
     (HSTS belongs at the Cloudflare edge — whether it is enabled there is not
     verifiable from this repository, see
     [docs/open-questions.md](docs/open-questions.md#4-full-cloudflare-account-inventory); the same binary also answers on a
-    plain-HTTP LAN port that must not be locked to HTTPS).
+    plain-HTTP port that must not be locked to HTTPS).
 - **The dataservice.** Listens on `8080` inside its container, published on
   **`127.0.0.1:62685`** — loopback only, never `0.0.0.0`
   (`docker-compose.yml`). Its `/trigger-fetch` endpoint takes **no

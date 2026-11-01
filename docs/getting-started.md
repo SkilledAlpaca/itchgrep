@@ -254,7 +254,7 @@ you set `SCRAPE_MAX_PAGES` first (see
 [docs/configuration.md](configuration.md#scrape_max_pages) — for this path,
 put it in a `.env` file next to `docker-compose.yml`, copied from
 `.env.example`).
-Common failures: `Bind for 0.0.0.0:62686 failed: port is already allocated`
+Common failures: `Bind for 127.0.0.1:62686 failed: port is already allocated`
 means something else (maybe a previous `docker compose up`) already holds
 that port — stop it first with `docker compose down`.
 How to undo or recover: `docker compose down` stops the containers, keeping

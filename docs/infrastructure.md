@@ -62,7 +62,7 @@ The operator reports `COMPOSE_PROJECT_NAME=itchgrep` is set explicitly in the pr
 docker compose --profile public up -d
 ```
 
-A local `docker compose up` (no `--profile public`) never starts `cloudflared` and needs no Cloudflare account at all — the webserver is still reachable directly at `http://localhost:62686`.
+A local `docker compose up` (no `--profile public`) never starts `cloudflared` and needs no Cloudflare account at all — the webserver is still reachable directly at `http://localhost:62686` (from the host; the port is bound to loopback).
 
 ### The pinned network subnet
 
@@ -156,7 +156,7 @@ The fingerprint is in the path on purpose, not a `?v=` query string. That keeps 
 
 `itchgrep.com` resolves through Cloudflare's DNS (the operator owns the domain — see the README for the project's ownership and attribution note). DNS records and the domain registration are managed by the operator outside this project's scope. The zone's TLS/proxy mode is not verifiable from this repository — see [docs/open-questions.md](open-questions.md).
 
-**What breaks if Cloudflare (the account, or the service generally) disappears:** total outage of the public site — `itchgrep.com` stops resolving to anything reachable, and even if DNS somehow still resolved, the tunnel that makes the origin reachable at all depends on the same account. The stack itself keeps running unaffected and stays reachable directly on the host's own network (`http://<host-ip>:62686`) the entire time, since the webserver's port binding doesn't depend on Cloudflare in any way.
+**What breaks if Cloudflare (the account, or the service generally) disappears:** total outage of the public site — `itchgrep.com` stops resolving to anything reachable, and even if DNS somehow still resolved, the tunnel that makes the origin reachable at all depends on the same account. The stack itself keeps running unaffected and stays reachable from the host itself (`http://127.0.0.1:62686`) the entire time, since the webserver's port binding doesn't depend on Cloudflare in any way. It is not reachable from the LAN: the port is bound to loopback.
 
 ## GitHub
 
@@ -195,7 +195,7 @@ itchgrep/1.0 (+https://github.com/SkilledAlpaca/itchgrep)
 | Dependency | If it disappears | Blast radius |
 |---|---|---|
 | Unraid host | Total outage | Everything — see [docs/disaster-recovery.md](disaster-recovery.md) |
-| Cloudflare | Public site unreachable | Public access only — LAN access to the same stack is unaffected |
+| Cloudflare | Public site unreachable | Public access only — the stack keeps running, and is reachable from the host itself on `127.0.0.1:62686` |
 | GitHub | No new deploys, CI stops, security contact unreachable | Deployment and maintenance workflow, not the running site |
 | itch.io | Crawl data goes stale | Search results age; the site keeps serving what it already has |
 | The `itchgrep-log-export` User Scripts entry | Logs stop being durably captured | Observability only — the site itself is unaffected |

@@ -407,8 +407,9 @@ believed at all.
   `cloudflared`'s own fixed address on the Compose network (see its
   `networks:` entry in `docker-compose.yml`), not the whole subnet. A single
   address rather than the whole `172.30.99.0/24` matters because the
-  webserver's port is published on `0.0.0.0`: Docker's userland proxy can
-  deliver LAN-originated traffic to the container with the bridge
+  webserver's host port, although bound to loopback, can still be reached by
+  other host processes: Docker's userland proxy can
+  deliver locally originated traffic to the container with the bridge
   gateway (which sits inside that /24) as the peer address, so trusting the
   whole subnet would let anything that can reach the published port at all
   impersonate a Cloudflare hop — a single `/32` only ever matches the one
@@ -472,7 +473,7 @@ equivalent inline logic in `cmd/dataservice/main.go` — as the TCP port each
 listens on **inside its own container or process**. Not the port a browser
 or `curl` uses from outside a container; see `docker-compose.yml`'s `ports:`
 mappings for that (`127.0.0.1:62685:8080` for the dataservice,
-`62686:8080` for the webserver, both mapping to the same internal `8080`).
+`127.0.0.1:62686:8080` for the webserver, both mapping to the same internal `8080`).
 
 - **Format**: a numeric TCP port, `1`–`65535`.
 - **Example**: `PORT=8081`
