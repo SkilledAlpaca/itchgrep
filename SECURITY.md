@@ -54,10 +54,12 @@ Internet → Cloudflare (WAF, Tunnel) → cloudflared (this stack) → webserver
     nothing else in the request path pushes back. Probe traffic (below)
     draws from the same per-client budget as real requests, so an unlimited
     scanner sweep can't write to disk faster than a real client could be
-    served. The limiter's own identity map is capped at 50,000 entries with
-    a shared overflow bucket beyond that, so no identity source — a proxy
-    header, an IPv6 /64 worth of distinct socket addresses — can grow it
-    without bound.
+    served. IPv6 clients share one bucket per /64 (IPv4 clients get one per
+    address). The limiter's own identity map is capped at 50,000 entries;
+    beyond that, the least recently used bucket is evicted to make room for
+    each new identity (counted, with a log line at most once a minute), so no
+    identity source can grow the map without bound, and a flood of minted
+    identities cannot drain a shared budget or let anyone through unlimited.
   - **Proxy-header trust gated on `TRUSTED_PROXY_CIDRS`**
     (`internal/web/clientip.go`), defaulting under Compose to a single
     `/32` naming `cloudflared`'s own fixed address on the compose network,

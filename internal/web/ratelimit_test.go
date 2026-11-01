@@ -1,6 +1,7 @@
 package web
 
 import (
+	"container/list"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 func testLimiter(rate, burst float64, trustProxy bool, trustedCIDRs []*net.IPNet) *Limiter {
 	return &Limiter{
 		buckets:      make(map[string]*bucket),
+		order:        list.New(),
 		rate:         rate,
 		burst:        burst,
 		trustProxy:   trustProxy,
@@ -56,42 +58,104 @@ func TestLimiterDisabledWhenRateIsZero(t *testing.T) {
 	}
 }
 
-// TestLimiterCapsTheBucketMapAtMaxBuckets is the regression test for the bounded-map contract:
-// evictLoop alone cannot bound the map against an attacker minting a fresh
-// identity every request faster than the 5-minute eviction sweep can reap
-// them. Once the map is already at maxBuckets, a brand new identity must
-// share the single overflow bucket rather than growing the map further.
-func TestLimiterCapsTheBucketMapAtMaxBuckets(t *testing.T) {
-	// burst 2, not 1: the first overflow identity's request leaves the shared
-	// bucket with one token still in it (burst-1), so a second identity's
-	// allow() outcome here is about map growth, not about also racing the
-	// budget the sibling test below already covers.
-	l := testLimiter(1, 2, false, nil)
-	for i := 0; i < maxBuckets; i++ {
-		l.buckets[strconv.Itoa(i)] = &bucket{tokens: 1, last: time.Now()}
+// fill puts n flood entries in the table, oldest first.
+func fill(l *Limiter, n int) {
+	for i := 0; i < n; i++ {
+		b := &bucket{tokens: 0, last: time.Now()}
+		b.elem = l.order.PushFront("flood-" + strconv.Itoa(i))
+		l.buckets["flood-"+strconv.Itoa(i)] = b
 	}
-	require.Len(t, l.buckets, maxBuckets)
-
-	assert.True(t, l.allow("new-identity-1"))
-	assert.Len(t, l.buckets, maxBuckets+1, "only the shared overflow bucket should have been added")
-
-	l.allow("new-identity-2")
-	assert.Len(t, l.buckets, maxBuckets+1, "a second identity past the cap must not add a second bucket, whatever allow() answers")
 }
 
-// TestLimiterOverflowIdentitiesShareOneBudget proves the overflow bucket is
-// actually shared, not merely map-bounded: two distinct identities that both
-// arrive after the cap draw on the same token, so one draining it also
-// limits the other - the correct direction to fail in when the map is this
-// close to capacity.
-func TestLimiterOverflowIdentitiesShareOneBudget(t *testing.T) {
+// With the table full of flood entries a real newcomer evicts the least
+// recently used one and gets its own full budget, limited at its own rate.
+func TestLimiterGivesANewcomerItsOwnBudgetWhenTheTableIsFull(t *testing.T) {
+	l := testLimiter(1, 3, false, nil)
+	fill(l, maxBuckets)
+
+	for i := 0; i < 3; i++ {
+		assert.True(t, l.allow("newcomer"), "request %d is within its own burst", i+1)
+	}
+	assert.False(t, l.allow("newcomer"), "and then it is limited at its own rate")
+	assert.Len(t, l.buckets, maxBuckets, "memory stays bounded")
+	assert.Equal(t, maxBuckets, l.order.Len())
+	assert.NotContains(t, l.buckets, "flood-0", "the least recently used entry made room")
+	assert.Contains(t, l.buckets, "flood-"+strconv.Itoa(maxBuckets-1))
+}
+
+// A flood of distinct keys never lets one key exceed its rate. An evicted key
+// that returns gets a fresh bucket, the price of a bounded table; it cannot be
+// used to go faster than the rate, because evicting a key takes maxBuckets
+// other identities, each limited at the same rate.
+func TestLimiterAFloodOfKeysDoesNotLetOneKeyExceedItsRate(t *testing.T) {
+	l := testLimiter(1, 2, false, nil)
+	fill(l, maxBuckets)
+	allowed := 0
+	for i := 0; i < 10; i++ {
+		if l.allow("steady") {
+			allowed++
+		}
+		for j := 0; j < 100; j++ {
+			l.allow("flood-" + strconv.Itoa(i*100+j))
+		}
+	}
+	assert.Equal(t, 2, allowed, "the burst, and no refill within the test's instant")
+	assert.LessOrEqual(t, len(l.buckets), maxBuckets)
+}
+
+func TestLimiterTableNeverExceedsMaxBuckets(t *testing.T) {
 	l := testLimiter(1, 1, false, nil)
-	for i := 0; i < maxBuckets; i++ {
-		l.buckets[strconv.Itoa(i)] = &bucket{tokens: 1, last: time.Now()}
+	fill(l, maxBuckets)
+	for i := 0; i < 2000; i++ {
+		l.allow("new-" + strconv.Itoa(i))
+	}
+	assert.Len(t, l.buckets, maxBuckets)
+	assert.Equal(t, maxBuckets, l.order.Len(), "the recency list tracks the map exactly")
+	assert.Equal(t, uint64(2000), l.evicted)
+}
+
+func TestLimiterEvictsTheLeastRecentlyUsedNotTheOldestInserted(t *testing.T) {
+	l := testLimiter(1, 5, false, nil)
+	fill(l, maxBuckets)
+	l.allow("flood-0") // touch the oldest-inserted: now most recently used
+
+	l.allow("newcomer")
+	assert.Contains(t, l.buckets, "flood-0")
+	assert.NotContains(t, l.buckets, "flood-1")
+}
+
+func TestLimiterReportsAFullTableAtMostOncePerMinute(t *testing.T) {
+	l := testLimiter(1, 1, false, nil)
+	now := time.Now()
+
+	l.noteFull(now)
+	first := l.lastFullLog
+	require.Equal(t, now, first)
+
+	l.noteFull(now.Add(30 * time.Second))
+	assert.Equal(t, first, l.lastFullLog, "no second report inside the interval")
+
+	l.noteFull(now.Add(61 * time.Second))
+	assert.Equal(t, now.Add(61*time.Second), l.lastFullLog)
+	assert.Equal(t, uint64(3), l.evicted, "every eviction is still counted")
+}
+
+func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
+	l := testLimiter(1, 1, false, nil)
+	key := func(addr string) string {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = addr
+		return l.client(r)
 	}
 
-	assert.True(t, l.allow("overflow-a"), "the shared bucket's only token")
-	assert.False(t, l.allow("overflow-b"), "a different identity past the cap draws on the same, now-spent, bucket")
+	a := key("[2001:db8:1:2::1]:5000")
+	assert.Equal(t, a, key("[2001:db8:1:2:ffff:ffff:ffff:ffff]:5000"), "same /64")
+	assert.NotEqual(t, a, key("[2001:db8:1:3::1]:5000"), "a different /64 is a different client")
+	assert.Equal(t, "192.0.2.7", key("192.0.2.7:5000"), "IPv4 stays per address")
+	assert.NotEqual(t, key("192.0.2.7:5000"), key("192.0.2.8:5000"))
+
+	require.True(t, l.allow(a))
+	assert.False(t, l.allow(key("[2001:db8:1:2::2]:1")), "the neighbor in the same /64 draws on the same budget")
 }
 
 func TestClientIdentityIgnoresProxyHeadersByDefault(t *testing.T) {
